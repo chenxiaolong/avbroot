@@ -1,432 +1,284 @@
 #!/usr/bin/env python3
 
+from avbroot import external
+
 import argparse
-import contextlib
-import hashlib
-import importlib.machinery
-import importlib.util
 import os
 import shutil
-import subprocess
-import sys
 import tempfile
 import zipfile
 
+import avbtool
 
-@contextlib.contextmanager
-def open_output_file(path):
-    '''
-    Create a temporary file in the same directory as the specified path and
-    atomically replace it if the function succeeds.
-    '''
-
-    directory = os.path.dirname(path)
-
-    with tempfile.NamedTemporaryFile(dir=directory, delete=False) as f:
-        try:
-            yield f
-            os.rename(f.name, path)
-        except:
-            os.unlink(f.name)
-            raise
+from avbroot import boot
+from avbroot import openssl
+from avbroot import ota
+from avbroot import util
+from avbroot import vbmeta
 
 
-class BootImagePatch:
-    def __init__(self, magisk_apk, to_extract):
-        self.magisk_apk = magisk_apk
-        self.to_extract = to_extract
-
-    def __call__(self, image_file):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with zipfile.ZipFile(self.magisk_apk, 'r') as zip:
-                for source, target in self.to_extract.items():
-                    info = zip.getinfo(source)
-                    info.filename = target
-                    zip.extract(info, path=temp_dir)
-
-            self.patch(image_file, temp_dir)
-
-    def patch(self, image_file, temp_dir):
-        raise NotImplementedError()
+IMAGES = ('boot', 'vendor_boot', 'vbmeta')
+PATH_METADATA_PB = 'META-INF/com/android/metadata.pb'
+PATH_PAYLOAD = 'payload.bin'
+PATH_PROPERTIES = 'payload_properties.txt'
+SKIP_PATHS = (
+    PATH_METADATA_PB,
+    'META-INF/com/android/metadata',
+    'META-INF/com/android/otacert',
+)
 
 
-class MagiskRootPatch(BootImagePatch):
-    EXTRACT_MAP = {
-        'assets/boot_patch.sh': 'boot_patch.sh',
-        'assets/util_functions.sh': 'util_functions.sh',
-        'lib/arm64-v8a/libmagisk64.so': 'magisk64',
-        'lib/arm64-v8a/libmagiskinit.so': 'magiskinit',
-        'lib/armeabi-v7a/libmagisk32.so': 'magisk32',
-        'lib/x86/libmagiskboot.so': 'magiskboot',
-    }
+def print_status(*args, **kwargs):
+    print('\x1b[1m*****', *args, '*****\x1b[0m', **kwargs)
 
-    def __init__(self, magisk_apk):
-        super().__init__(magisk_apk, self.EXTRACT_MAP)
 
-    def patch(self, image_file, temp_dir):
-        subprocess.check_call(
-            ['sh', './boot_patch.sh', image_file],
-            cwd=temp_dir,
-            env={
-                'BOOTMODE': 'true',
-                'KEEPVERITY': 'true',
-                'KEEPFORCEENCRYPT': 'true',
-            },
+def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
+                      cert_ota):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        extract_dir = os.path.join(temp_dir, 'extract')
+        patch_dir = os.path.join(temp_dir, 'patch')
+        payload_dir = os.path.join(temp_dir, 'payload')
+        os.mkdir(extract_dir)
+        os.mkdir(patch_dir)
+        os.mkdir(payload_dir)
+
+        version, manifest, blob_offset = ota.parse_payload(f_in)
+
+        print_status('Extracting', ', '.join(IMAGES), 'from the payload')
+        ota.extract_images(f_in, manifest, blob_offset, extract_dir, IMAGES)
+
+        avb = avbtool.Avb()
+
+        print_status('Patching boot image for Magisk root')
+        boot.patch_boot(
+            avb,
+            os.path.join(extract_dir, 'boot.img'),
+            os.path.join(patch_dir, 'boot.img'),
+            privkey_avb,
+            True,
+            (
+                boot.MagiskRootPatch(magisk),
+            ),
         )
 
-        shutil.copyfile(os.path.join(temp_dir, 'new-boot.img'), image_file)
-
-
-class FastbootdPatch(BootImagePatch):
-    EXTRACT_MAP = {
-        'lib/x86/libmagiskboot.so': 'magiskboot',
-    }
-    BL_PROP_ORIG = b'ro.boot.verifiedbootstate'
-    BL_PROP_NEW = b'ro.fake.verifiedbootstate'
-    BL_PROP_VALUE = b'orange'
-
-    def __init__(self, magisk_apk):
-        super().__init__(magisk_apk, self.EXTRACT_MAP)
-
-    def patch(self, image_file, temp_dir):
-        def run(*args):
-            subprocess.check_call(['./magiskboot', *args], cwd=temp_dir)
-
-        os.chmod(os.path.join(temp_dir, 'magiskboot'), 0o755)
-
-        # Unpack the boot image
-        run('unpack', image_file)
-
-        # magiskboot currently does not automatically decompress v4 vendor boot
-        # ramdisks as there may be more than one. This is not the case for
-        # Android 13 on the Pixel 6 Pro.
-        run('decompress', 'ramdisk.cpio', 'decompressed.cpio')
-
-        # Patch fastbootd to look at a fake bootloader status property
-        run(
-            'cpio', 'decompressed.cpio',
-            'extract system/bin/fastbootd fastbootd',
+        print_status('Patching vendor_boot image to replace OTA certs')
+        boot.patch_boot(
+            avb,
+            os.path.join(extract_dir, 'vendor_boot.img'),
+            os.path.join(patch_dir, 'vendor_boot.img'),
+            privkey_avb,
+            True,
+            (
+                boot.OtaCertPatch(magisk, cert_ota),
+            ),
         )
 
-        with open(os.path.join(temp_dir, 'fastbootd'), 'rb+') as f:
-            data = f.read()
-            if self.BL_PROP_ORIG not in data:
-                raise Exception(f'{self.BL_PROP_ORIG} not found in fastbootd')
-
-            f.seek(0)
-            f.write(data.replace(self.BL_PROP_ORIG, self.BL_PROP_NEW))
-
-        # Add fake unlocked bootloader status property
-        run('cpio', 'decompressed.cpio', 'extract prop.default prop.default')
-
-        with open(os.path.join(temp_dir, 'prop.default'), 'ab') as f:
-            f.write(b'\n')
-            f.write(self.BL_PROP_NEW)
-            f.write(b'=')
-            f.write(self.BL_PROP_VALUE)
-            f.write(b'\n')
-
-        # Repack ramdisk
-        run(
-            'cpio', 'decompressed.cpio',
-            'rm prop.default',
-            'rm system/bin/fastbootd',
-            'add 644 prop.default prop.default',
-            'add 755 system/bin/fastbootd fastbootd',
+        print_status('Building new root vbmeta image')
+        vbmeta.patch_vbmeta_root(
+            avb,
+            [os.path.join(patch_dir, f'{i}.img')
+                for i in IMAGES if i != 'vbmeta'],
+            os.path.join(extract_dir, 'vbmeta.img'),
+            os.path.join(patch_dir, 'vbmeta.img'),
+            privkey_avb,
+            manifest.block_size,
         )
 
-        # Recompress ramdisk
-        run('compress=lz4_legacy', 'decompressed.cpio', 'ramdisk.cpio')
-
-        # Repack image
-        run('repack', image_file)
-
-        shutil.copyfile(os.path.join(temp_dir, 'new-boot.img'), image_file)
-
-
-class SmuggledViaKernelCmdlineDescriptor:
-    def __init__(self):
-        self.kernel_cmdline = None
-
-    def encode(self):
-        return self.kernel_cmdline.encode()
+        print_status('Updating OTA payload to reference patched images')
+        return ota.patch_payload(
+            f_in,
+            f_out,
+            version,
+            manifest,
+            blob_offset,
+            payload_dir,
+            {i: os.path.join(patch_dir, f'{i}.img') for i in IMAGES},
+            file_size,
+            privkey_ota,
+        )
 
 
-@contextlib.contextmanager
-def smuggle_descriptors():
-    '''
-    Smuggle predefined vbmeta descriptors into Avb.make_vbmeta_image via the
-    kernel_cmdlines parameter. The make_vbmeta_image function will:
+def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
+                  cert_ota):
+    with (
+        zipfile.ZipFile(f_zip_in, 'r') as z_in,
+        zipfile.ZipFile(f_zip_out, 'w') as z_out,
+    ):
+        infolist = z_in.infolist()
+        missing = {PATH_METADATA_PB, PATH_PAYLOAD, PATH_PROPERTIES}
+        i_payload = -1
+        i_properties = -1
 
-    * loop through kernel_cmdlines
-    * create a AvbKernelCmdlineDescriptor instance for each item
-    * assign kernel_cmdline to each descriptor instance
-    * call encode on each descriptor
-    '''
+        for i, info in enumerate(infolist):
+            if info.filename in missing:
+                missing.remove(info.filename)
 
-    orig_kernel = avbtool.AvbKernelCmdlineDescriptor
+            if info.filename == PATH_PAYLOAD:
+                i_payload = i
+            elif info.filename == PATH_PROPERTIES:
+                i_properties = i
 
-    avbtool.AvbKernelCmdlineDescriptor = SmuggledViaKernelCmdlineDescriptor
+            if not missing and i_payload >= 0 and i_properties >= 0:
+                break
 
-    try:
-        yield
-    finally:
-        avbtool.AvbKernelCmdlineDescriptor = orig_kernel
+        if missing:
+            raise Exception(f'Missing files in zip: {missing}')
+
+        # Ensure payload is processed before properties
+        if i_payload > i_properties:
+            infolist[i_payload], infolist[i_properties] = \
+                infolist[i_properties], infolist[i_payload]
+
+        properties = None
+        metadata = None
+
+        for info in z_in.infolist():
+            # The existing metadata is needed to generate a new signed zip
+            if info.filename == PATH_METADATA_PB:
+                with z_in.open(info, 'r') as f_in:
+                    metadata = f_in.read()
+
+            # Skip files that are created during zip signing
+            if info.filename in SKIP_PATHS:
+                print_status('Skipping', info.filename)
+                continue
+
+            # Copy other files, patching if needed
+            with (
+                z_in.open(info, 'r') as f_in,
+                z_out.open(info, 'w') as f_out,
+            ):
+                if info.filename == PATH_PAYLOAD:
+                    print_status('Patching', info.filename)
+
+                    found_payload = True
+
+                    if info.compress_type != zipfile.ZIP_STORED:
+                        raise Exception(f'{info.filename} is not stored uncompressed')
+
+                    properties = patch_ota_payload(
+                        f_in,
+                        f_out,
+                        info.file_size,
+                        magisk,
+                        privkey_avb,
+                        privkey_ota,
+                        cert_ota,
+                    )
+
+                elif info.filename == PATH_PROPERTIES:
+                    print_status('Patching', info.filename)
+
+                    if info.compress_type != zipfile.ZIP_STORED:
+                        raise Exception(f'{info.filename} is not stored uncompressed')
+
+                    f_out.write(properties)
+
+                else:
+                    print_status('Copying', info.filename)
+
+                    shutil.copyfileobj(f_in, f_out)
+
+        return metadata
 
 
-def patch_boot(avb, input_path, output_path, key, patch_funcs):
-    '''
-    Call each function in patch_funcs against a boot image with vbmeta stripped
-    out and then resign the image using the provided private key.
-    '''
+def patch_subcommand(args):
+    output = args.output
+    if output is None:
+        output = args.input + '.patched'
 
-    image = avbtool.ImageHandler(input_path, read_only=True)
-    (footer, header, descriptors, image_size) = avb._parse_image(image)
+    # Decrypt keys to temp directory in RAM
+    with tempfile.TemporaryDirectory(dir='/dev/shm') as key_dir:
+        print_status('Decrypting keys to RAM-based temporary directory')
 
-    have_key_old = not not header.public_key_size
-    have_key_new = not not key
+        # avbtool requires a PEM-encoded private key
+        dec_privkey_avb = os.path.join(key_dir, 'avb.key')
+        openssl.decrypt_key(args.privkey_avb, dec_privkey_avb)
 
-    if have_key_old != have_key_new:
-        raise Exception('Key presence does not match: %s (old) != %s (new)' %
-                        (have_key_old, have_key_new))
+        # AOSP's OTA utils require a DER-encoded private key with the `.pk8`
+        # extension and a PEM-encoded certificate with the `.x509.pem` extension
+        dec_privkey_ota = os.path.join(key_dir, 'ota.pk8')
+        key_prefix_ota = dec_privkey_ota[:-4]
+        openssl.decrypt_key(args.privkey_ota, dec_privkey_ota, out_form='DER')
 
-    hash = None
-    new_descriptors = []
+        cert_ota = os.path.join(key_dir, 'ota.x509.pem')
+        shutil.copyfile(args.cert_ota, cert_ota)
 
-    for d in descriptors:
-        if isinstance(d, avbtool.AvbHashDescriptor):
-            if hash is not None:
-                raise Exception(f'Expected only one hash descriptor')
-            hash = d
-        else:
-            new_descriptors.append(d)
+        # Ensure that the certificate matches the private key
+        if not openssl.cert_matches_key(cert_ota, dec_privkey_ota):
+            raise Exception('OTA certificate does not match private key')
 
-    if hash is None:
-        raise Exception(f'No hash descriptor found')
-
-    algorithm_name = avbtool.lookup_algorithm_by_type(header.algorithm_type)[0]
-
-    with open_output_file(output_path) as f:
-        shutil.copyfile(input_path, f.name)
-
-        # Strip the vbmeta footer from the boot image
-        avb.erase_footer(f.name, False)
-
-        # Invoke the patching functions
-        for patch_func in patch_funcs:
-            patch_func(f.name)
-
-        # Sign the new boot image
-        with smuggle_descriptors():
-            avb.add_hash_footer(
-                image_filename = f.name,
-                partition_size = image_size,
-                dynamic_partition_size = False,
-                partition_name = hash.partition_name,
-                hash_algorithm = hash.hash_algorithm,
-                salt = hash.salt.hex(),
-                chain_partitions = None,
-                algorithm_name = algorithm_name,
-                key_path = key,
-                public_key_metadata_path = None,
-                rollback_index = header.rollback_index,
-                flags = header.flags,
-                rollback_index_location = header.rollback_index_location,
-                props = None,
-                props_from_file = None,
-                kernel_cmdlines = new_descriptors,
-                setup_rootfs_from_kernel = None,
-                include_descriptors_from_image = None,
-                calc_max_image_size = False,
-                signing_helper = None,
-                signing_helper_with_files = None,
-                release_string = header.release_string,
-                append_to_release_string = None,
-                output_vbmeta_image = None,
-                do_not_append_vbmeta_image = False,
-                print_required_libavb_version = False,
-                use_persistent_digest = False,
-                do_not_use_ab = False,
+        with tempfile.NamedTemporaryFile() as temp_unsigned:
+            metadata = patch_ota_zip(
+                args.input,
+                temp_unsigned,
+                args.magisk,
+                dec_privkey_avb,
+                dec_privkey_ota,
+                cert_ota,
             )
 
-
-def build_descriptor_overrides(avb, paths):
-    '''
-    Build a set of chain and hash descriptors overrides for the given paths
-    based on whether they are signed.
-    '''
-
-    # Partition name -> raw public key
-    chains = {}
-    # Partition name -> hash descriptor
-    hashes = {}
-
-    # Construct descriptor overrides
-    for path in paths:
-        image = avbtool.ImageHandler(path, read_only=True)
-        (footer, header, descriptors, image_size) = avb._parse_image(image)
-
-        # Find the partition name in the first hash descriptor
-        hash = next(d for d in descriptors
-            if isinstance(d, avbtool.AvbHashDescriptor))
-
-        if hash is None:
-            raise Exception(f'{path} has no hash descriptor')
-        elif hash.partition_name in chains:
-            raise Exception(f'Duplicate partition name: {hash.partition_name}')
-
-        if header.public_key_size:
-            # vbmeta is signed; use a chain descriptor
-            blob = avb._load_vbmeta_blob(image)
-            offset = header.SIZE + \
-                header.authentication_data_block_size + \
-                header.public_key_offset
-            chains[hash.partition_name] = \
-                blob[offset:offset + header.public_key_size]
-        else:
-            # vbmeta is unsigned; use a hash descriptor
-            hashes[hash.partition_name] = hash
-
-    return (chains, hashes)
+            print_status('Signing OTA zip')
+            with util.open_output_file(output) as temp_signed:
+                ota.sign_zip(
+                    temp_unsigned.name,
+                    temp_signed.name,
+                    key_prefix_ota,
+                    metadata,
+                )
 
 
-def patch_vbmeta_root(avb, boot_path, vendor_boot_path, input_path, output_path,
-                      key):
-    '''
-    Patch the root vbmeta image to reference the newly generated boot and
-    vendor_boot images.
-    '''
+def extract_subcommand(args):
+    with zipfile.ZipFile(args.input, 'r') as z:
+        info = z.getinfo(PATH_PAYLOAD)
 
-    # Load the original root vbmeta image
-    image = avbtool.ImageHandler(input_path, read_only=True)
-    (footer, header, descriptors, image_size) = avb._parse_image(image)
+        with z.open(info, 'r') as f:
+            _, manifest, blob_offset = ota.parse_payload(f)
 
-    # Build a set of new descriptors in the same order as the original
-    # descriptors, except with the boot and vendor_boot descriptors patched to
-    # reference the given images
-    chains, hashes = build_descriptor_overrides(
-        avb, (boot_path, vendor_boot_path))
-    new_descriptors = []
-
-    for d in descriptors:
-        if isinstance(d, avbtool.AvbChainPartitionDescriptor) and \
-                d.partition_name in chains:
-            d.public_key = chains.pop(d.partition_name)
-        elif isinstance(d, avbtool.AvbHashDescriptor) and \
-                d.partition_name in hashes:
-            d = hashes.pop(d.partition_name)
-
-        new_descriptors.append(d)
-
-    if chains:
-        raise Exception(f'Unused chain overrides: {chains}')
-    if hashes:
-        raise Exception(f'Unused hash overrides: {hashes}')
-
-    algorithm_name = avbtool.lookup_algorithm_by_type(header.algorithm_type)[0]
-
-    with open_output_file(output_path) as f:
-        # Smuggle in the prebuilt descriptors via kernel_cmdlines
-        with smuggle_descriptors():
-            avb.make_vbmeta_image(
-                output = f,
-                chain_partitions = None,
-                algorithm_name = algorithm_name,
-                key_path = key,
-                public_key_metadata_path = None,
-                rollback_index = header.rollback_index,
-                flags = header.flags,
-                rollback_index_location = header.rollback_index_location,
-                props = None,
-                props_from_file = None,
-                kernel_cmdlines = new_descriptors,
-                setup_rootfs_from_kernel = None,
-                include_descriptors_from_image = None,
-                signing_helper = None,
-                signing_helper_with_files = None,
-                release_string = header.release_string,
-                append_to_release_string = False,
-                print_required_libavb_version = False,
-                padding_size = 0,
-            )
-
-
-def import_source_file(name, path):
-    loader = importlib.machinery.SourceFileLoader(name, path)
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+            print_status('Extracting', ', '.join(IMAGES), 'from the payload')
+            ota.extract_images(f, manifest, blob_offset, args.directory, IMAGES)
 
 
 def parse_args():
-    avbtool_default = os.path.join(sys.path[0], 'external', 'avb', 'avbtool.py')
-
     parser = argparse.ArgumentParser()
-    parser.add_argument('--avbtool', default=avbtool_default,
-                        help='Path to avbtool')
-    parser.add_argument('--magisk', required=True,
-                        help='Path to Magisk APK')
+    subparsers = parser.add_subparsers(dest='subcommand', required=True,
+                                       help='Subcommands')
 
-    images = ('vbmeta', 'boot', 'vendor_boot')
+    patch = subparsers.add_parser('patch', help='Patch a full OTA zip')
 
-    for image in images:
-        arg_image = image.replace('_', '-')
-        parser.add_argument(f'--input-{arg_image}', required=True,
-                            help=f'Path to original {image} image')
-        parser.add_argument(f'--output-{arg_image}',
-                            help=f'Path to new {image} image')
-        parser.add_argument(f'--privkey-{arg_image}',
-                            help=f'Private key for signing {image} image')
+    patch.add_argument('--input', required=True,
+                       help='Path to original raw payload or OTA zip')
+    patch.add_argument('--output',
+                       help='Path to new raw payload or OTA zip')
+    patch.add_argument('--magisk', required=True,
+                       help='Path to Magisk API')
+    patch.add_argument('--privkey-avb', required=True,
+                       help='Private key for signing root vbmeta image')
+    patch.add_argument('--privkey-ota', required=True,
+                       help='Private key for signing OTA payload')
+    patch.add_argument('--cert-ota', required=True,
+                       help='Certificate for OTA payload signing key')
 
-    args = parser.parse_args()
+    extract = subparsers.add_parser(
+        'extract', help='Extract patched images from a patched OTA zip')
 
-    for image in images:
-        arg_input = f'input_{image}'
-        arg_output = f'output_{image}'
+    extract.add_argument('--input', required=True,
+                         help='Path to patched OTA zip')
+    extract.add_argument('--directory', default='.',
+                         help='Output directory for extracted images')
 
-        if getattr(args, arg_output) is None:
-            setattr(args, arg_output, getattr(args, arg_input) + '.patched')
-
-    return args
+    return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
-    # Dynamically import avbtool without putting the parent directory into the
-    # module path
-    global avbtool
-    avbtool = import_source_file('avbtool', args.avbtool)
-
-    avb = avbtool.Avb()
-
-    patch_boot(
-        avb,
-        args.input_boot,
-        args.output_boot,
-        args.privkey_boot,
-        (
-            MagiskRootPatch(args.magisk),
-        ),
-    )
-    patch_boot(
-        avb,
-        args.input_vendor_boot,
-        args.output_vendor_boot,
-        args.privkey_vendor_boot,
-        (
-            FastbootdPatch(args.magisk),
-        ),
-    )
-    patch_vbmeta_root(
-        avb,
-        args.output_boot,
-        args.output_vendor_boot,
-        args.input_vbmeta,
-        args.output_vbmeta,
-        args.privkey_vbmeta,
-    )
+    if args.subcommand == 'patch':
+        patch_subcommand(args)
+    elif args.subcommand == 'extract':
+        extract_subcommand(args)
+    else:
+        raise NotImplementedError()
 
 
 if __name__ == '__main__':

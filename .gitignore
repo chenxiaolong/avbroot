@@ -1,4 +1,13 @@
+# Caches
+__pycache__/
+
+# Secrets
 *.pem
+*.crt
+*.key
 *.bin
+
+# Images
 *.img
+*.zip
 *.patched
