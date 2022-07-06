@@ -20,7 +20,7 @@ avbroot applies two patches to the boot images:
 
 * Any operation that causes an unsigned or differently-signed boot image to be flashed will result in the device being unbootable and unrecoverable without unlocking the bootloader again (and thus, triggering a data wipe). This includes:
 
-    * Performing a regular (unpatched) A/B OTA update. Disabling the `Automatic system updates` option in Android's Developer Options is recommended.
+    * Performing a regular (unpatched) A/B OTA update.
 
     * The `Direct install` method for updating Magisk. Magisk updates must be done by repatching as well.
 
@@ -124,6 +124,18 @@ To update Android or Magisk:
 3. Sideload the patched OTA.
 
 4. Reboot.
+
+### Blocking A/B OTA Updates
+
+Unpatched OTA updates are already blocked in recovery due to the replacing of the OTA signature verification certificates. To disable OTAs while booted into Android, turn off `Automatic system updates` in Android's Developer Options.
+
+To intentionally make A/B OTAs fail while booted into Android (to prevent accidental manual updates), build the `clearotacerts` module:
+
+```bash
+python clearotacerts/build.py
+```
+
+and flash the `clearotacerts/dist/clearotacerts-<version>.zip` file in Magisk. The module simply overrides `/system/etc/security/otacerts.zip` at runtime with an empty zip so that even if an OTA is downloaded, signature verification will fail.
 
 ### Implementation Details
 
