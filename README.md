@@ -14,7 +14,7 @@ avbroot applies two patches to the boot images:
 
 ### Warnings and Caveats
 
-* This project only works with devices using (non-legacy-SAR) A/B partitioning and supporting the use of a custom public key for the bootloader's root of trust. This effectively limits the supported devices to recent Google Pixels. I've only tested with an Android 13 OTA on a Google Pixel 6 Pro.
+* This project only works with devices using (non-legacy-SAR) A/B partitioning and supporting the use of a custom public key for the bootloader's root of trust. This effectively limits the supported devices to recent Google Pixels. I've only tested with an Android 13 OTA on a Google Pixel 6 Pro and Google Pixel 7 Pro.
 
 * **Do not ever disable the `OEM unlocking` checkbox when using a locked bootloader with root.** This is critically important. With root access, it is possible to corrupt the running system, for example by zeroing out the boot partition. In this scenario, if the checkbox is turned off, both the OS and recovery mode will be made unbootable and `fastboot flashing unlock` will not be allowed. This effectively renders the device **_hard bricked_**.
 
