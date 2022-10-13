@@ -17,7 +17,6 @@ from avbroot import util
 from avbroot import vbmeta
 
 
-IMAGES = ('boot', 'vendor_boot', 'vbmeta')
 PATH_METADATA_PB = 'META-INF/com/android/metadata.pb'
 PATH_PAYLOAD = 'payload.bin'
 PATH_PROPERTIES = 'payload_properties.txt'
@@ -32,6 +31,19 @@ def print_status(*args, **kwargs):
     print('\x1b[1m*****', *args, '*****\x1b[0m', **kwargs)
 
 
+def get_boot_image(manifest):
+    for p in manifest.partitions:
+        if p.partition_name == 'init_boot':
+            return p.partition_name
+
+    return 'boot'
+
+
+def get_images(manifest):
+    boot_image = get_boot_image(manifest)
+    return (boot_image, 'vendor_boot', 'vbmeta'), boot_image
+
+
 def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
                       cert_ota):
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -43,17 +55,18 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
         os.mkdir(payload_dir)
 
         version, manifest, blob_offset = ota.parse_payload(f_in)
+        images, boot_image = get_images(manifest)
 
-        print_status('Extracting', ', '.join(IMAGES), 'from the payload')
-        ota.extract_images(f_in, manifest, blob_offset, extract_dir, IMAGES)
+        print_status('Extracting', ', '.join(images), 'from the payload')
+        ota.extract_images(f_in, manifest, blob_offset, extract_dir, images)
 
         avb = avbtool.Avb()
 
         print_status('Patching boot image for Magisk root')
         boot.patch_boot(
             avb,
-            os.path.join(extract_dir, 'boot.img'),
-            os.path.join(patch_dir, 'boot.img'),
+            os.path.join(extract_dir, f'{boot_image}.img'),
+            os.path.join(patch_dir, f'{boot_image}.img'),
             privkey_avb,
             True,
             (
@@ -77,7 +90,7 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
         vbmeta.patch_vbmeta_root(
             avb,
             [os.path.join(patch_dir, f'{i}.img')
-                for i in IMAGES if i != 'vbmeta'],
+                for i in images if i != 'vbmeta'],
             os.path.join(extract_dir, 'vbmeta.img'),
             os.path.join(patch_dir, 'vbmeta.img'),
             privkey_avb,
@@ -92,7 +105,7 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
             manifest,
             blob_offset,
             payload_dir,
-            {i: os.path.join(patch_dir, f'{i}.img') for i in IMAGES},
+            {i: os.path.join(patch_dir, f'{i}.img') for i in images},
             file_size,
             privkey_ota,
         )
@@ -234,9 +247,10 @@ def extract_subcommand(args):
 
         with z.open(info, 'r') as f:
             _, manifest, blob_offset = ota.parse_payload(f)
+            images, _ = get_images(manifest)
 
-            print_status('Extracting', ', '.join(IMAGES), 'from the payload')
-            ota.extract_images(f, manifest, blob_offset, args.directory, IMAGES)
+            print_status('Extracting', ', '.join(images), 'from the payload')
+            ota.extract_images(f, manifest, blob_offset, args.directory, images)
 
 
 def parse_args():
