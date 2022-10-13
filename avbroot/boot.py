@@ -158,6 +158,11 @@ def patch_boot(avb, input_path, output_path, key, only_if_previously_signed,
 
     algorithm_name = avbtool.lookup_algorithm_by_type(header.algorithm_type)[0]
 
+    # Pixel 7's init_boot image is originally signed by a 2048-bit RSA key, but
+    # avbroot expects RSA 4096 keys
+    if algorithm_name == 'SHA256_RSA2048':
+        algorithm_name = 'SHA256_RSA4096'
+
     with util.open_output_file(output_path) as f:
         shutil.copyfile(input_path, f.name)
 
