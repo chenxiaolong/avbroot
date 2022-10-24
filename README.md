@@ -58,9 +58,23 @@ The boot-related components are signed with an AVB key and OTA-related component
 
 1. Make sure the caveats listed above are understood. It is possible to hard brick by doing the wrong thing!
 
-2. Follow the steps to [generate signing keys](#generating-keys).
+2. Clone this git repo recursively, as there are several AOSP repositories included as submodules in the `external/` directory.
 
-3. Compile the signapk dependency from source.
+    ```bash
+    git clone --recursive https://github.com/chenxiaolong/avbroot.git
+    ```
+
+    If the repo is already cloned, run the following command instead to fetch the submodules:
+
+    ```bash
+    git submodule update --init --recursive
+    ```
+
+3. Ensure that `openssl`, `python3`, and a Java compiler are installed.
+
+4. Follow the steps to [generate signing keys](#generating-keys).
+
+5. Compile the signapk dependency from source.
 
     ```bash
     pushd signapk
@@ -68,7 +82,7 @@ The boot-related components are signed with an AVB key and OTA-related component
     popd
     ```
 
-4. Patch the full OTA ZIP.
+6. Patch the full OTA ZIP.
 
     ```bash
     python avbroot.py \
@@ -84,9 +98,9 @@ The boot-related components are signed with an AVB key and OTA-related component
 
     If `--output` is not specified, then the output file is written to `<input>.patched`.
 
-5. **[Initial setup only]** Unlock the bootloader.
+7. **[Initial setup only]** Unlock the bootloader.
 
-6. **[Initial setup only]** Extract the patched `boot`, `vendor_boot`, and `vbmeta` images from the patched OTA.
+8. **[Initial setup only]** Extract the patched `boot`, `vendor_boot`, and `vbmeta` images from the patched OTA.
 
     ```bash
     mkdir extracted
@@ -96,7 +110,7 @@ The boot-related components are signed with an AVB key and OTA-related component
         --directory extracted
     ```
 
-7. **[Initial setup only]** Flash the patched images and the AVB public key metadata. This sets up the custom root of trust. Future updates are done by simply sideloading patched OTA zips.
+9. **[Initial setup only]** Flash the patched images and the AVB public key metadata. This sets up the custom root of trust. Future updates are done by simply sideloading patched OTA zips.
 
     ```bash
     fastboot flash boot extracted/boot.img
@@ -105,19 +119,19 @@ The boot-related components are signed with an AVB key and OTA-related component
     fastboot flash avb_custom_key /path/to/avb_pkmd.bin
     ```
 
-8. **[Initial setup only]** Run `dmesg` as root to verify that AVB is working properly. A message similar to the following is expected:
+10. **[Initial setup only]** Run `dmesg` as root to verify that AVB is working properly. A message similar to the following is expected:
 
     ```bash
     init: [libfs_avb]Returning avb_handle with status: Success
     ```
 
-9. **[Initial setup only]** Lock the bootloader. **Do not uncheck `OEM unlocking`!**
+11. **[Initial setup only]** Lock the bootloader. **Do not uncheck `OEM unlocking`!**
 
 ### Updates
 
 To update Android or Magisk:
 
-1. Follow step 4 in [the previous section](#usage) to patch the new OTA (or an existing OTA with a newer Magisk APK).
+1. Follow step 6 in [the previous section](#usage) to patch the new OTA (or an existing OTA with a newer Magisk APK).
 
 2. Reboot to recovery mode. If stuck at a `No command` screen, press the volume up button once while holding down the power button.
 
