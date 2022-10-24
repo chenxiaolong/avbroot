@@ -11,10 +11,15 @@ def _get_modulus(path, is_x509):
     certificate.
     '''
 
+    # openssl 1.1 does not support autodetection
+    with open(path, 'rb') as f:
+        is_pem = f.read(1) == b'-'
+
     output = subprocess.check_output([
         'openssl',
         'x509' if is_x509 else 'rsa',
         '-in', path,
+        '-inform', 'PEM' if is_pem else 'DER',
         '-noout',
         '-modulus',
     ])
