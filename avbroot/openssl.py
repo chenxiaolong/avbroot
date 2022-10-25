@@ -5,21 +5,31 @@ import subprocess
 # that and the operations are simple enough to not require pulling in a library.
 
 
+def _guess_format(path):
+    '''
+    Simple heuristic to determine the encoding of a key. This is needed because
+    openssl 1.1 doesn't support autodetection.
+    '''
+
+    with open(path, 'rb') as f:
+        for line in f:
+            if line.startswith(b'-----BEGIN '):
+                return 'PEM'
+
+    return 'DER'
+
+
 def _get_modulus(path, is_x509):
     '''
     Get the RSA modulus of the given file, which can be a private key or
     certificate.
     '''
 
-    # openssl 1.1 does not support autodetection
-    with open(path, 'rb') as f:
-        is_pem = f.read(1) == b'-'
-
     output = subprocess.check_output([
         'openssl',
         'x509' if is_x509 else 'rsa',
         '-in', path,
-        '-inform', 'PEM' if is_pem else 'DER',
+        '-inform', _guess_format(path),
         '-noout',
         '-modulus',
     ])
@@ -50,6 +60,7 @@ def sign_data(pkey, data):
             'openssl', 'pkeyutl',
             '-sign',
             '-inkey', pkey,
+            '-keyform', _guess_format(pkey),
             '-pkeyopt', 'digest:sha256',
         ],
         input=data,
