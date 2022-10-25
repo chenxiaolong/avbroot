@@ -70,7 +70,7 @@ The boot-related components are signed with an AVB key and OTA-related component
     git submodule update --init --recursive
     ```
 
-3. Ensure that `openssl`, `python3`, and a Java compiler are installed.
+3. Ensure that `openssl`, `python3`, `python3-protobuf`, and a Java compiler are installed.
 
 4. Follow the steps to [generate signing keys](#generating-keys).
 
