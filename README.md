@@ -90,7 +90,7 @@ The boot-related components are signed with an AVB key and OTA-related component
         --input /path/to/ota.zip \
         --privkey-avb /path/to/avb.key \
         --privkey-ota /path/to/ota.key \
-        --cert-ota /path/to/avb.crt \
+        --cert-ota /path/to/ota.crt \
         --magisk /path/to/magisk.apk
     ```
 
