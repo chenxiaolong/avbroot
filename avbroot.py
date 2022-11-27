@@ -31,17 +31,23 @@ def print_status(*args, **kwargs):
     print('\x1b[1m*****', *args, '*****\x1b[0m', **kwargs)
 
 
-def get_boot_image(manifest):
-    for p in manifest.partitions:
-        if p.partition_name == 'init_boot':
-            return p.partition_name
-
-    return 'boot'
-
-
 def get_images(manifest):
-    boot_image = get_boot_image(manifest)
-    return (boot_image, 'vendor_boot', 'vbmeta'), boot_image
+    boot_image = 'boot'
+    vendor_boot_image = None
+
+    for p in manifest.partitions:
+        # Devices launching with Android 13 use a GKI init_boot ramdisk
+        if p.partition_name == 'init_boot':
+            boot_image = p.partition_name
+        # Older devices may not have vendor_boot
+        elif p.partition_name == 'vendor_boot':
+            vendor_boot_image = p.partition_name
+
+    images = ['vbmeta', boot_image]
+    if vendor_boot_image is not None:
+        images.append(vendor_boot_image)
+
+    return images, boot_image
 
 
 def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
@@ -60,31 +66,36 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
         print_status('Extracting', ', '.join(images), 'from the payload')
         ota.extract_images(f_in, manifest, blob_offset, extract_dir, images)
 
+        boot_patches = [boot.MagiskRootPatch(magisk)]
+        vendor_boot_patches = [boot.OtaCertPatch(magisk, cert_ota)]
+
+        # Older devices don't have a vendor_boot
+        if 'vendor_boot' not in images:
+            boot_patches.extend(vendor_boot_patches)
+            vendor_boot_patches.clear()
+
         avb = avbtool.Avb()
 
-        print_status('Patching boot image for Magisk root')
+        print_status('Patching boot image')
         boot.patch_boot(
             avb,
             os.path.join(extract_dir, f'{boot_image}.img'),
             os.path.join(patch_dir, f'{boot_image}.img'),
             privkey_avb,
             True,
-            (
-                boot.MagiskRootPatch(magisk),
-            ),
+            boot_patches,
         )
 
-        print_status('Patching vendor_boot image to replace OTA certs')
-        boot.patch_boot(
-            avb,
-            os.path.join(extract_dir, 'vendor_boot.img'),
-            os.path.join(patch_dir, 'vendor_boot.img'),
-            privkey_avb,
-            True,
-            (
-                boot.OtaCertPatch(magisk, cert_ota),
-            ),
-        )
+        if vendor_boot_patches:
+            print_status('Patching vendor_boot image')
+            boot.patch_boot(
+                avb,
+                os.path.join(extract_dir, 'vendor_boot.img'),
+                os.path.join(patch_dir, 'vendor_boot.img'),
+                privkey_avb,
+                True,
+                vendor_boot_patches,
+            )
 
         print_status('Building new root vbmeta image')
         vbmeta.patch_vbmeta_root(
@@ -163,8 +174,6 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
             ):
                 if info.filename == PATH_PAYLOAD:
                     print_status('Patching', info.filename)
-
-                    found_payload = True
 
                     if info.compress_type != zipfile.ZIP_STORED:
                         raise Exception(f'{info.filename} is not stored uncompressed')

@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import struct
 import tempfile
 import zipfile
 
@@ -74,6 +75,20 @@ class OtaCertPatch(BootImagePatch):
         super().__init__(magisk_apk, self.EXTRACT_MAP)
         self.cert_ota = cert_ota
 
+    def _read_header_version(self, image_file):
+        with open(image_file, 'rb') as f:
+            magic = f.read(8)
+
+            if magic == b'ANDROID!':
+                f.seek(0x28)
+            elif magic == b'VNDRBOOT':
+                # Version is immediately after magic
+                pass
+            else:
+                raise Exception(b'Invalid magic: {magic}')
+
+            return struct.unpack('I', f.read(4))[0]
+
     def patch(self, image_file, temp_dir):
         def run(*args):
             subprocess.check_call(['./magiskboot', *args], cwd=temp_dir)
@@ -86,12 +101,16 @@ class OtaCertPatch(BootImagePatch):
         # magiskboot currently does not automatically decompress v4 vendor boot
         # ramdisks as there may be more than one. This is not the case for
         # Android 13 on the Pixel 6 Pro.
-        run('decompress', 'ramdisk.cpio', 'decompressed.cpio')
+        ramdisk_file = 'ramdisk.cpio'
+        header_version = self._read_header_version(image_file)
+        if header_version == 4:
+            ramdisk_file = 'decompressed.cpio'
+            run('decompress', 'ramdisk.cpio', ramdisk_file)
 
         # Fail hard if otacerts does not exist. We don't want to lock the user
         # out of future updates if the OTA certificate mechanism has changed.
         run(
-            'cpio', 'decompressed.cpio',
+            'cpio', ramdisk_file,
             'exists system/etc/security/otacerts.zip',
         )
 
@@ -108,13 +127,14 @@ class OtaCertPatch(BootImagePatch):
 
         # Repack ramdisk
         run(
-            'cpio', 'decompressed.cpio',
+            'cpio', ramdisk_file,
             'rm system/etc/security/otacerts.zip',
             'add 644 system/etc/security/otacerts.zip otacerts.zip',
         )
 
         # Recompress ramdisk
-        run('compress=lz4_legacy', 'decompressed.cpio', 'ramdisk.cpio')
+        if header_version == 4:
+            run('compress=lz4_legacy', ramdisk_file, 'ramdisk.cpio')
 
         # Repack image
         run('repack', image_file)

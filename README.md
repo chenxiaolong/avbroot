@@ -45,7 +45,7 @@ The boot-related components are signed with an AVB key and OTA-related component
 2. Convert the public key portion of the AVB signing key to the AVB public key metadata format. This is the format that the bootloader requires when setting the custom root of trust.
 
     ```bash
-    /path/to/avbroot/external/avb/avbtool extract_public_key --key avb.key --output avb_pkmd.bin
+    /path/to/avbroot/external/avb/avbtool.py extract_public_key --key avb.key --output avb_pkmd.bin
     ```
 
 3. Generate a self-signed certificate for the OTA signing key. This is used by recovery for verifying OTA updates.
@@ -116,6 +116,7 @@ The boot-related components are signed with an AVB key and OTA-related component
     fastboot flash boot extracted/boot.img
     fastboot flash vendor_boot extracted/vendor_boot.img
     fastboot flash vbmeta extracted/vbmeta.img
+    fastboot erase avb_custom_key
     fastboot flash avb_custom_key /path/to/avb_pkmd.bin
     ```
 
