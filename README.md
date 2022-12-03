@@ -98,7 +98,7 @@ The boot-related components are signed with an AVB key and OTA-related component
 
     If `--output` is not specified, then the output file is written to `<input>.patched`.
 
-7. **[Initial setup only]** Unlock the bootloader.
+7. **[Initial setup only]** Unlock the bootloader. This will trigger a data wipe.
 
 8. **[Initial setup only]** Extract the patched `boot`, `vendor_boot`, and `vbmeta` images from the patched OTA.
 
@@ -126,7 +126,7 @@ The boot-related components are signed with an AVB key and OTA-related component
     init: [libfs_avb]Returning avb_handle with status: Success
     ```
 
-11. **[Initial setup only]** Lock the bootloader. **Do not uncheck `OEM unlocking`!**
+11. **[Initial setup only]** Lock the bootloader. This will trigger a data wipe again. **Do not uncheck `OEM unlocking`!**
 
 ### Updates
 
