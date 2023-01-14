@@ -19,9 +19,15 @@ class BootImagePatch:
     def __call__(self, image_file):
         with tempfile.TemporaryDirectory() as temp_dir:
             with zipfile.ZipFile(self.magisk_apk, 'r') as zip:
-                for source, target in self.to_extract.items():
-                    info = zip.getinfo(source)
-                    info.filename = target
+                for source, extract_info in self.to_extract.items():
+                    try:
+                        info = zip.getinfo(source)
+                    except KeyError:
+                        if extract_info.get('optional', False):
+                            continue
+                        raise
+
+                    info.filename = extract_info['dest']
                     zip.extract(info, path=temp_dir)
 
             self.patch(image_file, temp_dir)
@@ -36,12 +42,18 @@ class MagiskRootPatch(BootImagePatch):
     '''
 
     EXTRACT_MAP = {
-        'assets/boot_patch.sh': 'boot_patch.sh',
-        'assets/util_functions.sh': 'util_functions.sh',
-        'lib/arm64-v8a/libmagisk64.so': 'magisk64',
-        'lib/arm64-v8a/libmagiskinit.so': 'magiskinit',
-        'lib/armeabi-v7a/libmagisk32.so': 'magisk32',
-        'lib/x86/libmagiskboot.so': 'magiskboot',
+        'assets/boot_patch.sh': {'dest': 'boot_patch.sh'},
+        'assets/stub.apk': {
+            'dest': 'stub.apk',
+            # Only exists after the Magisk commit:
+            # ad0e6511e11ebec65aa9b5b916e1397342850319
+            'optional': True,
+        },
+        'assets/util_functions.sh': {'dest': 'util_functions.sh'},
+        'lib/arm64-v8a/libmagisk64.so': {'dest': 'magisk64'},
+        'lib/arm64-v8a/libmagiskinit.so': {'dest': 'magiskinit'},
+        'lib/armeabi-v7a/libmagisk32.so': {'dest': 'magisk32'},
+        'lib/x86/libmagiskboot.so': {'dest': 'magiskboot'},
     }
 
     def __init__(self, magisk_apk):
@@ -68,7 +80,7 @@ class OtaCertPatch(BootImagePatch):
     '''
 
     EXTRACT_MAP = {
-        'lib/x86/libmagiskboot.so': 'magiskboot',
+        'lib/x86/libmagiskboot.so': {'dest': 'magiskboot'},
     }
 
     def __init__(self, magisk_apk, cert_ota):
