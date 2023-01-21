@@ -209,9 +209,9 @@ def patch_subcommand(args):
     if output is None:
         output = args.input + '.patched'
 
-    # Decrypt keys to temp directory in RAM
-    with tempfile.TemporaryDirectory(dir='/dev/shm') as key_dir:
-        print_status('Decrypting keys to RAM-based temporary directory')
+    # Decrypt keys to temp directory
+    with tempfile.TemporaryDirectory() as key_dir:
+        print_status('Decrypting keys to temporary directory')
 
         # avbtool requires a PEM-encoded private key
         dec_privkey_avb = os.path.join(key_dir, 'avb.key')
