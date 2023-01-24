@@ -210,8 +210,8 @@ def patch_subcommand(args):
         output = args.input + '.patched'
 
     # Decrypt keys to temp directory
-    with tempfile.TemporaryDirectory() as key_dir:
-        print_status('Decrypting keys to temporary directory')
+    with tempfile.TemporaryDirectory(dir=util.tmpfs_path()) as key_dir:
+        print_status(f'Decrypting keys to temporary directory: {key_dir}')
 
         # avbtool requires a PEM-encoded private key
         dec_privkey_avb = os.path.join(key_dir, 'avb.key')
