@@ -2,6 +2,7 @@ import contextlib
 import ctypes
 import os
 import struct
+import sys
 import tempfile
 
 
@@ -13,7 +14,7 @@ def statfs_type(path):
     On Linux, call statfs on the given path and return the f_type value.
     '''
 
-    if os.uname().sysname == 'Linux':
+    if sys.platform.startswith('linux'):
         libc = ctypes.CDLL(None, use_errno=True)
         buf = ctypes.create_string_buffer(120)
 
@@ -35,7 +36,7 @@ def tmpfs_path():
     or if running on non-Linux.
     '''
 
-    if os.uname().sysname == 'Linux':
+    if sys.platform.startswith('linux'):
         candidates = []
 
         # Gather tmpfs candidates. This alone isn't sufficient because another
