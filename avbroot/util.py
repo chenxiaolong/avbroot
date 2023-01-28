@@ -57,6 +57,19 @@ def tmpfs_path():
     return None
 
 
+def set_default_temp_dir(path):
+    '''
+    Set the default temporary directory for use if the user hasn't overridden
+    it with standard environment variables.
+    '''
+
+    if any(os.getenv(k) for k in ('TMPDIR', 'TEMP', 'TMP')):
+        # Rely on tempfile's default handling
+        return
+
+    tempfile.tempdir = path
+
+
 @contextlib.contextmanager
 def open_output_file(path):
     '''
