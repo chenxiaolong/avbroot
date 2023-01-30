@@ -6,6 +6,7 @@ import argparse
 import os
 import shutil
 import tempfile
+import time
 import zipfile
 
 import avbtool
@@ -234,6 +235,8 @@ def patch_subcommand(args):
         if not openssl.cert_matches_key(cert_ota, dec_privkey_ota):
             raise Exception('OTA certificate does not match private key')
 
+        start = time.perf_counter_ns()
+
         with tempfile.NamedTemporaryFile() as temp_unsigned:
             metadata = patch_ota_zip(
                 args.input,
@@ -252,6 +255,10 @@ def patch_subcommand(args):
                     key_prefix_ota,
                     metadata,
                 )
+
+        # Excluding the time it takes for the user to type in the passwords
+        elapsed = time.perf_counter_ns() - start
+        print_status(f'Completed after {elapsed / 1_000_000_000:.1f}s')
 
 
 def extract_subcommand(args):
