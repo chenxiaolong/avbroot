@@ -1,0 +1,21 @@
+#!/bin/sh
+
+set -u
+
+if [[ -f /startup.cwd ]]; then
+    . /startup.cwd
+fi
+
+if [[ -f /startup.cmd ]]; then
+    echo "Running: $(cat /startup.cmd)"
+    sh /startup.cmd
+else
+    echo 'No command specified; starting shell'
+    sh
+fi
+
+exit_status=${?}
+echo "Command exited with status: ${exit_status}"
+echo "${exit_status}" > .exit_status
+
+reboot

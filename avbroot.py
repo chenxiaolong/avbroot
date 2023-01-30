@@ -289,7 +289,7 @@ def parse_args():
     patch.add_argument('--output',
                        help='Path to new raw payload or OTA zip')
     patch.add_argument('--magisk', required=True,
-                       help='Path to Magisk API')
+                       help='Path to Magisk APK')
     patch.add_argument('--privkey-avb', required=True,
                        help='Private key for signing root vbmeta image')
     patch.add_argument('--privkey-ota', required=True,

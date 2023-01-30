@@ -1,0 +1,4 @@
+::wait:/startup
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r
+::restart:/sbin/init

@@ -1,4 +1,5 @@
 import os
+import shlex
 import shutil
 import subprocess
 import struct
@@ -35,6 +36,51 @@ class BootImagePatch:
     def patch(self, image_file, temp_dir):
         raise NotImplementedError()
 
+    def run_in_vm(self, cmd, workspace, env={}):
+        '''
+        Execute the specified command within a qemu aarch64 virtual machine.
+        The specified workspace mounted in the virtual machine and will be set
+        as the working directory.
+        '''
+
+        dist_dir = os.path.join(os.path.dirname(__file__), '..', 'vm', 'dist')
+
+        kernel_args = [
+            # Environment variables
+            *(f'{k}={v}' for k, v in env.items()),
+            # Kernel cmdline arguments
+            'panic=1',
+            'console=ttyAMA0',
+            'quiet',
+            # init directives
+            'qemu-mount=workspace',
+            'cwd=/mnt/workspace',
+            '--',
+            # User command
+            *(shlex.quote(arg) for arg in cmd),
+        ]
+
+        subprocess.check_call([
+            'qemu-system-aarch64',
+            '-serial', 'mon:stdio',
+            '-machine', 'virt',
+            '-cpu', 'cortex-a57',
+            '-kernel', os.path.join(dist_dir, 'kernel'),
+            '-initrd', os.path.join(dist_dir, 'ramdisk'),
+            '-smp', '4',
+            '-m', '1024',
+            '-no-reboot',
+            '-nographic',
+            '-fsdev', f'local,id=ws,path={workspace},security_model=none',
+            '-device', 'virtio-9p-pci,fsdev=ws,mount_tag=workspace',
+            '-append', ' '.join(kernel_args),
+        ])
+
+        with open(os.path.join(workspace, '.exit_status'), 'r') as f:
+            exit_status = int(f.read().strip())
+            if exit_status != 0:
+                raise Exception(f'{cmd} exited with status {exit_status}')
+
 
 class MagiskRootPatch(BootImagePatch):
     '''
@@ -51,18 +97,20 @@ class MagiskRootPatch(BootImagePatch):
         },
         'assets/util_functions.sh': {'dest': 'util_functions.sh'},
         'lib/arm64-v8a/libmagisk64.so': {'dest': 'magisk64'},
+        'lib/arm64-v8a/libmagiskboot.so': {'dest': 'magiskboot'},
         'lib/arm64-v8a/libmagiskinit.so': {'dest': 'magiskinit'},
         'lib/armeabi-v7a/libmagisk32.so': {'dest': 'magisk32'},
-        'lib/x86/libmagiskboot.so': {'dest': 'magiskboot'},
     }
 
     def __init__(self, magisk_apk):
         super().__init__(magisk_apk, self.EXTRACT_MAP)
 
     def patch(self, image_file, temp_dir):
-        subprocess.check_call(
-            ['sh', './boot_patch.sh', image_file],
-            cwd=temp_dir,
+        shutil.copyfile(image_file, os.path.join(temp_dir, 'boot.img'))
+
+        self.run_in_vm(
+            ['sh', './boot_patch.sh', 'boot.img'],
+            workspace=temp_dir,
             env={
                 'BOOTMODE': 'true',
                 'KEEPVERITY': 'true',
@@ -80,7 +128,7 @@ class OtaCertPatch(BootImagePatch):
     '''
 
     EXTRACT_MAP = {
-        'lib/x86/libmagiskboot.so': {'dest': 'magiskboot'},
+        'lib/arm64-v8a/libmagiskboot.so': {'dest': 'magiskboot'},
     }
 
     def __init__(self, magisk_apk, cert_ota):
@@ -102,34 +150,17 @@ class OtaCertPatch(BootImagePatch):
             return struct.unpack('I', f.read(4))[0]
 
     def patch(self, image_file, temp_dir):
-        def run(*args):
-            subprocess.check_call(['./magiskboot', *args], cwd=temp_dir)
+        def write_cmd(f, *args):
+            f.write(' '.join(shlex.quote(a) for a in args) + '\n')
 
+        shutil.copyfile(image_file, os.path.join(temp_dir, 'boot.img'))
         os.chmod(os.path.join(temp_dir, 'magiskboot'), 0o755)
-
-        # Unpack the boot image
-        run('unpack', image_file)
-
-        # magiskboot currently does not automatically decompress v4 vendor boot
-        # ramdisks as there may be more than one. This is not the case for
-        # Android 13 on the Pixel 6 Pro.
-        ramdisk_file = 'ramdisk.cpio'
-        header_version = self._read_header_version(image_file)
-        if header_version == 4:
-            ramdisk_file = 'decompressed.cpio'
-            run('decompress', 'ramdisk.cpio', ramdisk_file)
-
-        # Fail hard if otacerts does not exist. We don't want to lock the user
-        # out of future updates if the OTA certificate mechanism has changed.
-        run(
-            'cpio', ramdisk_file,
-            'exists system/etc/security/otacerts.zip',
-        )
 
         # Create new otacerts archive. The old certs are ignored since flashing
         # a stock OTA will render the device unbootable.
         with zipfile.ZipFile(os.path.join(temp_dir, 'otacerts.zip'), 'w') as z:
-            name = os.path.join(os.path.basename(self.cert_ota), 'ota.x509.pem')
+            name = os.path.join(os.path.basename(self.cert_ota),
+                                'ota.x509.pem')
 
             # Construct our own timestamp so the archive is reproducible
             info = zipfile.ZipInfo(name)
@@ -137,19 +168,43 @@ class OtaCertPatch(BootImagePatch):
                 with open(self.cert_ota, 'rb') as f_in:
                     shutil.copyfileobj(f_in, f_out)
 
-        # Repack ramdisk
-        run(
-            'cpio', ramdisk_file,
-            'rm system/etc/security/otacerts.zip',
-            'add 644 system/etc/security/otacerts.zip otacerts.zip',
-        )
+        # Generate a script so that the VM only needs to be run once
+        with open(os.path.join(temp_dir, 'run.sh'), 'w') as f:
+            write_cmd(f, 'set', '-xeuo', 'pipefail')
 
-        # Recompress ramdisk
-        if header_version == 4:
-            run('compress=lz4_legacy', ramdisk_file, 'ramdisk.cpio')
+            # Unpack the boot image
+            write_cmd(f, './magiskboot', 'unpack', 'boot.img')
 
-        # Repack image
-        run('repack', image_file)
+            # magiskboot currently does not automatically decompress v4 vendor
+            # boot ramdisks as there may be more than one. This is not the case
+            # for Android 13 on the Pixel 6 Pro and Pixel 7 Pro.
+            header_version = self._read_header_version(image_file)
+            ramdisk_file = 'ramdisk.cpio'
+            if header_version == 4:
+                ramdisk_file = 'decompressed.cpio'
+                write_cmd(f, './magiskboot', 'decompress',
+                          'ramdisk.cpio', ramdisk_file)
+
+            # Fail hard if otacerts does not exist. We don't want to lock the
+            # user out of future updates if the OTA certificate mechanism has
+            # changed.
+            write_cmd(f, './magiskboot', 'cpio', ramdisk_file,
+                      'exists system/etc/security/otacerts.zip')
+
+            # Repack ramdisk
+            write_cmd(f, './magiskboot', 'cpio', ramdisk_file,
+                      'rm system/etc/security/otacerts.zip',
+                      'add 644 system/etc/security/otacerts.zip otacerts.zip')
+
+            # Recompress ramdisk
+            if header_version == 4:
+                write_cmd(f, './magiskboot', 'compress=lz4_legacy',
+                          ramdisk_file, 'ramdisk.cpio')
+
+            # Repack image
+            write_cmd(f, './magiskboot', 'repack', 'boot.img')
+
+        self.run_in_vm(['sh', './run.sh'], workspace=temp_dir)
 
         shutil.copyfile(os.path.join(temp_dir, 'new-boot.img'), image_file)
 
@@ -180,13 +235,13 @@ def patch_boot(avb, input_path, output_path, key, only_if_previously_signed,
     for d in descriptors:
         if isinstance(d, avbtool.AvbHashDescriptor):
             if hash is not None:
-                raise Exception(f'Expected only one hash descriptor')
+                raise Exception('Expected only one hash descriptor')
             hash = d
         else:
             new_descriptors.append(d)
 
     if hash is None:
-        raise Exception(f'No hash descriptor found')
+        raise Exception('No hash descriptor found')
 
     algorithm_name = avbtool.lookup_algorithm_by_type(header.algorithm_type)[0]
 

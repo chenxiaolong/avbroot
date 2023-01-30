@@ -1,0 +1,69 @@
+#!/bin/busybox sh
+
+set -euo pipefail
+
+busybox mkdir /mnt /tmp /usr/bin /usr/sbin
+/bin/busybox --install -s
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+# Mount essential filesystems
+mount -t proc -o nodev,noexec,nosuid proc /proc
+mount -t sysfs -o nodev,noexec,nosuid sysfs /sys
+mount -t devtmpfs -o nosuid,mode=0755,size=2M devtmpfs /dev
+mkdir /dev/pts
+mount -t devpts -o noexec,nosuid,mode=0620 devpts /dev/pts
+mkdir /dev/shm
+mount -t tmpfs -o nodev,noexec,nosuid tmpfs /dev/shm
+mount -t tmpfs -o nodev,nosuid tmpfs /tmp
+
+# Mount modloop
+mount -t squashfs /boot/modloop-virt /.modloop
+rm -r /lib/modules
+ln -s /.modloop/modules /lib/modules
+
+# Mount qemu 9p shared filesystems
+modprobe -a 9p 9pnet_virtio virtio_pci
+
+mount_9p() {
+    local id=${1}
+
+    case "${id}" in
+    */*|.|..|'')
+        echo "Invalid QEMU 9P mount ID: '${id}'"
+        exit 1
+        ;;
+    *)
+        mkdir "/mnt/${id}"
+        mount -t 9p -o trans=virtio,cache=mmap "${id}" "/mnt/${id}"
+        ;;
+    esac
+}
+
+print_shell_quoted() {
+    local arg
+
+    for arg in "${@}"; do
+        printf "'%s' " "${arg//\'/\'\"\'\"\'}"
+    done
+}
+
+while read -r -d ' ' arg; do
+    case "${arg}" in
+    qemu-mount=*)
+        mount_9p "${arg#qemu-mount=}"
+        ;;
+    cwd=*)
+        print_shell_quoted cd "${arg#cwd=}" > /startup.cwd
+        ;;
+    --)
+        break
+        ;;
+    esac
+done < /proc/cmdline
+
+# Write args for /startup
+if [[ "${#}" -gt 0 ]]; then
+    print_shell_quoted "${@}" > /startup.cmd
+fi
+
+exec init
