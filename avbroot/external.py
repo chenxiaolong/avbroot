@@ -11,7 +11,7 @@ def _set_up_external_libs():
     # avbtool
     sys.path.append(os.path.join(external_dir, 'avb'))
     # Payload protobuf
-    sys.path.append(os.path.join(external_dir, 'update_engine', 'scripts', 'update_payload'))
+    sys.path.append(os.path.join(external_dir, 'update_engine', 'scripts'))
 
 
 _set_up_external_libs()
