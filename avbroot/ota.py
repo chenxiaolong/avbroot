@@ -13,7 +13,6 @@ sys.argv[0] = sys.argv[0].removesuffix('.py')
 import common
 sys.argv[0] = orig_argv0
 
-import ota_from_target_files
 import ota_metadata_pb2
 import ota_utils
 import update_metadata_pb2
@@ -90,7 +89,7 @@ def _extract_image(f_payload, f_out, block_size, blob_offset, partition):
                 raise Exception(f'Unsupported operation: {op.type}')
 
             if h_data.digest() != op.data_sha256_hash:
-                raise Exception(f'Expected hash %s, but got %s' %
+                raise Exception('Expected hash %s, but got %s' %
                                 (h_data.hexdigest(),
                                  binascii.hexlify(op.data_sha256_hash)))
 
@@ -234,7 +233,6 @@ def _sign_hash(hash, key, max_sig_size):
     signatures.signatures.append(signature)
 
     return signatures
-    return _build_signatures(hash_signed, max_sig_size)
 
 
 def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
@@ -370,8 +368,6 @@ def sign_zip(input_path, output_path, key_prefix, metadata_raw):
     # We can't replace common.OPTIONS itself because ota_utils holds a reference
     # to the original instance
     attrs = (
-        'package_key',
-        'key_passwords',
         'search_path',
         'signapk_shared_library_path',
         'signapk_path',
@@ -379,8 +375,6 @@ def sign_zip(input_path, output_path, key_prefix, metadata_raw):
     orig_attrs = {a: getattr(common.OPTIONS, a) for a in attrs}
 
     try:
-        common.OPTIONS.package_key = key_prefix
-        common.OPTIONS.key_passwords = {key_prefix: None}
         common.OPTIONS.search_path = '/var/empty'
         common.OPTIONS.signapk_shared_library_path = '/var/empty'
         common.OPTIONS.signapk_path = os.path.join(
@@ -392,10 +386,7 @@ def sign_zip(input_path, output_path, key_prefix, metadata_raw):
             metadata,
             input_path,
             output_path,
-            (
-                ota_from_target_files.AbOtaPropertyFiles(),
-                ota_from_target_files.StreamingPropertyFiles(),
-            ),
+            package_key=key_prefix,
         )
 
     finally:
