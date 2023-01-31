@@ -129,10 +129,8 @@ class OtaCertPatch(BootImagePatch):
         # Create new otacerts archive. The old certs are ignored since flashing
         # a stock OTA will render the device unbootable.
         with zipfile.ZipFile(os.path.join(temp_dir, 'otacerts.zip'), 'w') as z:
-            name = os.path.join(os.path.basename(self.cert_ota), 'ota.x509.pem')
-
             # Construct our own timestamp so the archive is reproducible
-            info = zipfile.ZipInfo(name)
+            info = zipfile.ZipInfo('ota.x509.pem')
             with z.open(info, 'w') as f_out:
                 with open(self.cert_ota, 'rb') as f_in:
                     shutil.copyfileobj(f_in, f_out)
