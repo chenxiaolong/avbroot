@@ -2,19 +2,22 @@ import base64
 import binascii
 import bz2
 import hashlib
+import itertools
 import lzma
 import os
+import shutil
 import struct
 import sys
+import subprocess
+import zipfile
 
 # Silence undesired warning
 orig_argv0 = sys.argv[0]
 sys.argv[0] = sys.argv[0].removesuffix('.py')
-import common
+import ota_utils
 sys.argv[0] = orig_argv0
 
 import ota_metadata_pb2
-import ota_utils
 import update_metadata_pb2
 
 from . import openssl
@@ -22,6 +25,9 @@ from . import util
 
 
 OTA_MAGIC = b'CrAU'
+
+PATH_METADATA = 'META-INF/com/android/metadata'
+PATH_METADATA_PB = f'{PATH_METADATA}.pb'
 
 
 def parse_payload(f):
@@ -77,12 +83,12 @@ def _extract_image(f_payload, f_out, block_size, blob_offset, partition):
                                    hasher=h_data)
             elif op.type == Type.REPLACE_BZ:
                 decompressor = bz2.BZ2Decompressor()
-                util.decompress_n(decompressor, f_payload, f_out, op.data_length,
-                                  hasher=h_data)
+                util.decompress_n(decompressor, f_payload, f_out,
+                                  op.data_length, hasher=h_data)
             elif op.type == Type.REPLACE_XZ:
                 decompressor = lzma.LZMADecompressor()
-                util.decompress_n(decompressor, f_payload, f_out, op.data_length,
-                                  hasher=h_data)
+                util.decompress_n(decompressor, f_payload, f_out,
+                                  op.data_length, hasher=h_data)
             elif op.type == Type.ZERO or op.type == Type.DISCARD:
                 util.zero_n(f_out, extent.num_blocks * block_size)
             else:
@@ -258,7 +264,7 @@ def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
     for name, path in patched.items():
         # Find the partition in the manifest
         partition = next((p for p in manifest.partitions
-            if p.partition_name == name), None)
+                          if p.partition_name == name), None)
         if partition is None:
             raise Exception(f'Partition {name} not found in manifest')
 
@@ -341,7 +347,7 @@ def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
     blob_size = manifest.signatures_offset + manifest.signatures_size
     new_file_size = metadata_size + dummy_sig_size + blob_size
 
-    b64 = lambda d: base64.b64encode(d)
+    def b64(d): return base64.b64encode(d)
     props = [
         b'FILE_HASH=%s\n' % b64(h_full.digest()),
         b'FILE_SIZE=%d\n' % new_file_size,
@@ -352,12 +358,62 @@ def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
     return b''.join(props)
 
 
-def sign_zip(input_path, output_path, key_prefix, metadata_raw):
+def _replace_metadata(z_in, z_out, metadata):
+    '''
+    Copy all entries from the input to the output, replacing the existing
+    metadata files (legacy and protobuf) with the data serialized from the
+    given metadata instance.
+    '''
+
+    legacy_metadata = ota_utils.BuildLegacyOtaMetadata(metadata)
+    legacy_metadata_str = "".join([f'{k}={v}\n' for k, v in
+                                   sorted(legacy_metadata.items())])
+    metadata_bytes = metadata.SerializeToString()
+
+    for info in z_in.infolist():
+        with (
+            z_in.open(info, 'r') as f_in,
+            z_out.open(info, 'w') as f_out,
+        ):
+            if info.filename == PATH_METADATA:
+                f_out.write(legacy_metadata_str.encode('UTF-8'))
+            elif info.filename == PATH_METADATA_PB:
+                f_out.write(metadata_bytes)
+            else:
+                shutil.copyfileobj(f_in, f_out)
+
+
+def _sign_file(input_path, output_path, privkey, cert):
+    '''
+    Sign an OTA zip with AOSP's signapk tool. This may result in the zip
+    entries being reordered.
+    '''
+
+    subprocess.check_call([
+        'java',
+        '-Xmx4096m',
+        '-jar',
+        os.path.join(
+            os.path.dirname(__file__),
+            '..', 'signapk', 'build', 'libs', 'signapk-all.jar',
+        ),
+        '-w',
+        cert,
+        privkey,
+        input_path,
+        output_path,
+    ])
+
+
+def sign_zip(input_path, output_path, privkey_ota, cert_ota, metadata_raw):
     '''
     Sign an unsigned OTA zip. <metadata_raw> should be the serialized OTA
-    metadata protobuf struct from the original OTA. The property files contained
-    within the metadata that reference stored zip entries will be deleted and
-    recreated during signing.
+    metadata protobuf struct from the original OTA. The property files
+    contained within the metadata that reference stored zip entries will be
+    deleted and recreated during signing.
+
+    This is a reimplementation of ota_utils.FinalizeMetadata() because that
+    function is quite inefficient, disk space and memory wise.
     '''
 
     metadata = ota_metadata_pb2.OtaMetadata()
@@ -365,32 +421,67 @@ def sign_zip(input_path, output_path, key_prefix, metadata_raw):
 
     metadata.property_files.clear()
 
-    # We can't replace common.OPTIONS itself because ota_utils holds a reference
-    # to the original instance
-    attrs = (
-        'search_path',
-        'signapk_shared_library_path',
-        'signapk_path',
-    )
-    orig_attrs = {a: getattr(common.OPTIONS, a) for a in attrs}
+    props = [
+        ota_utils.AbOtaPropertyFiles(),
+        ota_utils.StreamingPropertyFiles(),
+    ]
 
-    try:
-        common.OPTIONS.search_path = '/var/empty'
-        common.OPTIONS.signapk_shared_library_path = '/var/empty'
-        common.OPTIONS.signapk_path = os.path.join(
-            os.path.dirname(__file__),
-            '..', 'signapk', 'build', 'libs', 'signapk-all.jar',
-        )
+    # The first signing attempt uses the specified input file initially and
+    # writes to the specified output file. If more signing attempts are needed,
+    # the now-intermediate output file will be used as the input for the next
+    # attempt.
+    attempt_input_path = input_path
 
-        ota_utils.FinalizeMetadata(
-            metadata,
-            input_path,
-            output_path,
-            package_key=key_prefix,
-        )
+    # This is set to true once we know that the metadata entries can fit in the
+    # reserved space within the property files.
+    reserved_ok = False
 
-    finally:
-        common.Cleanup()
+    for attempt in itertools.count():
+        # Compute initial property files with reserved space as placeholders
+        # to store the metadata entries later
+        if not reserved_ok:
+            with zipfile.ZipFile(attempt_input_path, 'r') as z:
+                for p in props:
+                    metadata.property_files[p.name] = p.Compute(z)
 
-        for k, v in orig_attrs.items():
-            setattr(common.OPTIONS, k, v)
+        # Replace the metadata files
+        with (
+            util.open_output_file(output_path) as f_replace,
+            zipfile.ZipFile(attempt_input_path, 'r') as z_in,
+            zipfile.ZipFile(f_replace, 'w') as z_out,
+        ):
+            _replace_metadata(z_in, z_out, metadata)
+
+        # The newly generated zip is now the input for further attempts
+        attempt_input_path = output_path
+
+        # Sign the zip "in place"
+        with util.open_output_file(output_path) as f_replace:
+            _sign_file(output_path, f_replace.name, privkey_ota, cert_ota)
+
+        with zipfile.ZipFile(output_path, 'r') as z:
+            # Compute the final property files, including metadata entries
+            try:
+                for p in props:
+                    metadata.property_files[p.name] = \
+                        p.Finalize(z, len(metadata.property_files[p.name]))
+
+                reserved_ok = True
+            except ota_utils.PropertyFiles.InsufficientSpaceException:
+                # There is not enough space in the placeholders to store the
+                # additional metadata entries and the new file offsets after
+                # potential reordering by signapk. Try again since reordering
+                # should no longer happen.
+                if attempt == 0:
+                    continue
+                else:
+                    raise
+
+            # Attempt number 0 only has placeholders, so don't bother verifying
+            if attempt > 0:
+                # Verify that the zip entry offsets in the property files are
+                # still valid after signing
+                for p in props:
+                    p.Verify(z, metadata.property_files[p.name].strip())
+
+                break
