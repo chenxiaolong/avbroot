@@ -72,19 +72,11 @@ The boot-related components are signed with an AVB key and OTA-related component
     git submodule update --init --recursive
     ```
 
-3. Ensure that `openssl`, `python3`, `python3-protobuf`, and a Java compiler are installed.
+3. Ensure that `openssl`, `python3`, and `python3-protobuf` are installed.
 
 4. Follow the steps to [generate signing keys](#generating-keys).
 
-5. Compile the signapk dependency from source.
-
-    ```bash
-    pushd signapk
-    ./gradlew shadowJar
-    popd
-    ```
-
-6. Patch the full OTA ZIP.
+5. Patch the full OTA ZIP.
 
     ```bash
     python avbroot.py \
@@ -100,9 +92,9 @@ The boot-related components are signed with an AVB key and OTA-related component
 
     If `--output` is not specified, then the output file is written to `<input>.patched`.
 
-7. **[Initial setup only]** Unlock the bootloader. This will trigger a data wipe.
+6. **[Initial setup only]** Unlock the bootloader. This will trigger a data wipe.
 
-8. **[Initial setup only]** Extract the patched `boot`, `vendor_boot`, and `vbmeta` images from the patched OTA.
+7. **[Initial setup only]** Extract the patched `boot`, `vendor_boot`, and `vbmeta` images from the patched OTA.
 
     ```bash
     mkdir extracted
@@ -112,7 +104,7 @@ The boot-related components are signed with an AVB key and OTA-related component
         --directory extracted
     ```
 
-9. **[Initial setup only]** Flash the patched images and the AVB public key metadata. This sets up the custom root of trust. Future updates are done by simply sideloading patched OTA zips.
+8. **[Initial setup only]** Flash the patched images and the AVB public key metadata. This sets up the custom root of trust. Future updates are done by simply sideloading patched OTA zips.
 
     ```bash
     fastboot flash boot extracted/boot.img
@@ -122,19 +114,19 @@ The boot-related components are signed with an AVB key and OTA-related component
     fastboot flash avb_custom_key /path/to/avb_pkmd.bin
     ```
 
-10. **[Initial setup only]** Run `dmesg` as root to verify that AVB is working properly. A message similar to the following is expected:
+9. **[Initial setup only]** Run `dmesg` as root to verify that AVB is working properly. A message similar to the following is expected:
 
     ```bash
     init: [libfs_avb]Returning avb_handle with status: Success
     ```
 
-11. **[Initial setup only]** Lock the bootloader. This will trigger a data wipe again. **Do not uncheck `OEM unlocking`!**
+10. **[Initial setup only]** Lock the bootloader. This will trigger a data wipe again. **Do not uncheck `OEM unlocking`!**
 
 ### Updates
 
 To update Android or Magisk:
 
-1. Follow step 6 in [the previous section](#usage) to patch the new OTA (or an existing OTA with a newer Magisk APK).
+1. Follow step 5 in [the previous section](#usage) to patch the new OTA (or an existing OTA with a newer Magisk APK).
 
 2. Reboot to recovery mode. If stuck at a `No command` screen, press the volume up button once while holding down the power button.
 

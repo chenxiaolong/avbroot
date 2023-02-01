@@ -18,6 +18,9 @@ from avbroot import util
 from avbroot import vbmeta
 
 
+PATH_METADATA = 'META-INF/com/android/metadata'
+PATH_METADATA_PB = f'{PATH_METADATA}.pb'
+PATH_OTACERT = 'META-INF/com/android/otacert'
 PATH_PAYLOAD = 'payload.bin'
 PATH_PROPERTIES = 'payload_properties.txt'
 
@@ -124,7 +127,13 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
         zipfile.ZipFile(f_zip_out, 'w') as z_out,
     ):
         infolist = z_in.infolist()
-        missing = {ota.PATH_METADATA_PB, PATH_PAYLOAD, PATH_PROPERTIES}
+        missing = {
+            PATH_METADATA,
+            PATH_METADATA_PB,
+            PATH_OTACERT,
+            PATH_PAYLOAD,
+            PATH_PROPERTIES,
+        }
         i_payload = -1
         i_properties = -1
 
@@ -149,13 +158,37 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
                 infolist[i_properties], infolist[i_payload]
 
         properties = None
-        metadata = None
+        metadata_info = None
+        metadata_pb_info = None
+        metadata_pb_raw = None
 
-        for info in z_in.infolist():
+        for info in infolist:
+            # Ignore because the plain-text legacy metadata file is regenerated
+            # from the new metadata
+            if info.filename == PATH_METADATA:
+                metadata_info = info
+                continue
+
             # The existing metadata is needed to generate a new signed zip
-            if info.filename == ota.PATH_METADATA_PB:
+            elif info.filename == PATH_METADATA_PB:
+                metadata_pb_info = info
+
                 with z_in.open(info, 'r') as f_in:
-                    metadata = f_in.read()
+                    metadata_pb_raw = f_in.read()
+
+                continue
+
+            # Use the user's OTA certificate
+            elif info.filename == PATH_OTACERT:
+                print_status('Replacing', info.filename)
+
+                with (
+                    open(cert_ota, 'rb') as f_cert,
+                    z_out.open(info, 'w') as f_out,
+                ):
+                    shutil.copyfileobj(f_cert, f_out)
+
+                continue
 
             # Copy other files, patching if needed
             with (
@@ -191,6 +224,17 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
 
                     shutil.copyfileobj(f_in, f_out)
 
+        print_status('Generating', PATH_METADATA, 'and', PATH_METADATA_PB)
+        metadata = ota.add_metadata(
+            z_out,
+            metadata_info,
+            metadata_pb_info,
+            metadata_pb_raw,
+        )
+
+        # Signing process needs to capture the zip central directory
+        f_zip_out.start_capture()
+
         return metadata
 
 
@@ -221,24 +265,23 @@ def patch_subcommand(args):
 
         start = time.perf_counter_ns()
 
-        with util.open_output_file(output) as temp:
-            metadata = patch_ota_zip(
-                args.input,
-                temp,
-                args.magisk,
-                dec_privkey_avb,
-                dec_privkey_ota,
-                args.cert_ota,
-            )
+        with util.open_output_file(output) as temp_raw:
+            with ota.open_signing_wrapper(temp_raw, dec_privkey_ota,
+                                          args.cert_ota) as temp:
+                with ota.match_android_zip64_limit():
+                    metadata = patch_ota_zip(
+                        args.input,
+                        temp,
+                        args.magisk,
+                        dec_privkey_avb,
+                        dec_privkey_ota,
+                        args.cert_ota,
+                    )
 
-            print_status('Signing OTA zip')
-            ota.sign_zip(
-                temp.name,
-                temp.name,
-                dec_privkey_ota,
-                args.cert_ota,
-                metadata,
-            )
+            # We do a lot of low-level hackery. Reopen and verify offsets
+            print_status('Verifying metadata offsets')
+            with zipfile.ZipFile(temp_raw, 'r') as z:
+                ota.verify_metadata(z, metadata)
 
         # Excluding the time it takes for the user to type in the passwords
         elapsed = time.perf_counter_ns() - start
