@@ -239,6 +239,10 @@ def _sign_hash(hash, key, max_sig_size):
     return signatures
 
 
+def _serialize_protobuf(p):
+    return p.SerializeToString(deterministic=True)
+
+
 def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
                   patched, file_size, key):
     '''
@@ -282,14 +286,14 @@ def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
     # Get the length of an dummy signature struct since the length fields are
     # part of the data to be signed
     dummy_sig = _sign_hash(hashlib.sha256().digest(), key, max_sig_size)
-    dummy_sig_size = len(dummy_sig.SerializeToString())
+    dummy_sig_size = len(_serialize_protobuf(dummy_sig))
 
     # Fill out new payload signature information
     manifest.signatures_offset = blob_size
     manifest.signatures_size = dummy_sig_size
 
     # Build new manifest
-    manifest_raw_new = manifest.SerializeToString()
+    manifest_raw_new = _serialize_protobuf(manifest)
 
     class MultipleHasher:
         def __init__(self, hashers):
@@ -323,7 +327,7 @@ def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
     # the payload hash.
     metadata_hash = h_partial.digest()
     metadata_sig = _sign_hash(metadata_hash, key, max_sig_size)
-    write(h_full, metadata_sig.SerializeToString())
+    write(h_full, _serialize_protobuf(metadata_sig))
 
     # Write new blob
     for image_file, data_offset, data_length in blob_data_list:
@@ -337,7 +341,7 @@ def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
 
     # Append payload signature
     payload_sig = _sign_hash(h_partial.digest(), key, max_sig_size)
-    write(h_full, payload_sig.SerializeToString())
+    write(h_full, _serialize_protobuf(payload_sig))
 
     # Generate properties file
     metadata_offset = len(OTA_MAGIC) + struct.calcsize('!QQI')
@@ -376,7 +380,7 @@ def _serialize_metadata(metadata):
     legacy_metadata = ota_utils.BuildLegacyOtaMetadata(metadata)
     legacy_metadata_str = "".join([f'{k}={v}\n' for k, v in
                                    sorted(legacy_metadata.items())])
-    metadata_bytes = metadata.SerializeToString()
+    metadata_bytes = _serialize_protobuf(metadata)
 
     return legacy_metadata_str.encode('UTF-8'), metadata_bytes
 
