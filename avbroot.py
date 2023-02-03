@@ -18,14 +18,11 @@ from avbroot import util
 from avbroot import vbmeta
 
 
-PATH_METADATA_PB = 'META-INF/com/android/metadata.pb'
+PATH_METADATA = 'META-INF/com/android/metadata'
+PATH_METADATA_PB = f'{PATH_METADATA}.pb'
+PATH_OTACERT = 'META-INF/com/android/otacert'
 PATH_PAYLOAD = 'payload.bin'
 PATH_PROPERTIES = 'payload_properties.txt'
-SKIP_PATHS = (
-    PATH_METADATA_PB,
-    'META-INF/com/android/metadata',
-    'META-INF/com/android/otacert',
-)
 
 
 def print_status(*args, **kwargs):
@@ -130,7 +127,13 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
         zipfile.ZipFile(f_zip_out, 'w') as z_out,
     ):
         infolist = z_in.infolist()
-        missing = {PATH_METADATA_PB, PATH_PAYLOAD, PATH_PROPERTIES}
+        missing = {
+            PATH_METADATA,
+            PATH_METADATA_PB,
+            PATH_OTACERT,
+            PATH_PAYLOAD,
+            PATH_PROPERTIES,
+        }
         i_payload = -1
         i_properties = -1
 
@@ -155,17 +158,36 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
                 infolist[i_properties], infolist[i_payload]
 
         properties = None
-        metadata = None
+        metadata_info = None
+        metadata_pb_info = None
+        metadata_pb_raw = None
 
-        for info in z_in.infolist():
+        for info in infolist:
+            # Ignore because the plain-text legacy metadata file is regenerated
+            # from the new metadata
+            if info.filename == PATH_METADATA:
+                metadata_info = info
+                continue
+
             # The existing metadata is needed to generate a new signed zip
-            if info.filename == PATH_METADATA_PB:
-                with z_in.open(info, 'r') as f_in:
-                    metadata = f_in.read()
+            elif info.filename == PATH_METADATA_PB:
+                metadata_pb_info = info
 
-            # Skip files that are created during zip signing
-            if info.filename in SKIP_PATHS:
-                print_status('Skipping', info.filename)
+                with z_in.open(info, 'r') as f_in:
+                    metadata_pb_raw = f_in.read()
+
+                continue
+
+            # Use the user's OTA certificate
+            elif info.filename == PATH_OTACERT:
+                print_status('Replacing', info.filename)
+
+                with (
+                    open(cert_ota, 'rb') as f_cert,
+                    z_out.open(info, 'w') as f_out,
+                ):
+                    shutil.copyfileobj(f_cert, f_out)
+
                 continue
 
             # Copy other files, patching if needed
@@ -202,6 +224,17 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
 
                     shutil.copyfileobj(f_in, f_out)
 
+        print_status('Generating', PATH_METADATA, 'and', PATH_METADATA_PB)
+        metadata = ota.add_metadata(
+            z_out,
+            metadata_info,
+            metadata_pb_info,
+            metadata_pb_raw,
+        )
+
+        # Signing process needs to capture the zip central directory
+        f_zip_out.start_capture()
+
         return metadata
 
 
@@ -222,39 +255,33 @@ def patch_subcommand(args):
         dec_privkey_avb = os.path.join(key_dir, 'avb.key')
         openssl.decrypt_key(args.privkey_avb, dec_privkey_avb)
 
-        # AOSP's OTA utils require a DER-encoded private key with the `.pk8`
-        # extension and a PEM-encoded certificate with the `.x509.pem` extension
-        dec_privkey_ota = os.path.join(key_dir, 'ota.pk8')
-        key_prefix_ota = dec_privkey_ota[:-4]
+        # signapk requires a DER-encoded private key
+        dec_privkey_ota = os.path.join(key_dir, 'ota.key')
         openssl.decrypt_key(args.privkey_ota, dec_privkey_ota, out_form='DER')
 
-        cert_ota = os.path.join(key_dir, 'ota.x509.pem')
-        shutil.copyfile(args.cert_ota, cert_ota)
-
         # Ensure that the certificate matches the private key
-        if not openssl.cert_matches_key(cert_ota, dec_privkey_ota):
+        if not openssl.cert_matches_key(args.cert_ota, dec_privkey_ota):
             raise Exception('OTA certificate does not match private key')
 
         start = time.perf_counter_ns()
 
-        with tempfile.NamedTemporaryFile() as temp_unsigned:
-            metadata = patch_ota_zip(
-                args.input,
-                temp_unsigned,
-                args.magisk,
-                dec_privkey_avb,
-                dec_privkey_ota,
-                cert_ota,
-            )
+        with util.open_output_file(output) as temp_raw:
+            with ota.open_signing_wrapper(temp_raw, dec_privkey_ota,
+                                          args.cert_ota) as temp:
+                with ota.match_android_zip64_limit():
+                    metadata = patch_ota_zip(
+                        args.input,
+                        temp,
+                        args.magisk,
+                        dec_privkey_avb,
+                        dec_privkey_ota,
+                        args.cert_ota,
+                    )
 
-            print_status('Signing OTA zip')
-            with util.open_output_file(output) as temp_signed:
-                ota.sign_zip(
-                    temp_unsigned.name,
-                    temp_signed.name,
-                    key_prefix_ota,
-                    metadata,
-                )
+            # We do a lot of low-level hackery. Reopen and verify offsets
+            print_status('Verifying metadata offsets')
+            with zipfile.ZipFile(temp_raw, 'r') as z:
+                ota.verify_metadata(z, metadata)
 
         # Excluding the time it takes for the user to type in the passwords
         elapsed = time.perf_counter_ns() - start

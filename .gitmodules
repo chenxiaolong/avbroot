@@ -7,9 +7,3 @@
 [submodule "external/build"]
 	path = external/build
 	url = https://android.googlesource.com/platform/build
-[submodule "external/bouncycastle"]
-	path = external/bouncycastle
-	url = https://android.googlesource.com/platform/external/bouncycastle
-[submodule "external/apksig"]
-	path = external/apksig
-	url = https://android.googlesource.com/platform/tools/apksig
