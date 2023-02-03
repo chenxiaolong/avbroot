@@ -53,6 +53,14 @@ class MagiskRootPatch(BootImagePatch):
         'lib/arm64-v8a/libmagisk64.so': {'dest': 'magisk64'},
         'lib/arm64-v8a/libmagiskinit.so': {'dest': 'magiskinit'},
         'lib/armeabi-v7a/libmagisk32.so': {'dest': 'magisk32'},
+        # The x86 binary is used because the x86_64 binary breaks if the PID
+        # exceeds 65535. This is due to the pthread_mutex implementation in the
+        # version of bionic libc compiled into magiskboot, which uses the
+        # thread ID as a 16-bit integer. On systems with a large PID limit,
+        # like Fedora 37, which sets `kernel.pid_max = 4194304`, the x86_64
+        # binary is almost never able to run successfully. In the future, if
+        # there's a need to work around this, we can unshare() a new PID
+        # namespace to get small PIDs.
         'lib/x86/libmagiskboot.so': {'dest': 'magiskboot'},
     }
 
