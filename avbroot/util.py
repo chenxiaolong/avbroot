@@ -142,4 +142,4 @@ def zero_n(f_out, size, buf_size=16384):
     while size:
         to_write = min(len(buf_view), size)
         f_out.write(buf_view[:to_write])
-        size -= n
+        size -= to_write
