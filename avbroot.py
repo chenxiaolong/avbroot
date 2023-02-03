@@ -243,10 +243,6 @@ def patch_subcommand(args):
     if output is None:
         output = args.input + '.patched'
 
-    # Set default temp directory to the output directory because this is the
-    # only way to control where external libraries put their temp files
-    util.set_default_temp_dir(os.path.dirname(os.path.abspath(output)))
-
     # Decrypt keys to temp directory
     with tempfile.TemporaryDirectory(dir=util.tmpfs_path()) as key_dir:
         print_status(f'Decrypting keys to temporary directory: {key_dir}')
@@ -289,10 +285,6 @@ def patch_subcommand(args):
 
 
 def extract_subcommand(args):
-    # Set default temp directory to the output directory because this is the
-    # only way to control where external libraries put their temp files
-    util.set_default_temp_dir(os.path.abspath(args.directory))
-
     with zipfile.ZipFile(args.input, 'r') as z:
         info = z.getinfo(PATH_PAYLOAD)
 
