@@ -10,19 +10,25 @@ I do not recommend using this project without a deep understanding of the implem
 
 avbroot applies two patches to the boot images:
 
-* Magisk is applied to the `boot` image as if it were done from the Magisk Manager app.
+* Magisk is applied to the `boot` or `init_boot` image, depending on device, as if it were done from the Magisk Manager app.
 
-* The `vendor_boot` image is patched to replace the OTA signature verification certificates with the custom OTA signing certificate. This allows future patched OTAs to be sideloaded after the bootloader has been locked. It also prevents accidental flashing of the original OTA package while booted into recovery.
+* The `boot`, `recovery`, or `vendor_boot` image, depending on device, is patched to replace the OTA signature verification certificates with the custom OTA signing certificate. This allows future patched OTAs to be sideloaded after the bootloader has been locked. It also prevents accidental flashing of the original OTA package while booted into recovery.
 
 ### Warnings and Caveats
 
-* This project only works with devices using (non-legacy-SAR) A/B partitioning and supporting the use of a custom public key for the bootloader's root of trust. This effectively limits the supported devices to recent Google Pixels. I've only tested with an Android 13 OTA on a Google Pixel 6 Pro and Google Pixel 7 Pro.
+* The device must use (non-legacy-SAR) A/B partitioning. This is the case on newer Pixel and OnePlus devices. To check if a device uses this partitioning sceme, open the OTA zip file and check that:
+
+  * `payload.bin` exists
+  * `META-INF/com/android/metadata.pb` exists
+  * `META-INF/com/android/metadata` contains the line: `ota-type=AB`
+
+* The device must support using a custom public key for the bootloader's root of trust. This is normally done via the `fastboot flash avb_custom_key` command. All Pixel devices with unlockable bootloaders support this, as well as most OnePlus devices. Other devices may support it as well, but there's no easy way to check without just trying it.
 
 * **Do not ever disable the `OEM unlocking` checkbox when using a locked bootloader with root.** This is critically important. With root access, it is possible to corrupt the running system, for example by zeroing out the boot partition. In this scenario, if the checkbox is turned off, both the OS and recovery mode will be made unbootable and `fastboot flashing unlock` will not be allowed. This effectively renders the device **_hard bricked_**.
 
 * Any operation that causes an unsigned or differently-signed boot image to be flashed will result in the device being unbootable and unrecoverable without unlocking the bootloader again (and thus, triggering a data wipe). This includes:
 
-    * Performing a regular (unpatched) A/B OTA update.
+    * Performing a regular (unpatched) A/B OTA update. This can be blocked via a Magisk module (see: [Blocking A/B OTA Updates](#blocking-ab-ota-updates)).
 
     * The `Direct install` method for updating Magisk. Magisk updates must be done by repatching as well.
 
@@ -88,13 +94,11 @@ The boot-related components are signed with an AVB key and OTA-related component
         --magisk /path/to/magisk.apk
     ```
 
-    If the private keys are encrypted, avbroot will prompt for the passphrase every time it runs `openssl` internally.
-
     If `--output` is not specified, then the output file is written to `<input>.patched`.
 
 6. **[Initial setup only]** Unlock the bootloader. This will trigger a data wipe.
 
-7. **[Initial setup only]** Extract the patched `boot`, `vendor_boot`, and `vbmeta` images from the patched OTA.
+7. **[Initial setup only]** Extract the patched images from the patched OTA.
 
     ```bash
     mkdir extracted
@@ -107,14 +111,20 @@ The boot-related components are signed with an AVB key and OTA-related component
 8. **[Initial setup only]** Flash the patched images and the AVB public key metadata. This sets up the custom root of trust. Future updates are done by simply sideloading patched OTA zips.
 
     ```bash
-    fastboot flash boot extracted/boot.img
-    fastboot flash vendor_boot extracted/vendor_boot.img
-    fastboot flash vbmeta extracted/vbmeta.img
+    # Flash the boot images that were extracted
+    for image in extracted/*.img; do
+        partition=$(basename "${image}")
+        partition=${partition%.img}
+
+        fastboot flash "${partition}" "${image}"
+    done
+
+    # Flash the AVB signing public key
     fastboot erase avb_custom_key
     fastboot flash avb_custom_key /path/to/avb_pkmd.bin
     ```
 
-9. **[Initial setup only]** Run `dmesg` as root to verify that AVB is working properly. A message similar to the following is expected:
+9. **[Initial setup only]** Run `dmesg | grep libfs_avb` as root to verify that AVB is working properly. A message similar to the following is expected:
 
     ```bash
     init: [libfs_avb]Returning avb_handle with status: Success
@@ -136,7 +146,7 @@ To update Android or Magisk:
 
 ### Blocking A/B OTA Updates
 
-Unpatched OTA updates are already blocked in recovery due to the replacing of the OTA signature verification certificates. To disable OTAs while booted into Android, turn off `Automatic system updates` in Android's Developer Options.
+Unpatched OTA updates are already blocked in recovery because the original OTA certificate has been replaced with the custom certificate. To disable OTAs while booted into Android, turn off `Automatic system updates` in Android's Developer Options.
 
 To intentionally make A/B OTAs fail while booted into Android (to prevent accidental manual updates), build the `clearotacerts` module:
 
@@ -148,7 +158,7 @@ and flash the `clearotacerts/dist/clearotacerts-<version>.zip` file in Magisk. T
 
 ### Implementation Details
 
-* avbroot relies on AOSP's avbtool, OTA utilities, and signapk. These are collections of applications that aren't meant to be used as libraries, but avbroot shoehorns them in anyway. Aside from signapk, these tools are not called via CLI because avbroot requires more control over the operations being performed than what is provided via the CLI interfaces. This "integration" is incredibly hacky and will likely require changes whenever the submodules are updated to point to newer AOSP commits.
+* avbroot relies on AOSP's avbtool and OTA utilities. These are collections of applications that aren't meant to be used as libraries, but avbroot shoehorns them in anyway. These tools are not called via CLI because avbroot requires more control over the operations being performed than what is provided via the CLI interfaces. This "integration" is incredibly hacky and will likely require changes whenever the submodules are updated to point to newer AOSP commits.
 
 * AVB has two methods of handling signature verification:
 
@@ -159,7 +169,7 @@ and flash the `clearotacerts/dist/clearotacerts-<version>.zip` file in Magisk. T
 
 ### Contributing
 
-I'm currently not accepting contributions for avbroot as I only intend to maintain the minimum amount of code needed for it to work on my devices. I'd encourage others to fork and modify avbroot for their own needs.
+Contributions are welcome! However, I'm unlikely to accept changes for supporting devices that behave significantly differently from Pixel devices.
 
 ### License
 
