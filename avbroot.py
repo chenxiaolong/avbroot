@@ -298,7 +298,7 @@ def extract_subcommand(args):
 
         with z.open(info, 'r') as f:
             _, manifest, blob_offset = ota.parse_payload(f)
-            images, _ = get_images(manifest)
+            images, _, _ = get_images(manifest)
 
             print_status('Extracting', ', '.join(images), 'from the payload')
             ota.extract_images(f, manifest, blob_offset, args.directory, images)
