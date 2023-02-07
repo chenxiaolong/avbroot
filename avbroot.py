@@ -31,21 +31,30 @@ def print_status(*args, **kwargs):
 
 def get_images(manifest):
     boot_image = 'boot'
-    vendor_boot_image = None
+    otacert_image = None
 
     for p in manifest.partitions:
         # Devices launching with Android 13 use a GKI init_boot ramdisk
         if p.partition_name == 'init_boot':
             boot_image = p.partition_name
+        # OnePlus devices have a recovery image
+        elif p.partition_name == 'recovery':
+            # If a recovery image exists, it will always contain the OTA certs,
+            # even if vendor_boot exists
+            otacert_image = p.partition_name
         # Older devices may not have vendor_boot
         elif p.partition_name == 'vendor_boot':
-            vendor_boot_image = p.partition_name
+            if otacert_image is None:
+                otacert_image = p.partition_name
 
     images = ['vbmeta', boot_image]
-    if vendor_boot_image is not None:
-        images.append(vendor_boot_image)
 
-    return images, boot_image
+    if otacert_image is not None:
+        images.append(otacert_image)
+    else:
+        otacert_image = boot_image
+
+    return images, boot_image, otacert_image
 
 
 def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
@@ -59,22 +68,21 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
         os.mkdir(payload_dir)
 
         version, manifest, blob_offset = ota.parse_payload(f_in)
-        images, boot_image = get_images(manifest)
+        images, boot_image, otacert_image = get_images(manifest)
 
         print_status('Extracting', ', '.join(images), 'from the payload')
         ota.extract_images(f_in, manifest, blob_offset, extract_dir, images)
 
         boot_patches = [boot.MagiskRootPatch(magisk)]
-        vendor_boot_patches = [boot.OtaCertPatch(magisk, cert_ota)]
+        otacert_patches = [boot.OtaCertPatch(magisk, cert_ota)]
 
-        # Older devices don't have a vendor_boot
-        if 'vendor_boot' not in images:
-            boot_patches.extend(vendor_boot_patches)
-            vendor_boot_patches.clear()
+        if otacert_image == boot_image:
+            boot_patches.extend(otacert_patches)
+            otacert_patches.clear()
 
         avb = avbtool.Avb()
 
-        print_status('Patching boot image')
+        print_status(f'Patching {boot_image} image')
         boot.patch_boot(
             avb,
             os.path.join(extract_dir, f'{boot_image}.img'),
@@ -84,15 +92,15 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
             boot_patches,
         )
 
-        if vendor_boot_patches:
-            print_status('Patching vendor_boot image')
+        if otacert_patches:
+            print_status(f'Patching {otacert_image} image')
             boot.patch_boot(
                 avb,
-                os.path.join(extract_dir, 'vendor_boot.img'),
-                os.path.join(patch_dir, 'vendor_boot.img'),
+                os.path.join(extract_dir, f'{otacert_image}.img'),
+                os.path.join(patch_dir, f'{otacert_image}.img'),
                 privkey_avb,
                 True,
-                vendor_boot_patches,
+                otacert_patches,
             )
 
         print_status('Building new root vbmeta image')

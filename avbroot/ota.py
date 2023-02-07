@@ -92,7 +92,8 @@ def _extract_image(f_payload, f_out, block_size, blob_offset, partition):
             else:
                 raise Exception(f'Unsupported operation: {op.type}')
 
-            if h_data.digest() != op.data_sha256_hash:
+            # OnePlus OTA payloads don't specify a checksum for ZERO blocks
+            if h_data.digest() != op.data_sha256_hash and op.type != Type.ZERO:
                 raise Exception('Expected hash %s, but got %s' %
                                 (h_data.hexdigest(),
                                  binascii.hexlify(op.data_sha256_hash)))

@@ -101,13 +101,20 @@ class OtaCertPatch(BootImagePatch):
 
             if magic == b'ANDROID!':
                 f.seek(0x28)
+                is_vendor = False
             elif magic == b'VNDRBOOT':
                 # Version is immediately after magic
-                pass
+                is_vendor = True
             else:
                 raise Exception(b'Invalid magic: {magic}')
 
-            return struct.unpack('I', f.read(4))[0]
+            return struct.unpack('I', f.read(4))[0], is_vendor
+
+    def _is_uncompressed(self, ramdisk_file):
+        with open(ramdisk_file, 'rb') as f:
+            magic = f.read(6)
+
+            return magic == b'070701' or magic == b'070702'
 
     def patch(self, image_file, temp_dir):
         def run(*args):
@@ -122,8 +129,10 @@ class OtaCertPatch(BootImagePatch):
         # ramdisks as there may be more than one. This is not the case for
         # Android 13 on the Pixel 6 Pro.
         ramdisk_file = 'ramdisk.cpio'
-        header_version = self._read_header_version(image_file)
-        if header_version == 4:
+        header_version, is_vendor = self._read_header_version(image_file)
+        need_decompress = header_version == 4 and is_vendor
+
+        if need_decompress:
             ramdisk_file = 'decompressed.cpio'
             run('decompress', 'ramdisk.cpio', ramdisk_file)
 
@@ -151,7 +160,7 @@ class OtaCertPatch(BootImagePatch):
         )
 
         # Recompress ramdisk
-        if header_version == 4:
+        if need_decompress:
             run('compress=lz4_legacy', ramdisk_file, 'ramdisk.cpio')
 
         # Repack image
