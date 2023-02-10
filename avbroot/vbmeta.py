@@ -2,6 +2,7 @@ import contextlib
 
 import avbtool
 
+from . import openssl
 from . import util
 
 
@@ -37,10 +38,9 @@ def smuggle_descriptors():
 
 def _get_descriptor_overrides(avb, paths):
     '''
-    Build a set of chain and hash descriptor overrides for the given paths based
-    on whether they are signed.
+    Build a set of chain and hash descriptor overrides for the given paths
+    based on whether they are signed.
     '''
-
 
     # Partition name -> raw public key
     chains = {}
@@ -54,7 +54,7 @@ def _get_descriptor_overrides(avb, paths):
 
         # Find the partition name in the first hash descriptor
         hash = next(d for d in descriptors
-            if isinstance(d, avbtool.AvbHashDescriptor))
+                    if isinstance(d, avbtool.AvbHashDescriptor))
 
         if hash is None:
             raise Exception(f'{path} has no hash descriptor')
@@ -76,7 +76,8 @@ def _get_descriptor_overrides(avb, paths):
     return (chains, hashes)
 
 
-def patch_vbmeta_root(avb, images, input_path, output_path, key, padding_size):
+def patch_vbmeta_root(avb, images, input_path, output_path, key, passphrase,
+                      padding_size):
     '''
     Patch the root vbmeta image to reference the provided images.
     '''
@@ -115,25 +116,28 @@ def patch_vbmeta_root(avb, images, input_path, output_path, key, padding_size):
 
     with util.open_output_file(output_path) as f:
         # Smuggle in the prebuilt descriptors via kernel_cmdlines
-        with smuggle_descriptors():
+        with (
+            smuggle_descriptors(),
+            openssl.inject_passphrase(passphrase),
+        ):
             avb.make_vbmeta_image(
-                output = f,
-                chain_partitions = None,
-                algorithm_name = algorithm_name,
-                key_path = key,
-                public_key_metadata_path = None,
-                rollback_index = header.rollback_index,
-                flags = header.flags,
-                rollback_index_location = header.rollback_index_location,
-                props = None,
-                props_from_file = None,
-                kernel_cmdlines = new_descriptors,
-                setup_rootfs_from_kernel = None,
-                include_descriptors_from_image = None,
-                signing_helper = None,
-                signing_helper_with_files = None,
-                release_string = header.release_string,
-                append_to_release_string = False,
-                print_required_libavb_version = False,
-                padding_size = padding_size,
+                output=f,
+                chain_partitions=None,
+                algorithm_name=algorithm_name,
+                key_path=key,
+                public_key_metadata_path=None,
+                rollback_index=header.rollback_index,
+                flags=header.flags,
+                rollback_index_location=header.rollback_index_location,
+                props=None,
+                props_from_file=None,
+                kernel_cmdlines=new_descriptors,
+                setup_rootfs_from_kernel=None,
+                include_descriptors_from_image=None,
+                signing_helper=None,
+                signing_helper_with_files=None,
+                release_string=header.release_string,
+                append_to_release_string=False,
+                print_required_libavb_version=False,
+                padding_size=padding_size,
             )

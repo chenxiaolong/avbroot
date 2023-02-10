@@ -221,13 +221,13 @@ def _recompute_offsets(manifest, new_images):
     return (data_list, offset)
 
 
-def _sign_hash(hash, key, max_sig_size):
+def _sign_hash(hash, key, passphrase, max_sig_size):
     '''
     Sign <hash> with <key> and return a Signatures protobuf struct with the
     signature padded to <max_sig_size>.
     '''
 
-    hash_signed = openssl.sign_data(key, hash)
+    hash_signed = openssl.sign_data(key, passphrase, hash)
     assert len(hash_signed) <= max_sig_size
 
     signature = update_metadata_pb2.Signatures.Signature()
@@ -245,13 +245,13 @@ def _serialize_protobuf(p):
 
 
 def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
-                  patched, file_size, key):
+                  patched, file_size, key, passphrase):
     '''
     Copy the payload from <f_in> to <f_out>, updating references to <patched>
     images as they are encountered. <f_out> will be signed with <key>.
     '''
 
-    max_sig_size = openssl.max_signature_size(key)
+    max_sig_size = openssl.max_signature_size(key, passphrase)
 
     # Strip out old payload signature
     if manifest.HasField('signatures_size'):
@@ -286,7 +286,8 @@ def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
 
     # Get the length of an dummy signature struct since the length fields are
     # part of the data to be signed
-    dummy_sig = _sign_hash(hashlib.sha256().digest(), key, max_sig_size)
+    dummy_sig = _sign_hash(hashlib.sha256().digest(), key, passphrase,
+                           max_sig_size)
     dummy_sig_size = len(_serialize_protobuf(dummy_sig))
 
     # Fill out new payload signature information
@@ -327,7 +328,7 @@ def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
     # Sign metadata (header + manifest) hash. The signature is not included in
     # the payload hash.
     metadata_hash = h_partial.digest()
-    metadata_sig = _sign_hash(metadata_hash, key, max_sig_size)
+    metadata_sig = _sign_hash(metadata_hash, key, passphrase, max_sig_size)
     write(h_full, _serialize_protobuf(metadata_sig))
 
     # Write new blob
@@ -341,7 +342,7 @@ def patch_payload(f_in, f_out, version, manifest, blob_offset, temp_dir,
                 util.copyfileobj_n(f_image, f_out, data_length, hasher=h_both)
 
     # Append payload signature
-    payload_sig = _sign_hash(h_partial.digest(), key, max_sig_size)
+    payload_sig = _sign_hash(h_partial.digest(), key, passphrase, max_sig_size)
     write(h_full, _serialize_protobuf(payload_sig))
 
     # Generate properties file
@@ -655,31 +656,32 @@ class _TeeFileDescriptor:
 
 
 @contextlib.contextmanager
-def open_signing_wrapper(f, privkey, cert):
+def open_signing_wrapper(f, privkey, passphrase, cert):
     '''
     Create a file-like wrapper around an existing file object that performs CMS
     signing as data is being written.
     '''
 
-    openssl = subprocess.Popen(
-        [
-            'openssl',
-            'cms',
-            '-sign',
-            '-binary',
-            '-outform', 'DER',
-            '-inkey', privkey,
-            '-signer', cert,
-            # Mimic signapk behavior by excluding signed attributes
-            '-noattr',
-            '-nosmimecap',
-        ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-    )
+    with openssl.inject_passphrase(passphrase):
+        process = subprocess.Popen(
+            [
+                'openssl',
+                'cms',
+                '-sign',
+                '-binary',
+                '-outform', 'DER',
+                '-inkey', privkey,
+                '-signer', cert,
+                # Mimic signapk behavior by excluding signed attributes
+                '-noattr',
+                '-nosmimecap',
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        )
 
     try:
-        wrapper = _TeeFileDescriptor((f, openssl.stdin), file_index=0)
+        wrapper = _TeeFileDescriptor((f, process.stdin), file_index=0)
         yield wrapper
 
         with wrapper._finish_capture() as f_buffer:
@@ -696,16 +698,16 @@ def open_signing_wrapper(f, privkey, cert):
             f_buffer.seek(-2, os.SEEK_CUR)
             f_buffer.truncate(f_buffer.tell())
 
-        openssl.stdin.close()
-        signature = openssl.stdout.read()
+        process.stdin.close()
+        signature = process.stdout.read()
     except Exception:
-        openssl.kill()
+        process.kill()
         raise
     finally:
-        openssl.wait()
+        process.wait()
 
-    if openssl.returncode != 0:
-        raise Exception(f'openssl exited with status: {openssl.returncode}')
+    if process.returncode != 0:
+        raise Exception(f'openssl exited with status: {process.returncode}')
 
     # Double check that the EOCD magic is where it should be when there is no
     # archive comment

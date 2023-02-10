@@ -57,8 +57,8 @@ def get_images(manifest):
     return images, boot_image, otacert_image
 
 
-def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
-                      cert_ota):
+def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb,
+                      passphrase_avb, privkey_ota, passphrase_ota, cert_ota):
     with tempfile.TemporaryDirectory() as temp_dir:
         extract_dir = os.path.join(temp_dir, 'extract')
         patch_dir = os.path.join(temp_dir, 'patch')
@@ -88,6 +88,7 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
             os.path.join(extract_dir, f'{boot_image}.img'),
             os.path.join(patch_dir, f'{boot_image}.img'),
             privkey_avb,
+            passphrase_avb,
             True,
             boot_patches,
         )
@@ -99,6 +100,7 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
                 os.path.join(extract_dir, f'{otacert_image}.img'),
                 os.path.join(patch_dir, f'{otacert_image}.img'),
                 privkey_avb,
+                passphrase_avb,
                 True,
                 otacert_patches,
             )
@@ -111,6 +113,7 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
             os.path.join(extract_dir, 'vbmeta.img'),
             os.path.join(patch_dir, 'vbmeta.img'),
             privkey_avb,
+            passphrase_avb,
             manifest.block_size,
         )
 
@@ -125,11 +128,12 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb, privkey_ota,
             {i: os.path.join(patch_dir, f'{i}.img') for i in images},
             file_size,
             privkey_ota,
+            passphrase_ota,
         )
 
 
-def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
-                  cert_ota):
+def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, passphrase_avb,
+                  privkey_ota, passphrase_ota, cert_ota):
     with (
         zipfile.ZipFile(f_zip_in, 'r') as z_in,
         zipfile.ZipFile(f_zip_out, 'w') as z_out,
@@ -207,7 +211,8 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
                     print_status('Patching', info.filename)
 
                     if info.compress_type != zipfile.ZIP_STORED:
-                        raise Exception(f'{info.filename} is not stored uncompressed')
+                        raise Exception(
+                            f'{info.filename} is not stored uncompressed')
 
                     properties = patch_ota_payload(
                         f_in,
@@ -215,7 +220,9 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
                         info.file_size,
                         magisk,
                         privkey_avb,
+                        passphrase_avb,
                         privkey_ota,
+                        passphrase_ota,
                         cert_ota,
                     )
 
@@ -223,7 +230,8 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, privkey_ota,
                     print_status('Patching', info.filename)
 
                     if info.compress_type != zipfile.ZIP_STORED:
-                        raise Exception(f'{info.filename} is not stored uncompressed')
+                        raise Exception(
+                            f'{info.filename} is not stored uncompressed')
 
                     f_out.write(properties)
 
@@ -251,45 +259,42 @@ def patch_subcommand(args):
     if output is None:
         output = args.input + '.patched'
 
-    # Decrypt keys to temp directory
-    with tempfile.TemporaryDirectory(dir=util.tmpfs_path()) as key_dir:
-        print_status(f'Decrypting keys to temporary directory: {key_dir}')
+    # Get passphrases for keys
+    passphrase_avb = openssl.prompt_passphrase(args.privkey_avb)
+    passphrase_ota = openssl.prompt_passphrase(args.privkey_ota)
 
-        # avbtool requires a PEM-encoded private key
-        dec_privkey_avb = os.path.join(key_dir, 'avb.key')
-        openssl.decrypt_key(args.privkey_avb, dec_privkey_avb)
+    # Ensure that the certificate matches the private key
+    if not openssl.cert_matches_key(args.cert_ota, args.privkey_ota,
+                                    passphrase_ota):
+        raise Exception('OTA certificate does not match private key')
 
-        # signapk requires a DER-encoded private key
-        dec_privkey_ota = os.path.join(key_dir, 'ota.key')
-        openssl.decrypt_key(args.privkey_ota, dec_privkey_ota, out_form='DER')
+    start = time.perf_counter_ns()
 
-        # Ensure that the certificate matches the private key
-        if not openssl.cert_matches_key(args.cert_ota, dec_privkey_ota):
-            raise Exception('OTA certificate does not match private key')
+    with util.open_output_file(output) as temp_raw:
+        with (
+            ota.open_signing_wrapper(temp_raw, args.privkey_ota,
+                                     passphrase_ota, args.cert_ota) as temp,
+            ota.match_android_zip64_limit(),
+        ):
+            metadata = patch_ota_zip(
+                args.input,
+                temp,
+                args.magisk,
+                args.privkey_avb,
+                passphrase_avb,
+                args.privkey_ota,
+                passphrase_ota,
+                args.cert_ota,
+            )
 
-        start = time.perf_counter_ns()
+        # We do a lot of low-level hackery. Reopen and verify offsets
+        print_status('Verifying metadata offsets')
+        with zipfile.ZipFile(temp_raw, 'r') as z:
+            ota.verify_metadata(z, metadata)
 
-        with util.open_output_file(output) as temp_raw:
-            with ota.open_signing_wrapper(temp_raw, dec_privkey_ota,
-                                          args.cert_ota) as temp:
-                with ota.match_android_zip64_limit():
-                    metadata = patch_ota_zip(
-                        args.input,
-                        temp,
-                        args.magisk,
-                        dec_privkey_avb,
-                        dec_privkey_ota,
-                        args.cert_ota,
-                    )
-
-            # We do a lot of low-level hackery. Reopen and verify offsets
-            print_status('Verifying metadata offsets')
-            with zipfile.ZipFile(temp_raw, 'r') as z:
-                ota.verify_metadata(z, metadata)
-
-        # Excluding the time it takes for the user to type in the passwords
-        elapsed = time.perf_counter_ns() - start
-        print_status(f'Completed after {elapsed / 1_000_000_000:.1f}s')
+    # Excluding the time it takes for the user to type in the passwords
+    elapsed = time.perf_counter_ns() - start
+    print_status(f'Completed after {elapsed / 1_000_000_000:.1f}s')
 
 
 def extract_subcommand(args):
@@ -301,7 +306,8 @@ def extract_subcommand(args):
             images, _, _ = get_images(manifest)
 
             print_status('Extracting', ', '.join(images), 'from the payload')
-            ota.extract_images(f, manifest, blob_offset, args.directory, images)
+            ota.extract_images(f, manifest, blob_offset, args.directory,
+                               images)
 
 
 def parse_args():
