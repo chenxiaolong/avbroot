@@ -7,6 +7,7 @@ import zipfile
 
 import avbtool
 
+from . import openssl
 from . import util
 from . import vbmeta
 
@@ -169,8 +170,8 @@ class OtaCertPatch(BootImagePatch):
         shutil.copyfile(os.path.join(temp_dir, 'new-boot.img'), image_file)
 
 
-def patch_boot(avb, input_path, output_path, key, only_if_previously_signed,
-               patch_funcs):
+def patch_boot(avb, input_path, output_path, key, passphrase,
+               only_if_previously_signed, patch_funcs):
     '''
     Call each function in patch_funcs against a boot image with vbmeta stripped
     out and then resign the image using the provided private key.
@@ -221,34 +222,37 @@ def patch_boot(avb, input_path, output_path, key, only_if_previously_signed,
             patch_func(f.name)
 
         # Sign the new boot image
-        with vbmeta.smuggle_descriptors():
+        with (
+            vbmeta.smuggle_descriptors(),
+            openssl.inject_passphrase(passphrase),
+        ):
             avb.add_hash_footer(
-                image_filename = f.name,
-                partition_size = image_size,
-                dynamic_partition_size = False,
-                partition_name = hash.partition_name,
-                hash_algorithm = hash.hash_algorithm,
-                salt = hash.salt.hex(),
-                chain_partitions = None,
-                algorithm_name = algorithm_name,
-                key_path = key,
-                public_key_metadata_path = None,
-                rollback_index = header.rollback_index,
-                flags = header.flags,
-                rollback_index_location = header.rollback_index_location,
-                props = None,
-                props_from_file = None,
-                kernel_cmdlines = new_descriptors,
-                setup_rootfs_from_kernel = None,
-                include_descriptors_from_image = None,
-                calc_max_image_size = False,
-                signing_helper = None,
-                signing_helper_with_files = None,
-                release_string = header.release_string,
-                append_to_release_string = None,
-                output_vbmeta_image = None,
-                do_not_append_vbmeta_image = False,
-                print_required_libavb_version = False,
-                use_persistent_digest = False,
-                do_not_use_ab = False,
+                image_filename=f.name,
+                partition_size=image_size,
+                dynamic_partition_size=False,
+                partition_name=hash.partition_name,
+                hash_algorithm=hash.hash_algorithm,
+                salt=hash.salt.hex(),
+                chain_partitions=None,
+                algorithm_name=algorithm_name,
+                key_path=key,
+                public_key_metadata_path=None,
+                rollback_index=header.rollback_index,
+                flags=header.flags,
+                rollback_index_location=header.rollback_index_location,
+                props=None,
+                props_from_file=None,
+                kernel_cmdlines=new_descriptors,
+                setup_rootfs_from_kernel=None,
+                include_descriptors_from_image=None,
+                calc_max_image_size=False,
+                signing_helper=None,
+                signing_helper_with_files=None,
+                release_string=header.release_string,
+                append_to_release_string=None,
+                output_vbmeta_image=None,
+                do_not_append_vbmeta_image=False,
+                print_required_libavb_version=False,
+                use_persistent_digest=False,
+                do_not_use_ab=False,
             )
