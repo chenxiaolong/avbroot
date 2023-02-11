@@ -60,6 +60,53 @@ The boot-related components are signed with an AVB key and OTA-related component
     openssl req -new -x509 -sha256 -key ota.key -out ota.crt -days 10000 -subj '/CN=OTA/'
     ```
 
+### Installing dependencies
+
+avbroot depends on `openssl` command line tool and the `lz4` and `protobuf` Python libraries.
+
+#### Linux
+
+On Linux, the dependencies can be installed from the distro's package manager:
+
+| Distro     | Command                                                    |
+|------------|------------------------------------------------------------|
+| Alpine     | `sudo apk add openssl py3-lz4 py3-protobuf`                |
+| Arch Linux | `sudo pacman -S openssl python-lz4 python-protobuf`        |
+| Debian     | `sudo apt install openssl python3-lz4 python3-protobuf`    |
+| Fedora     | `sudo dnf install openssl python3-lz4 python3-protobuf`    |
+| OpenSUSE   | `sudo zypper install openssl python3-lz4 python3-protobuf` |
+| Ubuntu     | (Same as Debian)                                           |
+
+#### Windows
+
+Installing openssl and python from the [Scoop package manager](https://scoop.sh/) is suggested.
+
+```powershell
+scoop install openssl python
+```
+
+Installing from other sources should work as well, but it might be necessary to manually add `openssl`'s installation directory to the `PATH` environment variable.
+
+To install the Python dependencies:
+
+1. Create a virtual environment (replacing `<directory>` with the path where it should be created):
+
+    ```powershell
+    python -m venv <directory>
+    ```
+
+2. Activate the virtual environment. This must be done in every new terminal session before running avbroot.
+
+    ```powershell
+    . <directory>\Scripts\Activate.ps1
+    ```
+
+3. Install the dependencies.
+
+    ```powershell
+    pip install -r requirements.txt
+    ```
+
 ### Usage
 
 1. Make sure the caveats listed above are understood. It is possible to hard brick by doing the wrong thing!
@@ -76,7 +123,7 @@ The boot-related components are signed with an AVB key and OTA-related component
     git submodule update --init --recursive
     ```
 
-3. Ensure that `openssl`, `python3`, `python3-lz4`, and `python3-protobuf` are installed.
+3. Follow the steps to [install dependencies](#installing-dependencies).
 
 4. Follow the steps to [generate signing keys](#generating-keys).
 
