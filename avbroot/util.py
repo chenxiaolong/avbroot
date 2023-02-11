@@ -7,7 +7,8 @@ import tempfile
 def open_output_file(path):
     '''
     Create a temporary file in the same directory as the specified path and
-    atomically replace it if the function succeeds.
+    replace it if the function succeeds. On non-Windows, the file replacement
+    is atomic. On Windows, it is not.
     '''
 
     directory = os.path.dirname(path)
@@ -15,6 +16,22 @@ def open_output_file(path):
     with tempfile.NamedTemporaryFile(dir=directory, delete=False) as f:
         try:
             yield f
+
+            if os.name == 'nt':
+                # Windows does not allow renaming a file with handles open
+                f.close()
+
+                # Windows only supports atomic renames by calling
+                # SetFileInformationByHandle() with the FileRenameInfoEx
+                # operation and the FILE_RENAME_FLAG_REPLACE_IF_EXISTS and
+                # FILE_RENAME_FLAG_POSIX_SEMANTICS flags. This is not exposed
+                # in Python and it's not worth adding a new dependency for
+                # doing low-level win32 API calls.
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
+
             os.rename(f.name, path)
         except Exception:
             os.unlink(f.name)
