@@ -306,6 +306,7 @@ def extract_subcommand(args):
             images, _, _ = get_images(manifest)
 
             print_status('Extracting', ', '.join(images), 'from the payload')
+            os.makedirs(args.directory, exist_ok=True)
             ota.extract_images(f, manifest, blob_offset, args.directory,
                                images)
 

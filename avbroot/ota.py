@@ -14,7 +14,7 @@ import zipfile
 
 # Silence undesired warning
 orig_argv0 = sys.argv[0]
-sys.argv[0] = sys.argv[0].removesuffix('.py')
+sys.argv[0] = os.path.basename(sys.argv[0]).removesuffix('.py')
 import ota_utils
 sys.argv[0] = orig_argv0
 
