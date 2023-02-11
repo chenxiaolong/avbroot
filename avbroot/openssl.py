@@ -2,6 +2,8 @@ import binascii
 import contextlib
 import getpass
 import os
+import random
+import string
 import subprocess
 import unittest.mock
 
@@ -18,6 +20,8 @@ def _passphrase_fd(passphrase):
     read end of the pipe is marked as inheritable. Both ends of the pipe are
     closed after leaving the context.
     '''
+
+    assert os.name != 'nt'
 
     if passphrase is None:
         yield None
@@ -50,7 +54,9 @@ def _passphrase_fd(passphrase):
 class _PopenPassphraseWrapper:
     '''
     Wrapper around subprocess.Popen() that adds arguments for passing in the
-    private key passphrase via a pipe
+    private key passphrase via a pipe on non-Windows systems. On Windows,
+    openssl does not support reading from pipes, so the passphrase is passed in
+    via an environment variable.
     '''
 
     def __init__(self, passphrase):
@@ -58,20 +64,32 @@ class _PopenPassphraseWrapper:
         self.passphrase = passphrase
 
     def __call__(self, cmd, *args, **kwargs):
-        if cmd and os.path.basename(cmd[0]) == 'openssl':
-            with _passphrase_fd(self.passphrase) as fd:
-                kwargs['close_fds'] = False
+        if self.passphrase is not None and cmd and \
+                os.path.basename(cmd[0]) == 'openssl':
+            if os.name == 'nt':
+                # On Windows, opensssl does not support reading the passphrase
+                # from a file descriptor. An environment variable is the next
+                # best way to handle this.
+                if 'env' not in kwargs:
+                    kwargs['env'] = dict(os.environ)
 
-                new_cmd = cmd[:]
-                if fd is not None:
-                    new_cmd.append('-passin')
-                    new_cmd.append(f'fd:{fd}')
+                env_var = ''.join(random.choices(string.ascii_letters, k=64))
+                kwargs['env'][env_var] = self.passphrase
+
+                new_cmd = [*cmd, '-passin', f'env:{env_var}']
 
                 return self.orig_popen(new_cmd, *args, **kwargs)
+            else:
+                with _passphrase_fd(self.passphrase) as fd:
+                    kwargs['close_fds'] = False
 
-            # The pipe is closed at this point in this process, but the child
-            # already inherited the fd and the passphrase is sitting the pipe
-            # buffer
+                    new_cmd = [*cmd, '-passin', f'fd:{fd}']
+
+                    return self.orig_popen(new_cmd, *args, **kwargs)
+
+                # The pipe is closed at this point in this process, but the
+                # child already inherited the fd and the passphrase is sitting
+                # the pipe buffer.
         else:
             return self.orig_popen(cmd, *args, **kwargs)
 
@@ -80,7 +98,8 @@ def inject_passphrase(passphrase):
     '''
     While this context is active, patch subprocess calls to openssl so that
     the passphrase is specified via an injected -passin argument, if it is not
-    None. The passphrase is passed to the command via a pipe file descriptor.
+    None. The passphrase is passed to the command via a pipe file descriptor
+    (non-Windows) or an environment variable (Windows).
     '''
 
     return unittest.mock.patch(

@@ -74,7 +74,7 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb,
         ota.extract_images(f_in, manifest, blob_offset, extract_dir, images)
 
         boot_patches = [boot.MagiskRootPatch(magisk)]
-        otacert_patches = [boot.OtaCertPatch(magisk, cert_ota)]
+        otacert_patches = [boot.OtaCertPatch(cert_ota)]
 
         if otacert_image == boot_image:
             boot_patches.extend(otacert_patches)
