@@ -21,6 +21,24 @@ def open_output_file(path):
             raise
 
 
+def hash_file(f, hasher, buf_size=16384):
+    '''
+    Update <hasher> when the data from <f> until EOF.
+    '''
+
+    buf = bytearray(buf_size)
+    buf_view = memoryview(buf)
+
+    while True:
+        n = f.readinto(buf_view)
+        if not n:
+            break
+
+        hasher.update(buf_view[:n])
+
+    return hasher
+
+
 def copyfileobj_n(f_in, f_out, size, buf_size=16384, hasher=None):
     '''
     Copy <size> bytes from <f_in> to <f_out>.
@@ -89,3 +107,16 @@ def zero_n(f_out, size, buf_size=16384):
         to_write = min(len(buf_view), size)
         f_out.write(buf_view[:to_write])
         size -= to_write
+
+
+def read_exact(f, size: int) -> bytes:
+    '''
+    Read exactly <size> bytes from <f> or raise an EOFError.
+    '''
+
+    data = f.read(size)
+    if len(data) != size:
+        raise EOFError(f'Unexpected EOF: expected {size} bytes, '
+                       f'but only read {len(data)} bytes')
+
+    return data

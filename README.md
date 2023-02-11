@@ -4,8 +4,6 @@ avbroot is a script for patching Android boot images with Magisk root while pres
 
 I do not recommend using this project without a deep understanding of the implementation of AVB and A/B OTAs. It is meant for use with proprietary stock firmware. For folks running open-source Android firmware, I highly recommend adding Magisk to the build process and then compiling from source instead.
 
-**NOTE**: avbroot currently only supports running on Linux due to `magiskboot`'s requirements.
-
 ### Patches
 
 avbroot applies two patches to the boot images:
@@ -78,7 +76,7 @@ The boot-related components are signed with an AVB key and OTA-related component
     git submodule update --init --recursive
     ```
 
-3. Ensure that `openssl`, `python3`, and `python3-protobuf` are installed.
+3. Ensure that `openssl`, `python3`, `python3-lz4`, and `python3-protobuf` are installed.
 
 4. Follow the steps to [generate signing keys](#generating-keys).
 

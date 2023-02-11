@@ -1,8 +1,7 @@
-import os
+import hashlib
+import io
+import lzma
 import shutil
-import subprocess
-import struct
-import tempfile
 import zipfile
 
 import avbtool
@@ -10,76 +9,124 @@ import avbtool
 from . import openssl
 from . import util
 from . import vbmeta
+from .formats import bootimage
+from .formats import compression
+from .formats import cpio
+
+
+def _load_ramdisk(ramdisk):
+    with (
+        io.BytesIO(ramdisk) as f_raw,
+        compression.CompressedFile(f_raw, 'rb') as f,
+    ):
+        return cpio.load(f.fp), f.format
+
+
+def _save_ramdisk(entries, format):
+    with io.BytesIO() as f_raw:
+        with compression.CompressedFile(f_raw, 'wb', format=format) as f:
+            cpio.save(f.fp, entries)
+
+        return f_raw.getvalue()
 
 
 class BootImagePatch:
-    def __init__(self, magisk_apk, to_extract):
-        self.magisk_apk = magisk_apk
-        self.to_extract = to_extract
-
     def __call__(self, image_file):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with zipfile.ZipFile(self.magisk_apk, 'r') as zip:
-                for source, extract_info in self.to_extract.items():
-                    try:
-                        info = zip.getinfo(source)
-                    except KeyError:
-                        if extract_info.get('optional', False):
-                            continue
-                        raise
+        # Load the boot image
+        with open(image_file, 'r+b') as f:
+            boot_image = bootimage.load_autodetect(f)
 
-                    info.filename = extract_info['dest']
-                    zip.extract(info, path=temp_dir)
+            self.patch(image_file, boot_image)
 
-            self.patch(image_file, temp_dir)
+            f.seek(0)
+            f.truncate(0)
 
-    def patch(self, image_file, temp_dir):
+            boot_image.generate(f)
+
+    def patch(self, image_file, boot_image):
         raise NotImplementedError()
 
 
 class MagiskRootPatch(BootImagePatch):
     '''
-    Root the boot image using Magisk's patch script.
+    Root the boot image with Magisk.
     '''
 
-    EXTRACT_MAP = {
-        'assets/boot_patch.sh': {'dest': 'boot_patch.sh'},
-        'assets/stub.apk': {
-            'dest': 'stub.apk',
-            # Only exists after the Magisk commit:
-            # ad0e6511e11ebec65aa9b5b916e1397342850319
-            'optional': True,
-        },
-        'assets/util_functions.sh': {'dest': 'util_functions.sh'},
-        'lib/arm64-v8a/libmagisk64.so': {'dest': 'magisk64'},
-        'lib/arm64-v8a/libmagiskinit.so': {'dest': 'magiskinit'},
-        'lib/armeabi-v7a/libmagisk32.so': {'dest': 'magisk32'},
-        # The x86 binary is used because the x86_64 binary breaks if the PID
-        # exceeds 65535. This is due to the pthread_mutex implementation in the
-        # version of bionic libc compiled into magiskboot, which uses the
-        # thread ID as a 16-bit integer. On systems with a large PID limit,
-        # like Fedora 37, which sets `kernel.pid_max = 4194304`, the x86_64
-        # binary is almost never able to run successfully. In the future, if
-        # there's a need to work around this, we can unshare() a new PID
-        # namespace to get small PIDs.
-        'lib/x86/libmagiskboot.so': {'dest': 'magiskboot'},
-    }
-
     def __init__(self, magisk_apk):
-        super().__init__(magisk_apk, self.EXTRACT_MAP)
+        self.magisk_apk = magisk_apk
 
-    def patch(self, image_file, temp_dir):
-        subprocess.check_call(
-            ['sh', './boot_patch.sh', image_file],
-            cwd=temp_dir,
-            env={
-                'BOOTMODE': 'true',
-                'KEEPVERITY': 'true',
-                'KEEPFORCEENCRYPT': 'true',
-            },
-        )
+    def patch(self, image_file, boot_image):
+        with zipfile.ZipFile(self.magisk_apk, 'r') as zip:
+            self._patch(image_file, boot_image, zip)
 
-        shutil.copyfile(os.path.join(temp_dir, 'new-boot.img'), image_file)
+    def _patch(self, image_file, boot_image, zip):
+        # Magisk saves the original SHA1 digest in its config file
+        with open(image_file, 'rb') as f:
+            hasher = util.hash_file(f, hashlib.sha1())
+
+        # Load the ramdisk
+        entries, ramdisk_format = _load_ramdisk(boot_image.ramdisks[0])
+
+        # Create magisk directory structure
+        for path, perms in (
+            (b'.backup', 0o000),
+            (b'overlay.d', 0o750),
+            (b'overlay.d/sbin', 0o750),
+        ):
+            entries.append(cpio.CpioEntryNew.new_directory(path, perms=perms))
+
+        # Move original init to backup path
+        orig_init = next(e for e in entries if e.name == b'init')
+        orig_init.name = b'.backup/init'
+
+        # Add magiskinit
+        with zip.open('lib/arm64-v8a/libmagiskinit.so', 'r') as f:
+            entries.append(cpio.CpioEntryNew.new_file(
+                b'init', perms=0o750, data=f.read()))
+
+        # Add xz-compressed magisk32 and magisk64
+        xz_files = {
+            'lib/armeabi-v7a/libmagisk32.so': b'magisk32.xz',
+            'lib/arm64-v8a/libmagisk64.so': b'magisk64.xz',
+        }
+
+        # Add stub apk, which only exists after the Magisk commit:
+        # ad0e6511e11ebec65aa9b5b916e1397342850319
+        if 'assets/stub.apk' in zip.namelist():
+            xz_files['assets/stub.apk'] = b'stub.xz'
+
+        for source, target in xz_files.items():
+            with (
+                zip.open(source, 'r') as f_in,
+                io.BytesIO() as f_out_raw,
+            ):
+                with lzma.open(f_out_raw, 'wb', preset=9,
+                               check=lzma.CHECK_CRC32) as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+
+                entries.append(cpio.CpioEntryNew.new_file(
+                    b'overlay.d/sbin/' + target, perms=0o644,
+                    data=f_out_raw.getvalue()))
+
+        # Create magisk boot-time removal list file
+        rmlist_files = sorted(e.name for e in entries
+                              if e.name.startswith(b'overlay.d'))
+        rmlist_data = b'\0'.join(rmlist_files) + b'\0'
+        entries.append(cpio.CpioEntryNew.new_file(
+            b'.backup/.rmlist', perms=0o000, data=rmlist_data))
+
+        # Create magisk config
+        magisk_config = \
+            b'KEEPVERITY=true\n' \
+            b'KEEPFORCEENCRYPT=true\n' \
+            b'PATCHVBMETAFLAG=false\n' \
+            b'RECOVERYMODE=false\n' \
+            b'SHA1=%s\n' % hasher.hexdigest().encode('ascii')
+        entries.append(cpio.CpioEntryNew.new_file(
+            b'.backup/.magisk', perms=0o000, data=magisk_config))
+
+        # Repack ramdisk
+        boot_image.ramdisks[0] = _save_ramdisk(entries, ramdisk_format)
 
 
 class OtaCertPatch(BootImagePatch):
@@ -88,86 +135,48 @@ class OtaCertPatch(BootImagePatch):
     signing certificate.
     '''
 
-    EXTRACT_MAP = {
-        'lib/x86/libmagiskboot.so': {'dest': 'magiskboot'},
-    }
+    OTACERTS_PATH = b'system/etc/security/otacerts.zip'
 
-    def __init__(self, magisk_apk, cert_ota):
-        super().__init__(magisk_apk, self.EXTRACT_MAP)
+    def __init__(self, cert_ota):
         self.cert_ota = cert_ota
 
-    def _read_header_version(self, image_file):
-        with open(image_file, 'rb') as f:
-            magic = f.read(8)
+    def patch(self, image_file, boot_image):
+        found_otacerts = False
 
-            if magic == b'ANDROID!':
-                f.seek(0x28)
-                is_vendor = False
-            elif magic == b'VNDRBOOT':
-                # Version is immediately after magic
-                is_vendor = True
+        # Check each ramdisk
+        for i, ramdisk in enumerate(boot_image.ramdisks):
+            entries, ramdisk_format = _load_ramdisk(ramdisk)
+
+            # Fail hard if otacerts does not exist. We don't want to lock the
+            # user out of future updates if the OTA certificate mechanism has
+            # changed.
+            otacerts = next((e for e in entries if e.name ==
+                             self.OTACERTS_PATH), None)
+            if otacerts:
+                found_otacerts = True
             else:
-                raise Exception(b'Invalid magic: {magic}')
+                continue
 
-            return struct.unpack('I', f.read(4))[0], is_vendor
+            # Create new otacerts archive. The old certs are ignored since
+            # flashing a stock OTA will render the device unbootable.
+            with io.BytesIO() as f_zip:
+                with zipfile.ZipFile(f_zip, 'w') as z:
+                    # Use zeroed-out metadata to ensure the archive is bit for
+                    # bit reproducible across runs.
+                    info = zipfile.ZipInfo('ota.x509.pem')
+                    with (
+                        z.open(info, 'w') as f_out,
+                        open(self.cert_ota, 'rb') as f_in,
+                    ):
+                        shutil.copyfileobj(f_in, f_out)
 
-    def _is_uncompressed(self, ramdisk_file):
-        with open(ramdisk_file, 'rb') as f:
-            magic = f.read(6)
+                otacerts.content = f_zip.getvalue()
 
-            return magic == b'070701' or magic == b'070702'
+            # Repack ramdisk
+            boot_image.ramdisks[i] = _save_ramdisk(entries, ramdisk_format)
 
-    def patch(self, image_file, temp_dir):
-        def run(*args):
-            subprocess.check_call(['./magiskboot', *args], cwd=temp_dir)
-
-        os.chmod(os.path.join(temp_dir, 'magiskboot'), 0o755)
-
-        # Unpack the boot image
-        run('unpack', image_file)
-
-        # magiskboot currently does not automatically decompress v4 vendor boot
-        # ramdisks as there may be more than one. This is not the case for
-        # Android 13 on the Pixel 6 Pro.
-        ramdisk_file = 'ramdisk.cpio'
-        header_version, is_vendor = self._read_header_version(image_file)
-        need_decompress = header_version == 4 and is_vendor
-
-        if need_decompress:
-            ramdisk_file = 'decompressed.cpio'
-            run('decompress', 'ramdisk.cpio', ramdisk_file)
-
-        # Fail hard if otacerts does not exist. We don't want to lock the user
-        # out of future updates if the OTA certificate mechanism has changed.
-        run(
-            'cpio', ramdisk_file,
-            'exists system/etc/security/otacerts.zip',
-        )
-
-        # Create new otacerts archive. The old certs are ignored since flashing
-        # a stock OTA will render the device unbootable.
-        with zipfile.ZipFile(os.path.join(temp_dir, 'otacerts.zip'), 'w') as z:
-            # Construct our own timestamp so the archive is reproducible
-            info = zipfile.ZipInfo('ota.x509.pem')
-            with z.open(info, 'w') as f_out:
-                with open(self.cert_ota, 'rb') as f_in:
-                    shutil.copyfileobj(f_in, f_out)
-
-        # Repack ramdisk
-        run(
-            'cpio', ramdisk_file,
-            'rm system/etc/security/otacerts.zip',
-            'add 644 system/etc/security/otacerts.zip otacerts.zip',
-        )
-
-        # Recompress ramdisk
-        if need_decompress:
-            run('compress=lz4_legacy', ramdisk_file, 'ramdisk.cpio')
-
-        # Repack image
-        run('repack', image_file)
-
-        shutil.copyfile(os.path.join(temp_dir, 'new-boot.img'), image_file)
+        if not found_otacerts:
+            raise Exception(f'{self.OTACERTS_PATH} not found in ramdisk')
 
 
 def patch_boot(avb, input_path, output_path, key, passphrase,
