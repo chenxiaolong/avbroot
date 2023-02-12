@@ -1,4 +1,5 @@
 import contextlib
+import unittest.mock
 
 import avbtool
 
@@ -26,14 +27,9 @@ def smuggle_descriptors():
     * call encode on each descriptor
     '''
 
-    orig_kernel = avbtool.AvbKernelCmdlineDescriptor
-
-    avbtool.AvbKernelCmdlineDescriptor = SmuggledViaKernelCmdlineDescriptor
-
-    try:
+    with unittest.mock.patch('avbtool.AvbKernelCmdlineDescriptor',
+                             SmuggledViaKernelCmdlineDescriptor):
         yield
-    finally:
-        avbtool.AvbKernelCmdlineDescriptor = orig_kernel
 
 
 def _get_descriptor_overrides(avb, paths):
