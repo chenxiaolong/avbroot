@@ -3,6 +3,7 @@
 from avbroot import external
 
 import argparse
+import concurrent.futures
 import os
 import shutil
 import tempfile
@@ -73,37 +74,31 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb,
         print_status('Extracting', ', '.join(images), 'from the payload')
         ota.extract_images(f_in, manifest, blob_offset, extract_dir, images)
 
-        boot_patches = [boot.MagiskRootPatch(magisk)]
-        otacert_patches = [boot.OtaCertPatch(cert_ota)]
-
-        if otacert_image == boot_image:
-            boot_patches.extend(otacert_patches)
-            otacert_patches.clear()
+        image_patches = {boot_image: [boot.MagiskRootPatch(magisk)]}
+        image_patches.setdefault(otacert_image, []).append(
+            boot.OtaCertPatch(cert_ota))
 
         avb = avbtool.Avb()
 
-        print_status(f'Patching {boot_image} image')
-        boot.patch_boot(
-            avb,
-            os.path.join(extract_dir, f'{boot_image}.img'),
-            os.path.join(patch_dir, f'{boot_image}.img'),
-            privkey_avb,
-            passphrase_avb,
-            True,
-            boot_patches,
-        )
+        print_status('Patching', ', '.join(image_patches))
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=len(image_patches)) as executor:
+            def apply_patches(image, patches):
+                boot.patch_boot(
+                    avb,
+                    os.path.join(extract_dir, f'{image}.img'),
+                    os.path.join(patch_dir, f'{image}.img'),
+                    privkey_avb,
+                    passphrase_avb,
+                    True,
+                    patches,
+                )
 
-        if otacert_patches:
-            print_status(f'Patching {otacert_image} image')
-            boot.patch_boot(
-                avb,
-                os.path.join(extract_dir, f'{otacert_image}.img'),
-                os.path.join(patch_dir, f'{otacert_image}.img'),
-                privkey_avb,
-                passphrase_avb,
-                True,
-                otacert_patches,
-            )
+            futures = [executor.submit(apply_patches, i, p)
+                       for i, p in image_patches.items()]
+
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
 
         print_status('Building new root vbmeta image')
         vbmeta.patch_vbmeta_root(
