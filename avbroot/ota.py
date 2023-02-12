@@ -10,6 +10,7 @@ import os
 import struct
 import sys
 import subprocess
+import unittest.mock
 import zipfile
 
 # Silence undesired warning
@@ -758,12 +759,6 @@ def match_android_zip64_limit():
     [1] https://cs.android.com/android/platform/superproject/+/android-13.0.0_r18:system/libziparchive/zip_archive.cc;l=692
     '''
 
-    orig_limit = zipfile.ZIP64_LIMIT
-
-    try:
-        # Because Python uses > and Android uses >= 0xffffffff
-        zipfile.ZIP64_LIMIT = 0xfffffffe
-
+    # Because Python uses > and Android uses >= 0xffffffff
+    with unittest.mock.patch('zipfile.ZIP64_LIMIT', 0xfffffffe):
         yield
-    finally:
-        zipfile.ZIP64_LIMIT = orig_limit
