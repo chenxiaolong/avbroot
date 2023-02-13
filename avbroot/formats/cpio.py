@@ -140,7 +140,7 @@ class CpioEntryNew:
             self.chksum = _read_int(f)
 
             # Filename
-            self._name = util.read_exact(f, self.namesize - 1)
+            self._name = bytes(util.read_exact(f, self.namesize - 1))
             # Discard NULL terminator
             util.read_exact(f, 1)
             padding.read_skip(f, 4)
