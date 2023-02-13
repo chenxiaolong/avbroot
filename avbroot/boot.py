@@ -60,24 +60,33 @@ class MagiskRootPatch(BootImagePatch):
             self._patch(image_file, boot_image, zip)
 
     def _patch(self, image_file, boot_image, zip):
+        if len(boot_image.ramdisks) > 1:
+            raise Exception('Boot image is not expected to have '
+                            f'{len(boot_image.ramdisks)} ramdisks')
+
         # Magisk saves the original SHA1 digest in its config file
         with open(image_file, 'rb') as f:
             hasher = util.hash_file(f, hashlib.sha1())
 
-        # Load the ramdisk
-        entries, ramdisk_format = _load_ramdisk(boot_image.ramdisks[0])
+        # Load the existing ramdisk if it exists. If it doesn't, we have to
+        # generate one from scratch
+        if boot_image.ramdisks:
+            entries, ramdisk_format = _load_ramdisk(boot_image.ramdisks[0])
+        else:
+            entries, ramdisk_format = [], compression.Format.LZ4_LEGACY
+
+        old_entries = entries.copy()
 
         # Create magisk directory structure
         for path, perms in (
-            (b'.backup', 0o000),
             (b'overlay.d', 0o750),
             (b'overlay.d/sbin', 0o750),
         ):
             entries.append(cpio.CpioEntryNew.new_directory(path, perms=perms))
 
-        # Move original init to backup path
-        orig_init = next(e for e in entries if e.name == b'init')
-        orig_init.name = b'.backup/init'
+        # Delete the original init
+        if boot_image.ramdisks:
+            entries = [e for e in entries if e.name != b'init']
 
         # Add magiskinit
         with zip.open('lib/arm64-v8a/libmagiskinit.so', 'r') as f:
@@ -108,12 +117,8 @@ class MagiskRootPatch(BootImagePatch):
                     b'overlay.d/sbin/' + target, perms=0o644,
                     data=f_out_raw.getvalue()))
 
-        # Create magisk boot-time removal list file
-        rmlist_files = sorted(e.name for e in entries
-                              if e.name.startswith(b'overlay.d'))
-        rmlist_data = b'\0'.join(rmlist_files) + b'\0'
-        entries.append(cpio.CpioEntryNew.new_file(
-            b'.backup/.rmlist', perms=0o000, data=rmlist_data))
+        # Create magisk .backup directory structure
+        self._apply_magisk_backup(old_entries, entries)
 
         # Create magisk config
         magisk_config = \
@@ -126,7 +131,43 @@ class MagiskRootPatch(BootImagePatch):
             b'.backup/.magisk', perms=0o000, data=magisk_config))
 
         # Repack ramdisk
-        boot_image.ramdisks[0] = _save_ramdisk(entries, ramdisk_format)
+        new_ramdisk = _save_ramdisk(entries, ramdisk_format)
+        if boot_image.ramdisks:
+            boot_image.ramdisks[0] = new_ramdisk
+        else:
+            boot_image.ramdisks.append(new_ramdisk)
+
+    @staticmethod
+    def _apply_magisk_backup(old_entries, new_entries):
+        '''
+        Compare old and new ramdisk entry lists, creating the Magisk `.backup/`
+        directory structure. `.backup/.rmlist` will contain a sorted list of
+        NULL-terminated strings, listing which files were newly added or
+        changed. The old entries for changed files will be added to the new
+        entries as `.backup/<path>`.
+
+        Both lists and entries within the lists may be mutated.
+        '''
+
+        old_by_name = {e.name: e for e in old_entries}
+        new_by_name = {e.name: e for e in new_entries}
+
+        added = new_by_name.keys() - old_by_name.keys()
+        deleted = old_by_name.keys() - new_by_name.keys()
+        changed = set(n for n in old_by_name.keys() & new_by_name.keys()
+                      if old_by_name[n].content != new_by_name[n].content)
+
+        new_entries.append(cpio.CpioEntryNew.new_directory(
+            b'.backup', perms=0o000))
+
+        for name in deleted | changed:
+            entry = old_by_name[name]
+            entry.name = b'.backup/' + entry.name
+            new_entries.append(entry)
+
+        rmlist_data = b''.join(n + b'\0' for n in sorted(added))
+        new_entries.append(cpio.CpioEntryNew.new_file(
+            b'.backup/.rmlist', perms=0o000, data=rmlist_data))
 
 
 class OtaCertPatch(BootImagePatch):
@@ -205,13 +246,13 @@ def patch_boot(avb, input_path, output_path, key, passphrase,
     for d in descriptors:
         if isinstance(d, avbtool.AvbHashDescriptor):
             if hash is not None:
-                raise Exception(f'Expected only one hash descriptor')
+                raise Exception('Expected only one hash descriptor')
             hash = d
         else:
             new_descriptors.append(d)
 
     if hash is None:
-        raise Exception(f'No hash descriptor found')
+        raise Exception('No hash descriptor found')
 
     algorithm_name = avbtool.lookup_algorithm_by_type(header.algorithm_type)[0]
 
