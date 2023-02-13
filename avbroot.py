@@ -25,9 +25,17 @@ PATH_OTACERT = 'META-INF/com/android/otacert'
 PATH_PAYLOAD = 'payload.bin'
 PATH_PROPERTIES = 'payload_properties.txt'
 
+# Half-open range
+MAGISK_MIN_VERSION = 22000
+MAGISK_MAX_VERSION = 25300
+
 
 def print_status(*args, **kwargs):
     print('\x1b[1m*****', *args, '*****\x1b[0m', **kwargs)
+
+
+def print_warning(*args, **kwargs):
+    print('\x1b[1;31m*****', '[WARNING]', *args, '*****\x1b[0m', **kwargs)
 
 
 def get_images(manifest):
@@ -249,10 +257,31 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, passphrase_avb,
         return metadata
 
 
+def get_magisk_version(magisk):
+    with zipfile.ZipFile(magisk, 'r') as z:
+        with z.open('assets/util_functions.sh', 'r') as f:
+            for line in f:
+                if line.startswith(b'MAGISK_VER_CODE='):
+                    return int(line[16:].strip())
+
+    raise Exception(f'Failed to get Magisk version from: {magisk}')
+
+
 def patch_subcommand(args):
     output = args.output
     if output is None:
         output = args.input + '.patched'
+
+    magisk_version = get_magisk_version(args.magisk)
+    if magisk_version < MAGISK_MIN_VERSION or \
+            magisk_version >= MAGISK_MAX_VERSION:
+        message = f'Unsupported Magisk version {magisk_version} ' \
+                  f'(supported: >={MAGISK_MIN_VERSION}, <{MAGISK_MAX_VERSION})'
+
+        if args.ignore_magisk_version:
+            print_warning(message)
+        else:
+            raise Exception(message)
 
     # Get passphrases for keys
     passphrase_avb = openssl.prompt_passphrase(args.privkey_avb)
@@ -319,6 +348,8 @@ def parse_args():
                        help='Path to new raw payload or OTA zip')
     patch.add_argument('--magisk', required=True,
                        help='Path to Magisk API')
+    patch.add_argument('--ignore-magisk-version', action='store_true',
+                       help='Allow patching with unsupported Magisk versions')
     patch.add_argument('--privkey-avb', required=True,
                        help='Private key for signing root vbmeta image')
     patch.add_argument('--privkey-ota', required=True,
