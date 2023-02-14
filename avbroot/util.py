@@ -109,7 +109,7 @@ def decompress_n(decompressor, f_in, f_out, size, buf_size=16384, hasher=None):
     if size:
         raise IOError(f'Unexpected EOF; expected {size} more bytes')
     elif not decompressor.eof:
-        raise IOError(f'Did not reach end of compressed input')
+        raise IOError('Did not reach end of compressed input')
 
 
 def zero_n(f_out, size, buf_size=16384):
