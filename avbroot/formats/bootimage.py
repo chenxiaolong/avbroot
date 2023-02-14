@@ -113,7 +113,13 @@ class WrongFormat(ValueError):
 
 
 class BootImage:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        f: None | typing.BinaryIO = None,
+        data: None | dict[str, typing.Any] = None,
+    ) -> None:
+        assert (f is None) != (data is None)
+
         self.kernel: None | bytes = None
         self.ramdisks: list[bytes] = []
         self.second: None | bytes = None
@@ -121,14 +127,26 @@ class BootImage:
         self.dtb: None | bytes = None
         self.bootconfig: None | bytes = None
 
+        if f:
+            self._from_file(f)
+        else:
+            self._from_dict(data)
+
+    def _from_file(self, f: typing.BinaryIO) -> None:
+        raise NotImplementedError()
+
     def generate(self, f: typing.BinaryIO) -> None:
+        raise NotImplementedError()
+
+    def _from_dict(self, data: dict[str, typing.Any]) -> None:
+        raise NotImplementedError()
+
+    def to_dict(self) -> None:
         raise NotImplementedError()
 
 
 class _BootImageV0Through2(BootImage):
-    def __init__(self, f: typing.BinaryIO) -> None:
-        super().__init__()
-
+    def _from_file(self, f: typing.BinaryIO) -> None:
         # Common fields for v0 through v2
         magic, kernel_size, kernel_addr, ramdisk_size, ramdisk_addr, \
             second_size, second_addr, tags_addr, page_size, header_version, \
@@ -299,11 +317,60 @@ class _BootImageV0Through2(BootImage):
 
         return result
 
+    def _from_dict(self, data: dict[str, typing.Any]) -> None:
+        type = data.get('type')
+        header_version = data.get('header_version')
+
+        if type != 'android':
+            raise WrongFormat(f'Unknown type: {type}')
+        elif header_version not in (0, 1, 2):
+            raise WrongFormat(f'Unknown header version: {header_version}')
+
+        self.header_version = header_version
+        self.kernel_addr = data['kernel_address']
+        self.ramdisk_addr = data['ramdisk_address']
+        self.second_addr = data['second_address']
+        self.tags_addr = data['tags_address']
+        self.page_size = data['page_size']
+        self.os_version = data['os_version']
+        self.name = data['name']
+        self.cmdline = data['cmdline']
+        self.id = data['id']
+        self.extra_cmdline = data['extra_cmdline']
+
+        if header_version >= 1:
+            self.recovery_dtbo_offset = data['recovery_dtbo_offset']
+
+        if self.header_version == 2:
+            self.dtb_addr = data['dtb_address']
+
+    def to_dict(self) -> dict[str, typing.Any]:
+        result = {
+            'type': 'android',
+            'header_version': self.header_version,
+            'kernel_address': self.kernel_addr,
+            'ramdisk_address': self.ramdisk_addr,
+            'second_address': self.second_addr,
+            'tags_address': self.tags_addr,
+            'page_size': self.page_size,
+            'os_version': self.os_version,
+            'name': self.name,
+            'cmdline': self.cmdline,
+            'id': self.id,
+            'extra_cmdline': self.extra_cmdline,
+        }
+
+        if self.header_version >= 1:
+            result['recovery_dtbo_offset'] = self.recovery_dtbo_offset
+
+        if self.header_version == 2:
+            result['dtb_address'] = self.dtb_addr
+
+        return result
+
 
 class _BootImageV3Through4(BootImage):
-    def __init__(self, f: typing.BinaryIO) -> None:
-        super().__init__()
-
+    def _from_file(self, f: typing.BinaryIO) -> None:
         # Common fields for both v3 and v4
         magic, kernel_size, ramdisk_size, os_version, header_size, reserved, \
             header_version, cmdline = BOOT_IMG_HDR_V3.unpack(
@@ -395,15 +462,36 @@ class _BootImageV3Through4(BootImage):
             f'- Reserved:       {self.reserved.hex()}\n' \
             f'- Kernel cmdline: {self.cmdline!r}\n'
 
+    def _from_dict(self, data: dict[str, typing.Any]) -> None:
+        type = data.get('type')
+        header_version = data.get('header_version')
+
+        if type != 'android':
+            raise WrongFormat(f'Unknown type: {type}')
+        elif header_version not in (3, 4):
+            raise WrongFormat(f'Unknown header version: {header_version}')
+
+        self.header_version = header_version
+        self.os_version = data['os_version']
+        self.reserved = data['reserved']
+        self.cmdline = data['cmdline']
+
+    def to_dict(self) -> dict[str, typing.Any]:
+        return {
+            'type': 'android',
+            'header_version': self.header_version,
+            'os_version': self.os_version,
+            'reserved': self.reserved,
+            'cmdline': self.cmdline,
+        }
+
 
 _RamdiskMeta = collections.namedtuple(
     '_RamdiskMeta', ['type', 'name', 'board_id'])
 
 
 class _VendorBootImageV3Through4(BootImage):
-    def __init__(self, f: typing.BinaryIO) -> None:
-        super().__init__()
-
+    def _from_file(self, f: typing.BinaryIO) -> None:
         # Common fields for both v3 and v4
         magic, header_version, page_size, kernel_addr, ramdisk_addr, \
             vendor_ramdisk_size, cmdline, tags_addr, name, header_size, \
@@ -573,7 +661,13 @@ class _VendorBootImageV3Through4(BootImage):
         result = \
             f'Vendor boot image v{self.header_version} header:\n' \
             f'- Page size:           {self.page_size}\n' \
-            f'- Kernel address:      0x{self.kernel_addr:x}\n' \
+            f'- Kernel address:      0x{self.kernel_addr:x}\n'
+
+        if self.header_version == 3:
+            ramdisk_size = len(self.ramdisks[0]) if self.ramdisks else 0
+            result += f'- Ramdisk size:        {ramdisk_size}\n'
+
+        result += \
             f'- Ramdisk address:     0x{self.ramdisk_addr:x}\n' \
             f'- Kernel cmdline:      {self.cmdline!r}\n' \
             f'- Kernel tags address: 0x{self.tags_addr:x}\n' \
@@ -596,6 +690,57 @@ class _VendorBootImageV3Through4(BootImage):
 
         return result
 
+    def _from_dict(self, data: dict[str, typing.Any]) -> None:
+        type = data.get('type')
+        header_version = data.get('header_version')
+
+        if type != 'vendor':
+            raise WrongFormat(f'Unknown type: {type}')
+        elif header_version not in (3, 4):
+            raise WrongFormat(f'Unknown header version: {header_version}')
+
+        self.header_version = header_version
+        self.page_size = data['page_size']
+        self.kernel_addr = data['kernel_address']
+        self.ramdisk_addr = data['ramdisk_address']
+        self.cmdline = data['cmdline']
+        self.tags_addr = data['tags_address']
+        self.name = data['name']
+        self.dtb_addr = data['dtb_address']
+
+        if header_version == 4:
+            self.ramdisks_meta = []
+            for meta in data['ramdisk_meta']:
+                self.ramdisks_meta.append(_RamdiskMeta(
+                    meta['type'],
+                    meta['name'],
+                    meta['board_id'],
+                ))
+
+    def to_dict(self) -> dict[str, typing.Any]:
+        result = {
+            'type': 'vendor',
+            'header_version': self.header_version,
+            'page_size': self.page_size,
+            'kernel_address': self.kernel_addr,
+            'ramdisk_address': self.ramdisk_addr,
+            'cmdline': self.cmdline,
+            'tags_address': self.tags_addr,
+            'name': self.name,
+            'dtb_address': self.dtb_addr,
+        }
+
+        if self.header_version == 4:
+            result['ramdisk_meta'] = []
+            for meta in self.ramdisks_meta:
+                result['ramdisk_meta'].append({
+                    'type': meta.type,
+                    'name': meta.name,
+                    'board_id': meta.board_id,
+                })
+
+        return result
+
 
 def load_autodetect(f: typing.BinaryIO) -> BootImage:
     for cls in (
@@ -605,7 +750,21 @@ def load_autodetect(f: typing.BinaryIO) -> BootImage:
     ):
         try:
             f.seek(0)
-            return cls(f)
+            return cls(f=f)
+        except WrongFormat:
+            continue
+
+    raise ValueError('Unknown boot image format')
+
+
+def create_from_dict(data: dict) -> BootImage:
+    for cls in (
+        _BootImageV0Through2,
+        _BootImageV3Through4,
+        _VendorBootImageV3Through4,
+    ):
+        try:
+            return cls(data=data)
         except WrongFormat:
             continue
 
