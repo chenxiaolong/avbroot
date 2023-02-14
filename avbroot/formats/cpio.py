@@ -140,7 +140,7 @@ class CpioEntryNew:
             self.chksum = _read_int(f)
 
             # Filename
-            self._name = bytes(util.read_exact(f, self.namesize - 1))
+            self._name = util.read_exact(f, self.namesize - 1)
             # Discard NULL terminator
             util.read_exact(f, 1)
             padding.read_skip(f, 4)
@@ -230,28 +230,30 @@ class CpioEntryNew:
             f'Links:           {self.nlink}\n' \
             f'Modified:        {self.mtime}\n' \
             f'File size:       {self.filesize}\n' \
-            f'dev_maj:         {self.dev_maj:x}\n' \
-            f'dev_min:         {self.dev_min:x}\n' \
-            f'rdev_maj:        {self.rdev_maj:x}\n' \
-            f'rdev_min:        {self.rdev_min:x}\n' \
+            f'Device:          {self.dev_maj:x},{self.dev_min:x}\n' \
+            f'Device ID:       {self.rdev_maj:x},{self.rdev_min:x}\n' \
             f'Filename length: {self.namesize}\n' \
             f'Checksum:        {self.chksum:x}\n'
 
 
-def load(f: typing.BinaryIO) -> list[CpioEntryNew]:
+def load(f: typing.BinaryIO, include_trailer: bool = False,
+         reassign_inodes: bool = True) -> list[CpioEntryNew]:
     entries = []
 
     while True:
         entry = CpioEntryNew(f)
 
-        if entry.name == CPIO_TRAILER:
-            break
-
         if stat.S_IFMT(entry.mode) != stat.S_IFDIR and entry.nlink > 1:
             raise ValueError(f'Hard links are not supported: {entry.name!r}')
 
         # Inodes are reassigned on save
-        entry.ino = 0
+        if reassign_inodes:
+            entry.ino = 0
+
+        if entry.name == CPIO_TRAILER:
+            if include_trailer:
+                entries.append(entry)
+            break
 
         entries.append(entry)
 

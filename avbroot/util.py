@@ -136,4 +136,8 @@ def read_exact(f, size: int) -> bytes:
         raise EOFError(f'Unexpected EOF: expected {size} bytes, '
                        f'but only read {len(data)} bytes')
 
-    return data
+    if not isinstance(data, bytes):
+        # io.BytesIO returns a bytearray
+        return bytes(data)
+    else:
+        return data
