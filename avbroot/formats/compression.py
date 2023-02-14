@@ -167,7 +167,7 @@ class CompressedFile:
                     break
 
         if format == Format.GZIP:
-            format_fp = gzip.open(fp, mode)
+            format_fp = gzip.GzipFile(fileobj=fp, mode=mode, mtime=0)
         elif format == Format.LZ4_LEGACY:
             format_fp = Lz4Legacy(fp, mode)
         else:
