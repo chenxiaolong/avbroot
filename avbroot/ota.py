@@ -664,6 +664,16 @@ def open_signing_wrapper(f, privkey, passphrase, cert):
     '''
 
     with openssl.inject_passphrase(passphrase):
+        session_kwargs = {}
+        if os.name != 'nt':
+            # We don't want the controlling terminal to interrupt openssl on
+            # ^C or ^\. That'll cause _TeeFileDescriptor's writes to the stdin
+            # pipe to fail, and certain classes, like ZipFile, will write to
+            # the fd in their __exit__ methods. This causes a BrokenPipeError
+            # to be raised while the existing KeyboardInterrupt is being
+            # propagated up. We'll handling killing openssl ourselves.
+            session_kwargs['start_new_session'] = True
+
         process = subprocess.Popen(
             [
                 'openssl',
@@ -679,6 +689,7 @@ def open_signing_wrapper(f, privkey, passphrase, cert):
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            **session_kwargs,
         )
 
     try:
