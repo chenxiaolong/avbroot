@@ -115,17 +115,17 @@ class WrongFormat(ValueError):
 class BootImage:
     def __init__(
         self,
-        f: None | typing.BinaryIO = None,
-        data: None | dict[str, typing.Any] = None,
+        f: typing.Optional[typing.BinaryIO] = None,
+        data: typing.Optional[dict[str, typing.Any]] = None,
     ) -> None:
         assert (f is None) != (data is None)
 
-        self.kernel: None | bytes = None
+        self.kernel: typing.Optional[bytes] = None
         self.ramdisks: list[bytes] = []
-        self.second: None | bytes = None
-        self.recovery_dtbo: None | bytes = None
-        self.dtb: None | bytes = None
-        self.bootconfig: None | bytes = None
+        self.second: typing.Optional[bytes] = None
+        self.recovery_dtbo: typing.Optional[bytes] = None
+        self.dtb: typing.Optional[bytes] = None
+        self.bootconfig: typing.Optional[bytes] = None
 
         if f:
             self._from_file(f)

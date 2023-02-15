@@ -62,7 +62,7 @@ The boot-related components are signed with an AVB key and OTA-related component
 
 ### Installing dependencies
 
-avbroot depends on `openssl` command line tool and the `lz4` and `protobuf` Python libraries.
+avbroot depends on the `openssl` command line tool and the `lz4` and `protobuf` Python libraries. Also, Python 3.9 or newer is required.
 
 #### Linux
 
