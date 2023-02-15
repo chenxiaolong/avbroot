@@ -81,7 +81,10 @@ def run_tests(args, config, files_dir):
             revalidate=args.revalidate,
             extra_args=args.aria2c_arg,
         )
-        patched_file = image_file + '.patched'
+        patched_file = image_file + args.output_file_suffix
+
+        if args.download_only:
+            continue
 
         print('Patching', image_file)
 
@@ -102,6 +105,9 @@ def run_tests(args, config, files_dir):
 
         verify_checksum(patched_file, image['sha256_patched'])
 
+        if args.delete_on_success:
+            os.unlink(patched_file)
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -109,10 +115,21 @@ def parse_args():
                         help='Argument to pass to aria2c')
     parser.add_argument('-d', '--device', action='append',
                         help='Device image to test against')
+    parser.add_argument('--delete-on-success', action='store_true',
+                        help='Delete output files if patching is successful')
+    parser.add_argument('--download-only', action='store_true',
+                        help='Skip patching and download OTA images only')
+    parser.add_argument('--output-file-suffix', default='.patched',
+                        help='Suffix for patched output files')
     parser.add_argument('--revalidate', action='store_true',
                         help='Revalidate checksums for downloaded OTAs')
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    if not args.output_file_suffix:
+        parser.error('--output-file-suffix cannot be empty')
+
+    return args
 
 
 def test_main():
