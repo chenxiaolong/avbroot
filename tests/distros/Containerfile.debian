@@ -1,0 +1,5 @@
+FROM docker.io/library/debian:11
+
+RUN apt-get -y update \
+    && apt-get -y install aria2 openssl python3-lz4 python3-protobuf \
+    && find /var/cache/apt/archives /var/lib/apt/lists -mindepth 1 -delete
