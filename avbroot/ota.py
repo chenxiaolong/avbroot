@@ -701,7 +701,7 @@ def open_signing_wrapper(f, privkey, passphrase, cert):
 
         process.stdin.close()
         signature = process.stdout.read()
-    except Exception:
+    except BaseException:
         process.kill()
         raise
     finally:
