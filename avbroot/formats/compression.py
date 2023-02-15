@@ -155,7 +155,7 @@ class CompressedFile:
         self,
         fp: typing.BinaryIO,
         mode: typing.Literal['rb', 'wb'] = 'rb',
-        format: None | Format = None,
+        format: typing.Optional[Format] = None,
     ):
         if mode == 'rb' and not format:
             magic = fp.read(_MAGIC_MAX_SIZE)
