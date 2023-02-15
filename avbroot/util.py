@@ -33,7 +33,7 @@ def open_output_file(path):
                     pass
 
             os.rename(f.name, path)
-        except Exception:
+        except BaseException:
             os.unlink(f.name)
             raise
 
