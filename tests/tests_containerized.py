@@ -7,6 +7,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 
 
 def build_cmd(image_name, tag, container_file, rebuild=False):
@@ -109,6 +110,8 @@ class Job:
         self.stderr_thread.start()
         self.completion_thread.start()
 
+        self.start_time = time.perf_counter_ns()
+
     def kill(self):
         self.process.kill()
 
@@ -118,11 +121,14 @@ class Job:
         self.stderr_thread.join()
         self.completion_thread.join()
 
+        self.elapsed_time = time.perf_counter_ns() - self.start_time
+
         return self.process.returncode
 
 
 def run_jobs(name_to_cmd, max_jobs):
     results = {n: None for n in name_to_cmd}
+    durations = {n: 'n/a' for n in name_to_cmd}
     job_queue = collections.deque(name_to_cmd.items())
     jobs = {}
     completion_queue = queue.Queue()
@@ -139,6 +145,7 @@ def run_jobs(name_to_cmd, max_jobs):
             name = completion_queue.get()
             job = jobs.pop(name)
             results[name] = job.wait()
+            durations[name] = f'{job.elapsed_time / 1_000_000_000:.1f}s'
     except:
         for _, job in jobs.items():
             job.kill()
@@ -151,10 +158,13 @@ def run_jobs(name_to_cmd, max_jobs):
 
         if name_to_cmd:
             max_name_len = max(len(n) for n in name_to_cmd)
+            max_dur_len = max(len(durations[n]) for n in name_to_cmd)
 
             print('Results:')
+
             for name, status in sorted(results.items()):
-                print(f'- {name:<{max_name_len}}: ', end='')
+                print(f'- {name:<{max_name_len}} | '
+                      f'Elapsed: {durations[name]:<{max_dur_len}} | ', end='')
 
                 if status is None:
                     failed += 1
