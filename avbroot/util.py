@@ -34,6 +34,10 @@ def open_output_file(path):
 
             os.rename(f.name, path)
         except BaseException:
+            if os.name == 'nt':
+                # Windows does not allow deleting a file with handles open
+                f.close()
+
             os.unlink(f.name)
             raise
 
