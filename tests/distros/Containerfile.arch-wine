@@ -1,0 +1,49 @@
+FROM docker.io/archlinux/archlinux:latest
+
+RUN pacman --noconfirm -Syu --needed aria2 xorg-server-xvfb \
+    && yes | pacman -Scc
+
+# Yep, we're installing Windows msys2 packages directly on top of Arch
+
+ARG KEYRING_VERSION=1~20221024-1
+ARG KEYRING_SHA256=e90fb4413f6056dbc8b2df9eac670924aa2851151bc97569e7df12c928acc209
+
+RUN aria2c https://mirror.msys2.org/msys/x86_64/msys2-keyring-${KEYRING_VERSION}-any.pkg.tar.zst \
+        --checksum SHA-256=${KEYRING_SHA256} \
+    && pacman --noconfirm -U msys2-keyring-${KEYRING_VERSION}-any.pkg.tar.zst \
+    && rm msys2-keyring-${KEYRING_VERSION}-any.pkg.tar.zst
+
+COPY wine/pacman.additional.conf /tmp/
+RUN cat /tmp/pacman.additional.conf >> /etc/pacman.conf \
+    && pacman-key --init \
+    && pacman-key --populate \
+    && rm /tmp/pacman.additional.conf
+
+RUN pacman --noconfirm -Sy \
+        mingw-w64-x86_64-aria2 \
+        mingw-w64-x86_64-ca-certificates \
+        mingw-w64-x86_64-openssl \
+        mingw-w64-x86_64-python \
+        mingw-w64-x86_64-python-lz4 \
+        mingw-w64-x86_64-python-protobuf \
+        mingw-w64-x86_64-zlib \
+        wine \
+        wine-mono \
+    && yes | pacman -Scc
+
+# Since binfmt_misc can't work in an unprivileged container, all post-install
+# .exe executions failed, including the ones for setting up the trusted CA
+# certificates. Run the post install script using the Linux version of p11-kit
+# so we don't have to create a wine prefix (see below).
+RUN cat /var/lib/pacman/local/mingw-w64-x86_64-ca-certificates-*/install \
+    | sed 's,[^ ]*/\([^ ]\+\).exe,\1,g; $a post_install' \
+    | bash -s
+
+COPY --chmod=755 wine/python3.sh /usr/local/bin/python3
+
+# We don't precreate a wine prefix because openssl fails to gather entropy when
+# using a persisted wine prefix for some reason. It doesn't seem to actually be
+# caused by the lack of entropy.
+
+ENTRYPOINT ["xvfb-run"]
+CMD ["bash"]
