@@ -30,7 +30,7 @@ def test_cmd(image_name, tag, extra_args=[], default_args=True, network=False):
     full_image = f'{image_name}:{tag}'
     project_dir = os.path.realpath(os.path.join(sys.path[0], '..'))
 
-    network_args = ['--network', 'none'] if network else []
+    network_args = [] if network else ['--network', 'none']
     test_args = extra_args.copy()
     if default_args:
         test_args.append('--delete-on-success')
