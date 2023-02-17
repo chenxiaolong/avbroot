@@ -205,6 +205,8 @@ class OtaCertPatch(BootImagePatch):
                     # Use zeroed-out metadata to ensure the archive is bit for
                     # bit reproducible across runs.
                     info = zipfile.ZipInfo('ota.x509.pem')
+                    # Mark entry as created on Unix for reproducibility
+                    info.create_system = 3
                     with (
                         z.open(info, 'w') as f_out,
                         open(self.cert_ota, 'rb') as f_in,
