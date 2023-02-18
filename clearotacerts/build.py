@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import io
 import os
 import shutil
@@ -8,7 +10,7 @@ import zipfile
 def build_empty_zip():
     stream = io.BytesIO()
 
-    with zipfile.ZipFile(stream, 'w') as z:
+    with zipfile.ZipFile(stream, 'w'):
         pass
 
     return stream.getvalue()
@@ -20,7 +22,7 @@ def parse_props(raw_prop):
     for line in raw_prop.decode('UTF-8').splitlines():
         k, delim, v = line.partition('=')
         if not delim:
-            raise ArgumentError(f'Malformed line: {repr(line)}')
+            raise ValueError(f'Malformed line: {repr(line)}')
 
         result[k.strip()] = v.strip()
 
@@ -30,8 +32,6 @@ def parse_props(raw_prop):
 def main():
     dist_dir = os.path.join(sys.path[0], 'dist')
     os.makedirs(dist_dir, exist_ok=True)
-
-    module_prop_path = os.path.join(sys.path[0], 'module.prop')
 
     with open(os.path.join(sys.path[0], 'module.prop'), 'rb') as f:
         module_prop_raw = f.read()
