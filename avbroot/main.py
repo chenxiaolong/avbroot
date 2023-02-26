@@ -27,6 +27,16 @@ PATH_PROPERTIES = 'payload_properties.txt'
 MAGISK_MIN_VERSION = 22000
 MAGISK_MAX_VERSION = 25300
 
+PARTITION_PRIORITIES = {
+    '@vbmeta': ('vbmeta',),
+    # The kernel is always in boot
+    '@gki_kernel': ('boot',),
+    # Devices launching with Android 13 use a GKI init_boot ramdisk
+    '@gki_ramdisk': ('init_boot', 'boot'),
+    # OnePlus devices have a recovery image
+    '@otacerts': ('recovery', 'vendor_boot', 'boot'),
+}
+
 
 def print_status(*args, **kwargs):
     print('\x1b[1m*****', *args, '*****\x1b[0m', **kwargs)
@@ -36,36 +46,39 @@ def print_warning(*args, **kwargs):
     print('\x1b[1;31m*****', '[WARNING]', *args, '*****\x1b[0m', **kwargs)
 
 
-def get_images(manifest):
-    boot_image = 'boot'
-    otacert_image = None
+def get_partitions_by_type(manifest):
+    all_partitions = set(p.partition_name for p in manifest.partitions)
+    by_type = {}
 
-    for p in manifest.partitions:
-        # Devices launching with Android 13 use a GKI init_boot ramdisk
-        if p.partition_name == 'init_boot':
-            boot_image = p.partition_name
-        # OnePlus devices have a recovery image
-        elif p.partition_name == 'recovery':
-            # If a recovery image exists, it will always contain the OTA certs,
-            # even if vendor_boot exists
-            otacert_image = p.partition_name
-        # Older devices may not have vendor_boot
-        elif p.partition_name == 'vendor_boot':
-            if otacert_image is None:
-                otacert_image = p.partition_name
+    for t, candidates in PARTITION_PRIORITIES.items():
+        partition = next((p for p in candidates if p in all_partitions), None)
+        if partition is None:
+            raise ValueError(f'Cannot find partition of type: {t}')
 
-    images = ['vbmeta', boot_image]
+        by_type[t] = partition
 
-    if otacert_image is not None:
-        images.append(otacert_image)
+    return by_type
+
+
+def get_required_images(manifest, boot_partition):
+    all_partitions = set(p.partition_name for p in manifest.partitions)
+    by_type = get_partitions_by_type(manifest)
+    images = {k: v for k, v in by_type.items()
+              if k in {'@otacerts', '@vbmeta'}}
+
+    if boot_partition in by_type:
+        images['@rootpatch'] = by_type[boot_partition]
+    elif boot_partition in all_partitions:
+        images['@rootpatch'] = boot_partition
     else:
-        otacert_image = boot_image
+        raise ValueError(f'Boot partition not found: {boot_partition}')
 
-    return images, boot_image, otacert_image
+    return images
 
 
-def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb,
-                      passphrase_avb, privkey_ota, passphrase_ota, cert_ota):
+def patch_ota_payload(f_in, f_out, file_size, boot_partition, magisk,
+                      prepatched, privkey_avb, passphrase_avb, privkey_ota,
+                      passphrase_ota, cert_ota):
     with tempfile.TemporaryDirectory() as temp_dir:
         extract_dir = os.path.join(temp_dir, 'extract')
         patch_dir = os.path.join(temp_dir, 'patch')
@@ -75,18 +88,29 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb,
         os.mkdir(payload_dir)
 
         version, manifest, blob_offset = ota.parse_payload(f_in)
-        images, boot_image, otacert_image = get_images(manifest)
+        images = get_required_images(manifest, boot_partition)
+        unique_images = set(images.values())
 
-        print_status('Extracting', ', '.join(images), 'from the payload')
-        ota.extract_images(f_in, manifest, blob_offset, extract_dir, images)
+        print_status('Extracting', ', '.join(sorted(unique_images)),
+                     'from the payload')
+        ota.extract_images(f_in, manifest, blob_offset, extract_dir,
+                           unique_images)
 
-        image_patches = {boot_image: [boot.MagiskRootPatch(magisk)]}
-        image_patches.setdefault(otacert_image, []).append(
+        image_patches = {}
+
+        if magisk is not None:
+            image_patches[images['@rootpatch']] = \
+                [boot.MagiskRootPatch(magisk)]
+        else:
+            image_patches[images['@rootpatch']] = \
+                [boot.PrepatchedImage(prepatched)]
+
+        image_patches.setdefault(images['@otacerts'], []).append(
             boot.OtaCertPatch(cert_ota))
 
         avb = avbtool.Avb()
 
-        print_status('Patching', ', '.join(image_patches))
+        print_status('Patching', ', '.join(sorted(image_patches)))
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=len(image_patches)) as executor:
             def apply_patches(image, patches):
@@ -107,12 +131,13 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb,
                 future.result()
 
         print_status('Building new root vbmeta image')
+        vbmeta_image = images['@vbmeta']
         vbmeta.patch_vbmeta_root(
             avb,
             [os.path.join(patch_dir, f'{i}.img')
-                for i in images if i != 'vbmeta'],
-            os.path.join(extract_dir, 'vbmeta.img'),
-            os.path.join(patch_dir, 'vbmeta.img'),
+                for i in unique_images if i != vbmeta_image],
+            os.path.join(extract_dir, f'{vbmeta_image}.img'),
+            os.path.join(patch_dir, f'{vbmeta_image}.img'),
             privkey_avb,
             passphrase_avb,
             manifest.block_size,
@@ -126,15 +151,16 @@ def patch_ota_payload(f_in, f_out, file_size, magisk, privkey_avb,
             manifest,
             blob_offset,
             payload_dir,
-            {i: os.path.join(patch_dir, f'{i}.img') for i in images},
+            {i: os.path.join(patch_dir, f'{i}.img') for i in unique_images},
             file_size,
             privkey_ota,
             passphrase_ota,
         )
 
 
-def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, passphrase_avb,
-                  privkey_ota, passphrase_ota, cert_ota):
+def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, magisk, prepatched,
+                  privkey_avb, passphrase_avb, privkey_ota, passphrase_ota,
+                  cert_ota):
     with (
         zipfile.ZipFile(f_zip_in, 'r') as z_in,
         zipfile.ZipFile(f_zip_out, 'w') as z_out,
@@ -219,7 +245,9 @@ def patch_ota_zip(f_zip_in, f_zip_out, magisk, privkey_avb, passphrase_avb,
                         f_in,
                         f_out,
                         info.file_size,
+                        boot_partition,
                         magisk,
+                        prepatched,
                         privkey_avb,
                         passphrase_avb,
                         privkey_ota,
@@ -270,16 +298,18 @@ def patch_subcommand(args):
     if output is None:
         output = args.input + '.patched'
 
-    magisk_version = get_magisk_version(args.magisk)
-    if magisk_version < MAGISK_MIN_VERSION or \
-            magisk_version >= MAGISK_MAX_VERSION:
-        message = f'Unsupported Magisk version {magisk_version} ' \
-                  f'(supported: >={MAGISK_MIN_VERSION}, <{MAGISK_MAX_VERSION})'
+    if args.magisk is not None:
+        magisk_version = get_magisk_version(args.magisk)
+        if magisk_version < MAGISK_MIN_VERSION or \
+                magisk_version >= MAGISK_MAX_VERSION:
+            message = f'Unsupported Magisk version {magisk_version} ' \
+                    f'(supported: >={MAGISK_MIN_VERSION}, ' \
+                    f'<{MAGISK_MAX_VERSION})'
 
-        if args.ignore_magisk_version:
-            print_warning(message)
-        else:
-            raise Exception(message)
+            if args.ignore_magisk_version:
+                print_warning(message)
+            else:
+                raise Exception(message)
 
     # Get passphrases for keys
     passphrase_avb = openssl.prompt_passphrase(args.privkey_avb)
@@ -301,7 +331,9 @@ def patch_subcommand(args):
             metadata = patch_ota_zip(
                 args.input,
                 temp,
+                args.boot_partition,
                 args.magisk,
+                args.prepatched,
                 args.privkey_avb,
                 passphrase_avb,
                 args.privkey_ota,
@@ -325,15 +357,17 @@ def extract_subcommand(args):
 
         with z.open(info, 'r') as f:
             _, manifest, blob_offset = ota.parse_payload(f)
-            images, _, _ = get_images(manifest)
+            images = get_required_images(manifest, args.boot_partition)
+            unique_images = set(images.values())
 
-            print_status('Extracting', ', '.join(images), 'from the payload')
+            print_status('Extracting', ', '.join(sorted(unique_images)),
+                         'from the payload')
             os.makedirs(args.directory, exist_ok=True)
             ota.extract_images(f, manifest, blob_offset, args.directory,
-                               images)
+                               unique_images)
 
 
-def parse_args(args=None):
+def parse_args(argv=None):
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest='subcommand', required=True,
                                        help='Subcommands')
@@ -344,16 +378,23 @@ def parse_args(args=None):
                        help='Path to original raw payload or OTA zip')
     patch.add_argument('--output',
                        help='Path to new raw payload or OTA zip')
-    patch.add_argument('--magisk', required=True,
-                       help='Path to Magisk API')
-    patch.add_argument('--ignore-magisk-version', action='store_true',
-                       help='Allow patching with unsupported Magisk versions')
     patch.add_argument('--privkey-avb', required=True,
                        help='Private key for signing root vbmeta image')
     patch.add_argument('--privkey-ota', required=True,
                        help='Private key for signing OTA payload')
     patch.add_argument('--cert-ota', required=True,
                        help='Certificate for OTA payload signing key')
+
+    # The user can either allow us to patch or supply their own prepatched boot
+    # image (eg. by either Magisk or KernelSU)
+    boot_group = patch.add_mutually_exclusive_group(required=True)
+    boot_group.add_argument('--magisk',
+                            help='Path to Magisk APK')
+    boot_group.add_argument('--prepatched',
+                            help='Path to prepatched boot image')
+
+    patch.add_argument('--ignore-magisk-version', action='store_true',
+                       help='Allow patching with unsupported Magisk versions')
 
     extract = subparsers.add_parser(
         'extract', help='Extract patched images from a patched OTA zip')
@@ -363,11 +404,21 @@ def parse_args(args=None):
     extract.add_argument('--directory', default='.',
                          help='Output directory for extracted images')
 
-    return parser.parse_args(args=args)
+    for subcmd in (patch, extract):
+        subcmd.add_argument('--boot-partition', default='@gki_ramdisk',
+                            help='Boot partition name')
+
+    args = parser.parse_args(args=argv)
+
+    if args.subcommand == 'patch' and \
+            args.ignore_magisk_version and args.magisk is None:
+        parser.error('--ignore-magisk-version requires --magisk')
+
+    return args
 
 
-def main(args=None):
-    args = parse_args(args=args)
+def main(argv=None):
+    args = parse_args(argv=argv)
 
     if args.subcommand == 'patch':
         patch_subcommand(args)

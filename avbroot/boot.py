@@ -32,11 +32,10 @@ def _save_ramdisk(entries, format):
 
 class BootImagePatch:
     def __call__(self, image_file):
-        # Load the boot image
         with open(image_file, 'r+b') as f:
             boot_image = bootimage.load_autodetect(f)
 
-            self.patch(image_file, boot_image)
+            boot_image = self.patch(image_file, boot_image)
 
             f.seek(0)
             f.truncate(0)
@@ -57,7 +56,7 @@ class MagiskRootPatch(BootImagePatch):
 
     def patch(self, image_file, boot_image):
         with zipfile.ZipFile(self.magisk_apk, 'r') as zip:
-            self._patch(image_file, boot_image, zip)
+            return self._patch(image_file, boot_image, zip)
 
     def _patch(self, image_file, boot_image, zip):
         if len(boot_image.ramdisks) > 1:
@@ -136,6 +135,8 @@ class MagiskRootPatch(BootImagePatch):
             boot_image.ramdisks[0] = new_ramdisk
         else:
             boot_image.ramdisks.append(new_ramdisk)
+
+        return boot_image
 
     @staticmethod
     def _apply_magisk_backup(old_entries, new_entries):
@@ -220,6 +221,63 @@ class OtaCertPatch(BootImagePatch):
 
         if not found_otacerts:
             raise Exception(f'{self.OTACERTS_PATH} not found in ramdisk')
+
+        return boot_image
+
+
+class PrepatchedImage(BootImagePatch):
+    '''
+    Replace the boot image with a prepatched boot image if it is compatible.
+
+    An image is compatible if all the non-size-related header fields are
+    identical and the set of included sections (eg. kernel, dtb) are the same.
+    The only exception is the number of ramdisk sections, which is allowed to
+    be higher than the original image.
+    '''
+
+    def __init__(self, prepatched):
+        self.prepatched = prepatched
+
+    def patch(self, image_file, boot_image):
+        with open(self.prepatched, 'r+b') as f:
+            prepatched_image = bootimage.load_autodetect(f)
+
+        old_header = boot_image.to_dict()
+        new_header = prepatched_image.to_dict()
+
+        errors = []
+
+        for k in new_header.keys() - old_header.keys():
+            errors.append(f'{k} header field was added')
+
+        for k in old_header.keys() - new_header.keys():
+            errors.append(f'{k} header field was removed')
+
+        for k in old_header.keys() & new_header.keys():
+            if old_header[k] != new_header[k]:
+                errors.append(f'{k} header field was changed: '
+                              f'{old_header[k]} -> {new_header[k]}')
+
+        for attr in 'kernel', 'second', 'recovery_dtbo', 'dtb', 'bootconfig':
+            original_val = getattr(boot_image, attr)
+            prepatched_val = getattr(prepatched_image, attr)
+
+            if original_val is None and prepatched_val is not None:
+                errors.append(f'{attr} section was added')
+            elif original_val is not None and prepatched_val is None:
+                errors.append(f'{attr} section was removed')
+
+        if len(prepatched_image.ramdisks) < len(boot_image.ramdisks):
+            errors.append('Number of ramdisk sections decreased: '
+                          f'{len(boot_image.ramdisks)} -> '
+                          f'{len(prepatched_image.ramdisks)}')
+
+        if errors:
+            raise ValueError('The prepatched boot image is not compatible '
+                             'with the original:\n' +
+                             '\n'.join(f'- {e}' for e in errors))
+
+        return prepatched_image
 
 
 def patch_boot(avb, input_path, output_path, key, passphrase,

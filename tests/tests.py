@@ -6,9 +6,12 @@ import hashlib
 import os
 import subprocess
 import sys
+import tempfile
+import zipfile
 
 sys.path.append(os.path.join(sys.path[0], '..'))
 from avbroot import main
+from avbroot import ota
 from avbroot import util
 
 
@@ -61,6 +64,16 @@ def download(directory, url, sha256_hex, revalidate=False, extra_args=[]):
     return path
 
 
+def get_boot_partition(zip):
+    with zipfile.ZipFile(zip, 'r') as z:
+        info = z.getinfo(main.PATH_PAYLOAD)
+
+        with z.open(info, 'r') as f:
+            _, manifest, blob_offset = ota.parse_payload(f)
+            images = main.get_partitions_by_type(manifest)
+            return images['@gki_ramdisk']
+
+
 def run_tests(args, config, files_dir):
     magisk_file = download(
         os.path.join(files_dir, 'magisk'),
@@ -86,7 +99,7 @@ def run_tests(args, config, files_dir):
         if args.download_only:
             continue
 
-        print('Patching', image_file)
+        print('Patching (--magisk)', image_file)
 
         test_key_prefix = os.path.join(
             sys.path[0], 'keys', 'TEST_KEY_DO_NOT_USE_')
@@ -100,6 +113,41 @@ def run_tests(args, config, files_dir):
             '--input', image_file,
             '--output', patched_file,
         ])
+        inode_1 = os.stat(patched_file).st_ino
+
+        print('Verifying checksum of', patched_file)
+
+        verify_checksum(patched_file, image['sha256_patched'])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            print('Extracting images from', patched_file)
+
+            main.main([
+                'extract',
+                '--input', patched_file,
+                '--directory', temp_dir,
+            ])
+
+            boot_partition = get_boot_partition(patched_file)
+
+            # Patch again, but this time, use the previously patched boot image
+            # instead of apply the Magisk patch
+
+            print('Patching (--prepatched)', image_file)
+
+            main.main([
+                'patch',
+                '--privkey-avb', test_key_prefix + 'avb.key',
+                '--privkey-ota', test_key_prefix + 'ota.key',
+                '--cert-ota', test_key_prefix + 'ota.crt',
+                '--prepatched', os.path.join(temp_dir, f'{boot_partition}.img'),
+                '--input', image_file,
+                '--output', patched_file,
+            ])
+            inode_2 = os.stat(patched_file).st_ino
+
+            # Sanity check to make sure that the output file was rewritten
+            assert inode_1 != inode_2
 
         print('Verifying checksum of', patched_file)
 
