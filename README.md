@@ -4,15 +4,15 @@ avbroot is a script for patching Android boot images with Magisk root while pres
 
 I do not recommend using this project without a deep understanding of the implementation of AVB and A/B OTAs. It is meant for use with proprietary stock firmware. For folks running open-source Android firmware, I highly recommend adding Magisk to the build process and then compiling from source instead.
 
-### Patches
+## Patches
 
 avbroot applies two patches to the boot images:
 
-* Magisk is applied to the `boot` or `init_boot` image, depending on device, as if it were done from the Magisk Manager app.
+* Magisk is applied to the `boot` or `init_boot` image, depending on device, as if it were done from the Magisk app.
 
 * The `boot`, `recovery`, or `vendor_boot` image, depending on device, is patched to replace the OTA signature verification certificates with the custom OTA signing certificate. This allows future patched OTAs to be sideloaded after the bootloader has been locked. It also prevents accidental flashing of the original OTA package while booted into recovery.
 
-### Warnings and Caveats
+## Warnings and Caveats
 
 * The device must use (non-legacy-SAR) A/B partitioning. This is the case on newer Pixel and OnePlus devices. To check if a device uses this partitioning sceme, open the OTA zip file and check that:
 
@@ -30,7 +30,7 @@ avbroot applies two patches to the boot images:
 
     * The `Direct install` method for updating Magisk. Magisk updates must be done by repatching as well.
 
-### Generating Keys
+## Generating Keys
 
 avbroot signs a few components while patching an OTA zip:
 
@@ -60,11 +60,11 @@ The boot-related components are signed with an AVB key and OTA-related component
     openssl req -new -x509 -sha256 -key ota.key -out ota.crt -days 10000 -subj '/CN=OTA/'
     ```
 
-### Installing dependencies
+## Installing dependencies
 
 avbroot depends on the `openssl` command line tool and the `lz4` and `protobuf` Python libraries. Also, Python 3.9 or newer is required.
 
-#### Linux
+### Linux
 
 On Linux, the dependencies can be installed from the distro's package manager:
 
@@ -77,7 +77,7 @@ On Linux, the dependencies can be installed from the distro's package manager:
 | OpenSUSE   | `sudo zypper install openssl python3-lz4 python3-protobuf` |
 | Ubuntu     | (Same as Debian)                                           |
 
-#### Windows
+### Windows
 
 Installing openssl and python from the [Scoop package manager](https://scoop.sh/) is suggested.
 
@@ -107,7 +107,7 @@ To install the Python dependencies:
     pip install -r requirements.txt
     ```
 
-### Usage
+## Usage
 
 1. Make sure the caveats listed above are understood. It is possible to hard brick by doing the wrong thing!
 
@@ -140,6 +140,8 @@ To install the Python dependencies:
     ```
 
     If `--output` is not specified, then the output file is written to `<input>.patched`.
+
+    If you already have a prepatched boot image and don't want avbroot to apply the Magisk patches itself, see the [advanced usage section](#advanced-usage).
 
 6. **[Initial setup only]** Unlock the bootloader. This will trigger a data wipe.
 
@@ -177,7 +179,7 @@ To install the Python dependencies:
 
 10. **[Initial setup only]** Lock the bootloader. This will trigger a data wipe again. **Do not uncheck `OEM unlocking`!**
 
-### Updates
+## Updates
 
 To update Android or Magisk:
 
@@ -189,7 +191,7 @@ To update Android or Magisk:
 
 4. Reboot.
 
-### Blocking A/B OTA Updates
+## Blocking A/B OTA Updates
 
 Unpatched OTA updates are already blocked in recovery because the original OTA certificate has been replaced with the custom certificate. To disable OTAs while booted into Android, turn off `Automatic system updates` in Android's Developer Options.
 
@@ -201,7 +203,17 @@ python clearotacerts/build.py
 
 and flash the `clearotacerts/dist/clearotacerts-<version>.zip` file in Magisk. The module simply overrides `/system/etc/security/otacerts.zip` at runtime with an empty zip so that even if an OTA is downloaded, signature verification will fail.
 
-### Implementation Details
+## Advanced Usage
+
+### Using a prepatched boot image
+
+avbroot can replace the boot image with a prepatched image instead of applying the Magisk root patch itself. This is useful for using a boot image patched by the Magisk app or for KernelSU. To use a prepatched boot image, pass in `--prepatched <boot image>` instead of `--magisk <apk>`. When using `--prepatched`, avbroot will skip applying the Magisk root patch, but will still apply the OTA certificate patch.
+
+For KernelSU, also pass in `--boot-partition @gki_kernel`. avbroot defaults to Magisk's semantics where the boot image containing the GKI ramdisk is needed, whereas KernelSU requires the boot image containing the GKI kernel. This only affects devices launching with Android 13, where the GKI kernel and ramdisk are in different partitions (`boot` vs. `init_boot`), but it is safe and recommended to always use this option for KernelSU.
+
+Note that avbroot will validate that the prepatched image is compatible with the original. If, for example, the header fields do not match or a boot image section is missing, then the patching process will abort. This check is not foolproof, but should help protect against accidental use of the wrong boot image.
+
+## Implementation Details
 
 * avbroot relies on AOSP's avbtool and OTA utilities. These are collections of applications that aren't meant to be used as libraries, but avbroot shoehorns them in anyway. These tools are not called via CLI because avbroot requires more control over the operations being performed than what is provided via the CLI interfaces. This "integration" is incredibly hacky and will likely require changes whenever the submodules are updated to point to newer AOSP commits.
 
@@ -212,10 +224,10 @@ and flash the `clearotacerts/dist/clearotacerts-<version>.zip` file in Magisk. T
 
     avbroot preserves whether an image uses a chainload or hash descriptor. If a boot image was previously signed, then it will be signed with the AVB key during patching. This preserves the state of the AVB rollback indices, which makes it possible to flip between the original and patched images without a factory reset while debugging avbroot (with the bootloader unlocked).
 
-### Contributing
+## Contributing
 
 Contributions are welcome! However, I'm unlikely to accept changes for supporting devices that behave significantly differently from Pixel devices.
 
-### License
+## License
 
 avbroot is licensed under GPLv3. Please see [`LICENSE`](./LICENSE) for the full license text.
