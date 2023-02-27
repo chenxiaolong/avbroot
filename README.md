@@ -209,7 +209,7 @@ and flash the `clearotacerts/dist/clearotacerts-<version>.zip` file in Magisk. T
 
 avbroot can replace the boot image with a prepatched image instead of applying the Magisk root patch itself. This is useful for using a boot image patched by the Magisk app or for KernelSU. To use a prepatched boot image, pass in `--prepatched <boot image>` instead of `--magisk <apk>`. When using `--prepatched`, avbroot will skip applying the Magisk root patch, but will still apply the OTA certificate patch.
 
-For KernelSU, also pass in `--boot-partition @gki_kernel`. avbroot defaults to Magisk's semantics where the boot image containing the GKI ramdisk is needed, whereas KernelSU requires the boot image containing the GKI kernel. This only affects devices launching with Android 13, where the GKI kernel and ramdisk are in different partitions (`boot` vs. `init_boot`), but it is safe and recommended to always use this option for KernelSU.
+For KernelSU, also pass in `--boot-partition @gki_kernel` for both the `patch` and `extract` commands. avbroot defaults to Magisk's semantics where the boot image containing the GKI ramdisk is needed, whereas KernelSU requires the boot image containing the GKI kernel. This only affects devices launching with Android 13, where the GKI kernel and ramdisk are in different partitions (`boot` vs. `init_boot`), but it is safe and recommended to always use this option for KernelSU.
 
 Note that avbroot will validate that the prepatched image is compatible with the original. If, for example, the header fields do not match or a boot image section is missing, then the patching process will abort. This check is not foolproof, but should help protect against accidental use of the wrong boot image.
 
@@ -222,6 +222,18 @@ ValueError: vbmeta flags disable AVB: 0x3
 ```
 
 To forcibly enable AVB (by clearing the flags), pass in `--clear-vbmeta-flags`.
+
+### Extracting the entire OTA
+
+To extract all images contained within the OTA's `payload.bin`, run:
+
+```bash
+python avbroot.py \
+    extract \
+    --input /path/to/ota.zip \
+    --directory extracted \
+    --all
+```
 
 ## Implementation Details
 
