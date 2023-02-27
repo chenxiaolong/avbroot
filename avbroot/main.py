@@ -77,8 +77,8 @@ def get_required_images(manifest, boot_partition):
 
 
 def patch_ota_payload(f_in, f_out, file_size, boot_partition, magisk,
-                      prepatched, privkey_avb, passphrase_avb, privkey_ota,
-                      passphrase_ota, cert_ota):
+                      prepatched, clear_vbmeta_flags, privkey_avb,
+                      passphrase_avb, privkey_ota, passphrase_ota, cert_ota):
     with tempfile.TemporaryDirectory() as temp_dir:
         extract_dir = os.path.join(temp_dir, 'extract')
         patch_dir = os.path.join(temp_dir, 'patch')
@@ -141,6 +141,7 @@ def patch_ota_payload(f_in, f_out, file_size, boot_partition, magisk,
             privkey_avb,
             passphrase_avb,
             manifest.block_size,
+            clear_vbmeta_flags,
         )
 
         print_status('Updating OTA payload to reference patched images')
@@ -159,8 +160,8 @@ def patch_ota_payload(f_in, f_out, file_size, boot_partition, magisk,
 
 
 def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, magisk, prepatched,
-                  privkey_avb, passphrase_avb, privkey_ota, passphrase_ota,
-                  cert_ota):
+                  clear_vbmeta_flags, privkey_avb, passphrase_avb, privkey_ota,
+                  passphrase_ota, cert_ota):
     with (
         zipfile.ZipFile(f_zip_in, 'r') as z_in,
         zipfile.ZipFile(f_zip_out, 'w') as z_out,
@@ -248,6 +249,7 @@ def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, magisk, prepatched,
                         boot_partition,
                         magisk,
                         prepatched,
+                        clear_vbmeta_flags,
                         privkey_avb,
                         passphrase_avb,
                         privkey_ota,
@@ -334,6 +336,7 @@ def patch_subcommand(args):
                 args.boot_partition,
                 args.magisk,
                 args.prepatched,
+                args.clear_vbmeta_flags,
                 args.privkey_avb,
                 passphrase_avb,
                 args.privkey_ota,
@@ -395,6 +398,9 @@ def parse_args(argv=None):
 
     patch.add_argument('--ignore-magisk-version', action='store_true',
                        help='Allow patching with unsupported Magisk versions')
+
+    patch.add_argument('--clear-vbmeta-flags', action='store_true',
+                       help='Forcibly clear vbmeta flags if they disable AVB')
 
     extract = subparsers.add_parser(
         'extract', help='Extract patched images from a patched OTA zip')

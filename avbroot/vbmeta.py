@@ -73,7 +73,7 @@ def _get_descriptor_overrides(avb, paths):
 
 
 def patch_vbmeta_root(avb, images, input_path, output_path, key, passphrase,
-                      padding_size):
+                      padding_size, clear_flags):
     '''
     Patch the root vbmeta image to reference the provided images.
     '''
@@ -81,6 +81,12 @@ def patch_vbmeta_root(avb, images, input_path, output_path, key, passphrase,
     # Load the original root vbmeta image
     image = avbtool.ImageHandler(input_path, read_only=True)
     footer, header, descriptors, image_size = avb._parse_image(image)
+
+    if header.flags != 0:
+        if clear_flags:
+            header.flags = 0
+        else:
+            raise ValueError(f'vbmeta flags disable AVB: 0x{header.flags:x}')
 
     # Build a set of new descriptors in the same order as the original
     # descriptors, except with the descriptors patched to reference the given

@@ -213,6 +213,16 @@ For KernelSU, also pass in `--boot-partition @gki_kernel`. avbroot defaults to M
 
 Note that avbroot will validate that the prepatched image is compatible with the original. If, for example, the header fields do not match or a boot image section is missing, then the patching process will abort. This check is not foolproof, but should help protect against accidental use of the wrong boot image.
 
+### Clearing vbmeta flags
+
+Some Android builds may ship with a root `vbmeta` image with the flags set such that AVB is effectively disabled. When avbroot encounters these images, the patching process will fail with a message like:
+
+```
+ValueError: vbmeta flags disable AVB: 0x3
+```
+
+To forcibly enable AVB (by clearing the flags), pass in `--clear-vbmeta-flags`.
+
 ## Implementation Details
 
 * avbroot relies on AOSP's avbtool and OTA utilities. These are collections of applications that aren't meant to be used as libraries, but avbroot shoehorns them in anyway. These tools are not called via CLI because avbroot requires more control over the operations being performed than what is provided via the CLI interfaces. This "integration" is incredibly hacky and will likely require changes whenever the submodules are updated to point to newer AOSP commits.
