@@ -6,8 +6,11 @@ For each image listed in the config, the test process will:
 
 1. Download the OTA if it doesn't already exist in `tests/files/<device>/`
 2. Verify the OTA checksum
-3. Run avbroot against the OTA
+3. Run avbroot against the OTA using `--magisk`
 4. Verify the patched OTA checksum
+5. Extract the boot image from the patched OTA
+6. Run avbroot against the OTA again using `--prepatched`
+7. Verify the patched OTA checksum again
 
 ## Running the tests
 
