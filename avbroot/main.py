@@ -360,8 +360,13 @@ def extract_subcommand(args):
 
         with z.open(info, 'r') as f:
             _, manifest, blob_offset = ota.parse_payload(f)
-            images = get_required_images(manifest, args.boot_partition)
-            unique_images = set(images.values())
+
+            if args.all:
+                unique_images = set(p.partition_name
+                                    for p in manifest.partitions)
+            else:
+                images = get_required_images(manifest, args.boot_partition)
+                unique_images = set(images.values())
 
             print_status('Extracting', ', '.join(sorted(unique_images)),
                          'from the payload')
@@ -409,6 +414,8 @@ def parse_args(argv=None):
                          help='Path to patched OTA zip')
     extract.add_argument('--directory', default='.',
                          help='Output directory for extracted images')
+    extract.add_argument('--all', action='store_true',
+                         help='Extract all images from payload')
 
     for subcmd in (patch, extract):
         subcmd.add_argument('--boot-partition', default='@gki_ramdisk',
