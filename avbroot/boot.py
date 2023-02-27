@@ -1,6 +1,7 @@
 import hashlib
 import io
 import lzma
+import re
 import shutil
 import zipfile
 
@@ -235,6 +236,9 @@ class PrepatchedImage(BootImagePatch):
     be higher than the original image.
     '''
 
+    VERSION_REGEX = re.compile(
+        b'Linux version (\d+\.\d+).\d+-(android\d+)-(\d+)-')
+
     def __init__(self, prepatched):
         self.prepatched = prepatched
 
@@ -272,12 +276,37 @@ class PrepatchedImage(BootImagePatch):
                           f'{len(boot_image.ramdisks)} -> '
                           f'{len(prepatched_image.ramdisks)}')
 
+        if boot_image.kernel is not None:
+            old_kmi = self._get_kmi_version(boot_image)
+            new_kmi = self._get_kmi_version(prepatched_image)
+
+            if old_kmi != new_kmi:
+                errors.append('Kernel module interface version changed: '
+                              f'{old_kmi} -> {new_kmi}')
+
         if errors:
             raise ValueError('The prepatched boot image is not compatible '
                              'with the original:\n' +
                              '\n'.join(f'- {e}' for e in errors))
 
         return prepatched_image
+
+    @classmethod
+    def _get_kmi_version(cls, boot_image):
+        try:
+            with (
+                io.BytesIO(boot_image.kernel) as f_raw,
+                compression.CompressedFile(f_raw, 'rb') as f,
+            ):
+                decompressed = f.fp.read()
+        except ValueError:
+            decompressed = boot_image.kernel
+
+        m = cls.VERSION_REGEX.search(decompressed)
+        if not m:
+            return None
+
+        return b'-'.join(m.groups()).decode('ascii')
 
 
 def patch_boot(avb, input_path, output_path, key, passphrase,
