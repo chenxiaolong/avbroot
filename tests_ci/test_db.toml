@@ -1,0 +1,65 @@
+[magisk]
+filename = "magisk.apk"
+url = "https://github.com/topjohnwu/Magisk/releases/download/v25.2/Magisk-v25.2.apk"
+sha256 = "0bdc32918b6ea502dca769b1c7089200da51ea1def170824c2812925b426d509"
+
+[device.bluejay]
+filename = "bluejay-ota-tq1a.230205.002-1ec64b58.zip"
+url = "https://dl.google.com/dl/android/aosp/bluejay-ota-tq1a.230205.002-1ec64b58.zip"
+sections = [
+    {range = [0, 25781534], checksum = "2db28a01"},
+    {range = [50595563, 50613918], checksum = "6f0635b4"},
+    {range = [1870236118, 1871590329], checksum = "272a03c1"},
+    {range = [2051986898, 2081231853], checksum = "39940962"}
+]
+
+[device.bluejay.hashes]
+"boot.img" = "8131084ad95d8ffcb917bc239ffdeef6"
+"vbmeta.img" = "38bc2245f6d41877ebf92d6612d3ca04"
+"vendor_boot.img" = "4611f85f4eae65e0eca09605068d14c8"
+
+[device.bramble]
+filename = "bramble-ota-tq1a.230205.002-49f2dc71.zip"
+url = "https://dl.google.com/dl/android/aosp/bramble-ota-tq1a.230205.002-49f2dc71.zip"
+sections = [
+    {range = [0, 12759576], checksum = "b0a1b579"},
+    {range = [1155394531, 1155409742], checksum = "b018de12"},
+    {range = [1636569527, 1637452126], checksum = "b8747c8"},
+    {range = [1870498525, 1896655733], checksum = "f3d4f27b"}
+]
+
+[device.bramble.hashes]
+"boot.img" = "098500dfba880f9a61a379d342a84cc9"
+"vbmeta.img" = "17230bbb41023bd3b03aaf94203e9330"
+"vendor_boot.img" = "34e3559f2460d8ef52ccb5352e09dfec"
+
+[device.cheetah]
+filename = "cheetah-ota-tq1a.230205.002-ad27a6d7.zip"
+url = "https://dl.google.com/dl/android/aosp/cheetah-ota-tq1a.230205.002-ad27a6d7.zip"
+sections = [
+    {range = [0, 23399500], checksum = "34f19830"},
+    {range = [125881702, 125898553], checksum = "9f68fc6d"},
+    {range = [1518207067, 1518293650], checksum = "a003f2d1"},
+    {range = [1883282667, 1883297278], checksum = "9537e70d"},
+    {range = [2010705366, 2012070705], checksum = "94fdddd2"},
+    {range = [2278970391, 2307353441], checksum = "6ba7d418"}
+]
+
+[device.cheetah.hashes]
+"init_boot.img" = "7c200e0dfd1af446d68a3f009cc86f8b"
+"vbmeta.img" = "b12f7e00cc7b9152f7aaa00ab2c4bae0"
+"vendor_boot.img" = "e39682b1656b8c59ac2717f330a08bd9"
+
+[device.sunfish]
+filename = "sunfish-ota-tq1a.230205.002-536bce5f.zip"
+url = "https://dl.google.com/dl/android/aosp/sunfish-ota-tq1a.230205.002-536bce5f.zip"
+sections = [
+    {range = [0, 34269195], checksum = "93177bf6"},
+    {range = [1146499715, 1146513902], checksum = "83903c62"},
+    {range = [1610565619, 1611042042], checksum = "114b64ce"},
+    {range = [1807072291, 1809631036], checksum = "4d33dae2"}
+]
+
+[device.sunfish.hashes]
+"boot.img" = "ddd9bcf0bdc4c727f33110f90103158a"
+"vbmeta.img" = "7388afabde4bb490ddef491dd2a8fe27"
