@@ -1,0 +1,177 @@
+name: CI
+on: push
+
+env:
+  test-db-path: tests_ci/test_db.toml
+
+# This allows a subsequently queued workflow run to interrupt previous runs
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  setup:
+    name: Prepare workflow data
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      # Default
+      contents: read
+      packages: read
+      # Custom, for API cache access
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      device-db: ${{ steps.load-db.outputs.device-db }}
+      device-list: ${{ steps.load-db.outputs.device-list }}
+      magisk-hash: ${{ steps.load-db.outputs.magisk-hash }}
+      magisk-url: ${{ steps.load-db.outputs.magisk-url }}
+      img-to-cache: ${{ steps.load-db.outputs.img-to-cache }}
+      hit-magisk: ${{ fromJSON(steps.get-magisk-cache.outputs.magisk-hit).total_count != 0 }}
+      hit-tox: |
+        ${{ contains(fromJSON(steps.get-tox-cache.outputs.tox-hit).actions_caches.*.key, format('tox-py39-{0}', steps.get-tox-cache.outputs.tox-hash)) 
+          && contains(fromJSON(steps.get-tox-cache.outputs.tox-hit).actions_caches.*.key, format('tox-py310-{0}', steps.get-tox-cache.outputs.tox-hash))
+          && contains(fromJSON(steps.get-tox-cache.outputs.tox-hit).actions_caches.*.key, format('tox-py311-{0}', steps.get-tox-cache.outputs.tox-hash)) }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: python3-tomlkit
+      - name: Checking for cached tox environments
+        id: get-tox-cache
+        run: |
+          echo "tox-hit=$(gh api \
+            --method GET \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            -f 'key=tox-py3' \
+            /repos/${{ github.repository }}/actions/caches)" >> $GITHUB_OUTPUT
+          echo "tox-hash=${{ hashFiles('tox.ini') }}" >> $GITHUB_OUTPUT
+      - name: Checking for cached device images
+        run: |
+          gh api \
+            --method GET \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            -f 'key=img-' \
+            /repos/${{ github.repository }}/actions/caches > cache-data.json
+      - name: Loading device test database
+        id: load-db
+        shell: python
+        run: |
+          import json
+          import os
+          import tomlkit
+
+          with open('${{ env.test-db-path }}') as f:
+            db = tomlkit.load(f)
+
+          with open('cache-data.json', 'r') as f:
+            cache_data = json.load(f)
+          
+          cache_names = {'img-' + i + '-' + j['filename']:i for i,j in db['device'].items()}
+          filenames_cached = [i['key'] for i in cache_data.get('actions_caches') or []]
+          filenames_to_cache = list(set(cache_names) - set(filenames_cached))
+          devices_to_cache = [cache_names[i] for i in filenames_to_cache]
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+            f.write(f"device-db={db['device']}" + '\n')
+            f.write(f"device-list={[i for i in db['device']]}" + '\n')
+            f.write(f"magisk-hash={db['magisk']['sha256']}" + '\n')
+            f.write(f"magisk-url={db['magisk']['url']}" + '\n')
+            f.write(f"img-to-cache={devices_to_cache}" + '\n')
+      - name: Checking for cached magisk apk
+        id: get-magisk-cache
+        run: |
+          echo "magisk-hit=$(gh api \
+            --method GET \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            -f 'key=magisk-${{ steps.load-db.outputs.magisk-hash }}' \
+            /repos/${{ github.repository }}/actions/caches)" >> $GITHUB_OUTPUT
+
+  preload-magisk:
+    name: Preload Magisk
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 2
+    if: ${{ ! fromJSON(needs.setup.outputs.hit-magisk) }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/preload-magisk-cache
+        with:
+          hash: ${{ needs.setup.outputs.magisk-hash }}
+          url: ${{ needs.setup.outputs.magisk-url }}
+
+  preload-img:
+    name: Preload device images
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 5
+    if: ${{ needs.setup.outputs.img-to-cache != '[]' }}
+    strategy:
+      matrix:
+        device: ${{ fromJSON(needs.setup.outputs.img-to-cache) }}
+    env:
+      filename: ${{ fromJSON(needs.setup.outputs.device-db)[matrix.device]['filename'] }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+      - uses: ./.github/actions/preload-img-cache
+        with:
+          device: ${{ matrix.device }}
+          filename: ${{ env.filename }}
+          test-db-path: ${{ env.test-db-path }}
+
+  preload-tox:
+    name: Preload tox environments
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 5
+    if: ${{ ! fromJSON(needs.setup.outputs.hit-tox) }}
+    strategy:
+      matrix:
+        python: [py39, py310, py311]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/preload-tox-cache
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Generating tox environment
+        run: tox -e ${{ matrix.python }} --notest
+
+  tests:
+    name: Run test for ${{ matrix.device }} with ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    needs: [setup, preload-magisk, preload-img, preload-tox]
+    timeout-minutes: 5
+    # Continue on skipped but not on failures or cancels
+    if: ${{ always() && ! failure() && ! cancelled() }}
+    strategy:
+      matrix:
+        device: ${{ fromJSON(needs.setup.outputs.device-list) }}
+        python: [py39, py310, py311]
+    env:
+      filename: ${{ fromJSON(needs.setup.outputs.device-db)[matrix.device]['filename'] }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+      - uses: ./.github/actions/preload-magisk-cache
+        with:
+          hash: ${{ needs.setup.outputs.magisk-hash }}
+          url: ${{ needs.setup.outputs.magisk-url }}
+      - uses: ./.github/actions/preload-img-cache
+        with:
+          device: ${{ matrix.device }}
+          filename: ${{ env.filename }}
+          test-db-path: ${{ env.test-db-path }}
+      - uses: ./.github/actions/preload-tox-cache
+        with:
+          python-version: ${{ matrix.python }}
+
+      # Finally run tests
+      - name: Run test for ${{ matrix.device }} with ${{ matrix.python }}
+        run: tox -e ${{ matrix.python }} -- -d ${{ matrix.device }} --db ${{ env.test-db-path }} --workdir workdir

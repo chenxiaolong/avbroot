@@ -1,0 +1,27 @@
+name: Preload Magisk
+inputs:
+  hash:
+    description: 'Magisk hash'
+    required: true
+  url:
+    description: 'Magisk URL'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/cache@v3
+      id: cache-magisk
+      with:
+        key: magisk-${{ inputs.hash }}
+        path: |
+          workdir/magisk.apk
+    - name: Creating workdir
+      if: ${{ ! steps.cache-magisk.outputs.cache-hit }}
+      shell: sh
+      run: mkdir -p workdir
+    - name: Downloading Magisk
+      if: ${{ ! steps.cache-magisk.outputs.cache-hit }}
+      shell: sh
+      run: |
+        curl -L -o workdir/magisk.apk ${{ inputs.url }}
