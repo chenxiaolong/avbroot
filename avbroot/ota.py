@@ -2,6 +2,7 @@ import base64
 import binascii
 import bz2
 import collections
+import concurrent.futures
 import contextlib
 import hashlib
 import io
@@ -10,6 +11,7 @@ import os
 import struct
 import sys
 import subprocess
+import threading
 import unittest.mock
 import zipfile
 
@@ -63,7 +65,8 @@ def parse_payload(f):
     return (version, manifest, f.tell())
 
 
-def _extract_image(f_payload, f_out, block_size, blob_offset, partition):
+def _extract_image(f_payload, f_out, block_size, blob_offset, partition,
+                   cancel_signal):
     '''
     Extract the partition image from <f_payload> to <f_out> by processing the
     manifests list of install operations.
@@ -73,6 +76,9 @@ def _extract_image(f_payload, f_out, block_size, blob_offset, partition):
 
     for op in partition.operations:
         for extent in op.dst_extents:
+            if cancel_signal.is_set():
+                raise Exception('Interrupted')
+
             f_payload.seek(blob_offset + op.data_offset)
             f_out.seek(extent.start_block * block_size)
             h_data = hashlib.sha256()
@@ -103,20 +109,52 @@ def _extract_image(f_payload, f_out, block_size, blob_offset, partition):
 def extract_images(f, manifest, blob_offset, output_dir, partition_names):
     '''
     Extract the specified partition images from the payload into <output_dir>.
+
+    If <f> is callable, then it should produce a new file object each time it
+    is called. This allows extracting images in parallel.
     '''
 
     remaining = set(partition_names)
+    max_workers = len(remaining)
+    cancel_signal = threading.Event()
+    futures = []
 
-    for p in manifest.partitions:
-        if p.partition_name not in remaining:
-            continue
+    if not callable(f):
+        f_orig = f
 
-        remaining.remove(p.partition_name)
+        @contextlib.contextmanager
+        def dummy():
+            yield f_orig
 
+        f = dummy
+        max_workers = 1
+
+    def extract(p):
         output_path = os.path.join(output_dir, p.partition_name + '.img')
 
-        with open(output_path, 'wb') as f_out:
-            _extract_image(f, f_out, manifest.block_size, blob_offset, p)
+        with (
+            f() as f_in,
+            open(output_path, 'wb') as f_out,
+        ):
+            _extract_image(f_in, f_out, manifest.block_size, blob_offset, p,
+                           cancel_signal)
+
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_workers) as executor:
+        try:
+            for p in manifest.partitions:
+                if p.partition_name not in remaining:
+                    continue
+
+                remaining.remove(p.partition_name)
+
+                futures.append(executor.submit(extract, p))
+
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
+        except BaseException:
+            cancel_signal.set()
+            raise
 
     if remaining:
         raise Exception(f'Images not found: {remaining}')

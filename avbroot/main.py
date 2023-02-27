@@ -2,6 +2,7 @@ from . import external
 
 import argparse
 import concurrent.futures
+import copy
 import os
 import shutil
 import tempfile
@@ -76,8 +77,8 @@ def get_required_images(manifest, boot_partition):
     return images
 
 
-def patch_ota_payload(f_in, f_out, file_size, boot_partition, magisk,
-                      prepatched, clear_vbmeta_flags, privkey_avb,
+def patch_ota_payload(f_in, open_more_f_in, f_out, file_size, boot_partition,
+                      magisk, prepatched, clear_vbmeta_flags, privkey_avb,
                       passphrase_avb, privkey_ota, passphrase_ota, cert_ota):
     with tempfile.TemporaryDirectory() as temp_dir:
         extract_dir = os.path.join(temp_dir, 'extract')
@@ -93,8 +94,8 @@ def patch_ota_payload(f_in, f_out, file_size, boot_partition, magisk,
 
         print_status('Extracting', ', '.join(sorted(unique_images)),
                      'from the payload')
-        ota.extract_images(f_in, manifest, blob_offset, extract_dir,
-                           unique_images)
+        ota.extract_images(open_more_f_in, manifest, blob_offset,
+                           extract_dir, unique_images)
 
         image_patches = {}
 
@@ -203,6 +204,8 @@ def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, magisk, prepatched,
         metadata_pb_raw = None
 
         for info in infolist:
+            out_info = copy.copy(info)
+
             # Ignore because the plain-text legacy metadata file is regenerated
             # from the new metadata
             if info.filename == PATH_METADATA:
@@ -224,7 +227,7 @@ def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, magisk, prepatched,
 
                 with (
                     open(cert_ota, 'rb') as f_cert,
-                    z_out.open(info, 'w') as f_out,
+                    z_out.open(out_info, 'w') as f_out,
                 ):
                     shutil.copyfileobj(f_cert, f_out)
 
@@ -233,7 +236,7 @@ def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, magisk, prepatched,
             # Copy other files, patching if needed
             with (
                 z_in.open(info, 'r') as f_in,
-                z_out.open(info, 'w') as f_out,
+                z_out.open(out_info, 'w') as f_out,
             ):
                 if info.filename == PATH_PAYLOAD:
                     print_status('Patching', info.filename)
@@ -244,6 +247,7 @@ def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, magisk, prepatched,
 
                     properties = patch_ota_payload(
                         f_in,
+                        lambda: z_in.open(info, 'r'),
                         f_out,
                         info.file_size,
                         boot_partition,
@@ -361,18 +365,24 @@ def extract_subcommand(args):
         with z.open(info, 'r') as f:
             _, manifest, blob_offset = ota.parse_payload(f)
 
-            if args.all:
-                unique_images = set(p.partition_name
-                                    for p in manifest.partitions)
-            else:
-                images = get_required_images(manifest, args.boot_partition)
-                unique_images = set(images.values())
+        if args.all:
+            unique_images = set(p.partition_name
+                                for p in manifest.partitions)
+        else:
+            images = get_required_images(manifest, args.boot_partition)
+            unique_images = set(images.values())
 
-            print_status('Extracting', ', '.join(sorted(unique_images)),
-                         'from the payload')
-            os.makedirs(args.directory, exist_ok=True)
-            ota.extract_images(f, manifest, blob_offset, args.directory,
-                               unique_images)
+        print_status('Extracting', ', '.join(sorted(unique_images)),
+                     'from the payload')
+        os.makedirs(args.directory, exist_ok=True)
+
+        # Extract in parallel. There's is no actual I/O parallelism due to
+        # zipfile's internal locks, but this is still significantly faster than
+        # doing it single threaded. The extraction process is mostly CPU board
+        # due to decompression.
+        ota.extract_images(lambda: z.open(info, 'r'),
+                           manifest, blob_offset, args.directory,
+                           unique_images)
 
 
 def parse_args(argv=None):
