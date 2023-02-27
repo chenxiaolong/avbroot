@@ -15,6 +15,8 @@ import threading
 import unittest.mock
 import zipfile
 
+from . import external
+
 # Silence undesired warning
 orig_argv0 = sys.argv[0]
 sys.argv[0] = os.path.basename(sys.argv[0]).removesuffix('.py')
