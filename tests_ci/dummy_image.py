@@ -13,10 +13,10 @@ import tomlkit
 
 sys.path.append(os.path.join(sys.path[0], ".."))
 from avbroot import external, ota, util
-from avbroot.main import PATH_PAYLOAD
+from avbroot.main import PARTITION_PRIORITIES, PATH_PAYLOAD
 import ota_utils
 
-PARTITIONS_TO_ZERO = {"product", "system", "vendor", "system_ext", "modem"}
+PARTITIONS_TO_PRESERVE = set(sum(PARTITION_PRIORITIES.values(), ()))
 
 
 class Crc32Hasher:
@@ -156,7 +156,7 @@ def convert_image(args):
     partition_operations = {}
 
     for p in manifest.partitions:
-        if p.partition_name in PARTITIONS_TO_ZERO:
+        if p.partition_name not in PARTITIONS_TO_PRESERVE:
             old_data_offset = 0
 
             # Ensure all operations are in order
