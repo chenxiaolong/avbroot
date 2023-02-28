@@ -69,3 +69,21 @@ sections = [
 "output.zip" = "daedbeefd8028879c1d01ddbd61ce469"
 "boot.img" = "ddd9bcf0bdc4c727f33110f90103158a"
 "vbmeta.img" = "7388afabde4bb490ddef491dd2a8fe27"
+
+[device.OnePlus10Pro]
+filename = "6812ccee9a8a891032af1e053e3217731ac7ad92.zip"
+url = ""
+sections = [
+    {range = [0, 201623], checksum = "2acd36ae"},
+    {range = [1196332, 23427210], checksum = "15217bd3"},
+    {range = [25849763, 38696302], checksum = "5cc8ac5f"},
+    {range = [39073011, 39075766], checksum = "21a72228"},
+    {range = [474699863, 490863355], checksum = "1ced0b0b"},
+    {range = [5094768711, 5094772523], checksum = "be0bf45c"}
+]
+
+[device.OnePlus10Pro.hashes]
+"output.zip" = "6d82da4e5b5b072f32df0b14c159897c"
+"boot.img" = "83156961f7a3659dbd5789b0dbfa6a47"
+"recovery.img" = "d443e28da4ebc0b525d11cc20b55cce4"
+"vbmeta.img" = "26502dda312ba05acf250a7973c3afeb"

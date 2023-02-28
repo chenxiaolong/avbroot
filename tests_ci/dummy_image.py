@@ -15,6 +15,7 @@ sys.path.append(os.path.join(sys.path[0], ".."))
 from avbroot import external, ota, util
 from avbroot.main import PARTITION_PRIORITIES, PATH_PAYLOAD
 import ota_utils
+import update_metadata_pb2
 
 PARTITIONS_TO_PRESERVE = set(sum(PARTITION_PRIORITIES.values(), ()))
 
@@ -190,12 +191,17 @@ def convert_image(args):
 
     partition_operations = {}
 
+    Type = update_metadata_pb2.InstallOperation.Type
+
     for p in manifest.partitions:
         if p.partition_name not in PARTITIONS_TO_PRESERVE:
             old_data_offset = 0
 
             # Ensure all operations are in order
             for op in p.operations:
+                if op.type == Type.ZERO or op.type == Type.DISCARD:
+                    continue
+
                 if old_data_offset > op.data_offset:
                     raise Exception("Operations are expected to be ordered")
                 old_data_offset = op.data_offset
@@ -223,6 +229,9 @@ def convert_image(args):
             )
 
             for op in p_operations:
+                if op.type == Type.ZERO or op.type == Type.DISCARD:
+                    continue
+
                 if f_out.tell() != (file_offset + blob_offset + op.data_offset):
                     raise Exception("f_out should be equal to the offset")
                 output_writer(None, f_out, op.data_length, db_entry)
