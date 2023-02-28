@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import glob
 import hashlib
 import os
 import sys
@@ -15,7 +16,7 @@ from avbroot import util
 import dummy_image
 
 
-def test_device(test_file, magisk_file, hashes, workdir, no_test):
+def test_device(test_file, magisk_file, hashes, workdir, no_test, db, device_name):
     output_file = os.path.join(workdir, "output.zip")
     test_key_prefix = os.path.join(
         sys.path[0], os.pardir, "tests", "keys", "TEST_KEY_DO_NOT_USE_"
@@ -51,6 +52,29 @@ def test_device(test_file, magisk_file, hashes, workdir, no_test):
             workdir,
         ]
     )
+
+    if hashes is None:
+        with open(db, "r") as f:
+            toml_db = tomlkit.load(f)
+
+        new_hashes = tomlkit.table()
+        with open(os.path.join(workdir, "output.zip"), "rb") as f:
+            new_hashes.update(
+                {"output.zip": util.hash_file(f, hashlib.md5()).hexdigest()}
+            )
+
+        for i in sorted(glob.glob("*.img", root_dir=workdir)):
+            with open(os.path.join(workdir, i), "rb") as f:
+                new_hashes.update({i: util.hash_file(f, hashlib.md5()).hexdigest()})
+
+        toml_db.get("device").get(device_name).append("hashes", new_hashes)
+
+        with open(db, "w") as f:
+            tomlkit.dump(toml_db, f)
+
+        print(f"{device_name} hashes are added to the database")
+
+        hashes = dict(new_hashes)
 
     if not no_test:
         os.remove(output_file)
@@ -137,6 +161,8 @@ def test_main():
             device_entry.get("hashes"),
             args.workdir,
             args.no_test,
+            args.db,
+            device_name,
         )
 
 
