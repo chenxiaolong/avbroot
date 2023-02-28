@@ -7,13 +7,15 @@ sha256 = "0bdc32918b6ea502dca769b1c7089200da51ea1def170824c2812925b426d509"
 filename = "bluejay-ota-tq1a.230205.002-1ec64b58.zip"
 url = "https://dl.google.com/dl/android/aosp/bluejay-ota-tq1a.230205.002-1ec64b58.zip"
 sections = [
-    {range = [0, 25781534], checksum = "2db28a01"},
-    {range = [50595563, 50613918], checksum = "6f0635b4"},
-    {range = [1870236118, 1871590329], checksum = "272a03c1"},
-    {range = [2051986898, 2081231853], checksum = "39940962"}
+    {range = [0, 139778], checksum = "735aaec5"},
+    {range = [1058270, 21565696], checksum = "6d678822"},
+    {range = [1871582186, 1871586145], checksum = "a2cb908e"},
+    {range = [2051986898, 2074913521], checksum = "cbe90d23"},
+    {range = [2081226738, 2081231853], checksum = "a35c373c"}
 ]
 
 [device.bluejay.hashes]
+"output.zip" = "a180c527edbff9e9b79f2e2ccc69ddc8"
 "boot.img" = "8131084ad95d8ffcb917bc239ffdeef6"
 "vbmeta.img" = "38bc2245f6d41877ebf92d6612d3ca04"
 "vendor_boot.img" = "4611f85f4eae65e0eca09605068d14c8"
@@ -22,13 +24,15 @@ sections = [
 filename = "bramble-ota-tq1a.230205.002-49f2dc71.zip"
 url = "https://dl.google.com/dl/android/aosp/bramble-ota-tq1a.230205.002-49f2dc71.zip"
 sections = [
-    {range = [0, 12759576], checksum = "b0a1b579"},
-    {range = [1155394531, 1155409742], checksum = "b018de12"},
-    {range = [1636569527, 1637452126], checksum = "b8747c8"},
-    {range = [1870498525, 1896655733], checksum = "f3d4f27b"}
+    {range = [0, 139859], checksum = "9f614ee"},
+    {range = [495580, 11663820], checksum = "c693d7bc"},
+    {range = [1637447711, 1637449950], checksum = "3d1b0c8b"},
+    {range = [1870498525, 1893837708], checksum = "363a292b"},
+    {range = [1896650617, 1896655733], checksum = "afa1b25f"}
 ]
 
 [device.bramble.hashes]
+"output.zip" = "1c70967bebee1958e4b48e4fe24804c8"
 "boot.img" = "098500dfba880f9a61a379d342a84cc9"
 "vbmeta.img" = "17230bbb41023bd3b03aaf94203e9330"
 "vendor_boot.img" = "34e3559f2460d8ef52ccb5352e09dfec"
@@ -37,15 +41,16 @@ sections = [
 filename = "cheetah-ota-tq1a.230205.002-ad27a6d7.zip"
 url = "https://dl.google.com/dl/android/aosp/cheetah-ota-tq1a.230205.002-ad27a6d7.zip"
 sections = [
-    {range = [0, 23399500], checksum = "34f19830"},
-    {range = [125881702, 125898553], checksum = "9f68fc6d"},
-    {range = [1518207067, 1518293650], checksum = "a003f2d1"},
-    {range = [1883282667, 1883297278], checksum = "9537e70d"},
-    {range = [2010705366, 2012070705], checksum = "94fdddd2"},
-    {range = [2278970391, 2307353441], checksum = "6ba7d418"}
+    {range = [0, 149481], checksum = "dfe69e7b"},
+    {range = [956810, 21464228], checksum = "20549db1"},
+    {range = [21633246, 23130212], checksum = "2c2a7f0f"},
+    {range = [2012062382, 2012066453], checksum = "ecb6ef7"},
+    {range = [2278970391, 2296636083], checksum = "ca9cb33d"},
+    {range = [2307348326, 2307353441], checksum = "c7d6f505"}
 ]
 
 [device.cheetah.hashes]
+"output.zip" = "43a1bf9feff5acdfade249b7fa4ebe10"
 "init_boot.img" = "7c200e0dfd1af446d68a3f009cc86f8b"
 "vbmeta.img" = "b12f7e00cc7b9152f7aaa00ab2c4bae0"
 "vendor_boot.img" = "e39682b1656b8c59ac2717f330a08bd9"
@@ -54,12 +59,13 @@ sections = [
 filename = "sunfish-ota-tq1a.230205.002-536bce5f.zip"
 url = "https://dl.google.com/dl/android/aosp/sunfish-ota-tq1a.230205.002-536bce5f.zip"
 sections = [
-    {range = [0, 34269195], checksum = "93177bf6"},
-    {range = [1146499715, 1146513902], checksum = "83903c62"},
-    {range = [1610565619, 1611042042], checksum = "114b64ce"},
-    {range = [1807072291, 1809631036], checksum = "4d33dae2"}
+    {range = [0, 128863], checksum = "cb73eb21"},
+    {range = [476024, 34020612], checksum = "996210e5"},
+    {range = [1611037619, 1611039858], checksum = "4b1b2b8b"},
+    {range = [1809626019, 1809631036], checksum = "d7408f3d"}
 ]
 
 [device.sunfish.hashes]
+"output.zip" = "daedbeefd8028879c1d01ddbd61ce469"
 "boot.img" = "ddd9bcf0bdc4c727f33110f90103158a"
 "vbmeta.img" = "7388afabde4bb490ddef491dd2a8fe27"
