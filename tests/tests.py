@@ -4,7 +4,6 @@ import argparse
 import configparser
 import hashlib
 import os
-import subprocess
 import sys
 import tempfile
 import zipfile
@@ -13,6 +12,8 @@ sys.path.append(os.path.join(sys.path[0], '..'))
 from avbroot import main
 from avbroot import ota
 from avbroot import util
+
+import downloader
 
 
 def url_filename(url):
@@ -40,26 +41,26 @@ def verify_checksum(path, sha256_hex):
                         f'but have {hasher.hexdigest()}')
 
 
-def download(directory, url, sha256_hex, revalidate=False, extra_args=[]):
+def download(directory, url, sha256_hex, revalidate=False):
     path = os.path.join(directory, url_filename(url))
+    validate = True
 
-    if os.path.exists(path) and not os.path.exists(path + '.aria2'):
-        if revalidate:
-            print('Verifying checksum of', path)
-
-            verify_checksum(path, sha256_hex)
+    if os.path.exists(path) and not os.path.exists(path + '.state'):
+        validate = revalidate
     else:
         print('Downloading', url, 'to', path)
 
-        subprocess.check_call([
-            'aria2c',
-            *extra_args,
-            '--auto-file-renaming=false',
-            f'--checksum=SHA-256={sha256_hex}',
-            f'--dir={os.path.dirname(path)}',
-            f'--out={os.path.basename(path)}',
+        downloader.download_ranges(
+            path,
             url,
-        ])
+            None,
+            downloader.DefaultDisplayCallback(),
+        )
+
+    if validate:
+        print('Verifying checksum of', path)
+
+        verify_checksum(path, sha256_hex)
 
     return path
 
@@ -80,7 +81,6 @@ def run_tests(args, config, files_dir):
         config['magisk']['url'],
         config['magisk']['sha256'],
         revalidate=args.revalidate,
-        extra_args=args.aria2c_arg,
     )
 
     for device, image in device_configs(args, config):
@@ -92,7 +92,6 @@ def run_tests(args, config, files_dir):
             image['url'],
             image['sha256'],
             revalidate=args.revalidate,
-            extra_args=args.aria2c_arg,
         )
         patched_file = image_file + args.output_file_suffix
 
@@ -159,8 +158,6 @@ def run_tests(args, config, files_dir):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-a', '--aria2c-arg', default=[], action='append',
-                        help='Argument to pass to aria2c')
     parser.add_argument('-d', '--device', action='append',
                         help='Device image to test against')
     parser.add_argument('--delete-on-success', action='store_true',

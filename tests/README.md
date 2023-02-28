@@ -14,8 +14,6 @@ For each image listed in the config, the test process will:
 
 ## Running the tests
 
-aria2 must be installed before running the tests. It is used for downloading the OTA images.
-
 To test against all of the device OTA images listed in [`tests.conf`](./tests.conf), run:
 
 ```bash
@@ -23,8 +21,6 @@ python tests/tests.py
 ```
 
 To only run the tests for a specific device, pass in `-d <device>`. This argument can be specified multiple times (eg. `-d GooglePixel7Pro -d GooglePixel6a`).
-
-To pass in extra arguments to `aria2c`, use `-a=<arg>`. This can be used to enable concurrent downloads (eg. `-a=-x4 -a=-s4`).
 
 ## Running the tests in a container
 
