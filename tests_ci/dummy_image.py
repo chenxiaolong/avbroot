@@ -194,7 +194,7 @@ def convert_image(args):
             f_in.seek(f_out.tell())
 
         # Copy remaining data
-        f_in.seek(0, 2)
+        f_in.seek(0, os.SEEK_END)
         remaining_size = f_in.tell() - f_out.tell()
         f_in.seek(f_out.tell())
         output_writer(f_in, f_out, remaining_size, db)
