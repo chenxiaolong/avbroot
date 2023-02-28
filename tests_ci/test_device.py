@@ -77,8 +77,6 @@ def test_device(test_file, magisk_file, hashes, workdir, no_test, db, device_nam
         hashes = dict(new_hashes)
 
     if not no_test:
-        os.remove(output_file)
-
         for filename, md5_hash in hashes.items():
             with open(os.path.join(workdir, filename), "rb") as f:
                 assert util.hash_file(f, hashlib.md5()).hexdigest() == md5_hash
