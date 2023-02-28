@@ -12,10 +12,9 @@ import zipfile
 import tomlkit
 
 sys.path.append(os.path.join(sys.path[0], ".."))
-from avbroot import ota, util
+from avbroot import external, ota, util
 from avbroot.main import PATH_PAYLOAD
-
-ZIP_HEADER_NO_FILENAME_SIZE = 30
+import ota_utils
 
 PARTITIONS_TO_ZERO = {"product", "system", "vendor", "system_ext", "modem"}
 
@@ -152,7 +151,7 @@ def convert_image(args):
         with z.open(info, "r") as f:
             _, manifest, blob_offset = ota.parse_payload(f)
 
-    file_offset = info.header_offset + ZIP_HEADER_NO_FILENAME_SIZE + len(info.filename)
+        file_offset, _ = ota_utils.GetZipEntryOffset(z, info)
 
     partition_operations = {}
 
