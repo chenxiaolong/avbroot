@@ -19,6 +19,21 @@ import ota_utils
 PARTITIONS_TO_PRESERVE = set(sum(PARTITION_PRIORITIES.values(), ()))
 
 
+def strtobool(val):
+    """Convert a string representation of truth to true (1) or false (0).
+    True values are 'y', 'yes', 't', 'true', 'on', and '1'; false values
+    are 'n', 'no', 'f', 'false', 'off', and '0'.  Raises ValueError if
+    'val' is anything else.
+    """
+    val = val.lower()
+    if val in ("y", "yes", "t", "true", "on", "1"):
+        return 1
+    elif val in ("n", "no", "f", "false", "off", "0"):
+        return 0
+    else:
+        raise ValueError("invalid truth value %r" % (val,))
+
+
 class Crc32Hasher:
     existing_crc32 = None
 
@@ -115,33 +130,53 @@ def download_dummy_image(args):
             previous_offset = section["range"][1] + 1
 
 
-def print_entry(db, original_filename):
-    new_map = tomlkit.array()
-    new_map.append(tomlkit.nl())
+def add_entry(db, db_entry, device_name, original_filename):
+    new_sections = tomlkit.array()
+    new_sections.append(tomlkit.nl())
 
-    for section in db:
+    for section in db_entry:
         entry = tomlkit.inline_table()
 
         for key, value in section.items():
             entry[key] = f"{value:x}" if key == "checksum" else value
 
-        new_map.append(entry)
+        new_sections.append(entry)
 
-    print("*** Add this entry to the database ***")
-    print(
-        tomlkit.dumps(
-            {
-                "device": {
-                    "new_device_name": {
-                        "filename": os.path.basename(original_filename),
-                        "url": "",
-                        "sections": new_map,
-                    }
-                }
-            }
-        )
-    )
-    print("*** End ***")
+    device_entry = {
+        device_name: {
+            "filename": os.path.basename(original_filename),
+            "url": "",
+            "sections": new_sections,
+        }
+    }
+
+    with open(db, "r") as f:
+        toml_db = tomlkit.load(f)
+
+    if toml_db.get("device").get(device_name) is not None:
+        overwrite_entry = None
+
+        while overwrite_entry is None:
+            choice = input(
+                f"{device_name} is already in the database. Do you want to overwrite it? [y/n] "
+            ).lower()
+
+            try:
+                overwrite_entry = strtobool(choice)
+            except ValueError:
+                pass
+
+        if not overwrite_entry:
+            print("Entry not added to the database. It is printed below instead:")
+            print(tomlkit.dumps({"device": device_entry}))
+            return
+
+    toml_db.get("device").update(device_entry)
+
+    with open(db, "w") as f:
+        tomlkit.dump(toml_db, f)
+
+    print(f"{device_name} is added to the database")
 
 
 def convert_image(args):
@@ -167,13 +202,13 @@ def convert_image(args):
 
             partition_operations[p.partition_name] = p.operations
 
-    db = []
+    db_entry = []
 
     with open(args.input, "rb") as f_in, output_open(
         args.output, "wb", args.compress
     ) as f_out:
         # Copy zip data until payload.bin + payload.bin header
-        output_writer(f_in, f_out, file_offset + blob_offset, db)
+        output_writer(f_in, f_out, file_offset + blob_offset, db_entry)
 
         # Sort partitions based on data_offset of first operation and iterate
         for _, p_operations in sorted(
@@ -184,22 +219,22 @@ def convert_image(args):
                 f_in,
                 f_out,
                 p_operations[0].data_offset - (f_in.tell() - file_offset - blob_offset),
-                db,
+                db_entry,
             )
 
             for op in p_operations:
                 if f_out.tell() != (file_offset + blob_offset + op.data_offset):
                     raise Exception("f_out should be equal to the offset")
-                output_writer(None, f_out, op.data_length, db)
+                output_writer(None, f_out, op.data_length, db_entry)
             f_in.seek(f_out.tell())
 
         # Copy remaining data
         f_in.seek(0, os.SEEK_END)
         remaining_size = f_in.tell() - f_out.tell()
         f_in.seek(f_out.tell())
-        output_writer(f_in, f_out, remaining_size, db)
+        output_writer(f_in, f_out, remaining_size, db_entry)
 
-    print_entry(db, args.input)
+    add_entry(args.db, db_entry, args.device_name, args.input)
 
 
 def parse_args(args=None):
@@ -215,18 +250,18 @@ def parse_args(args=None):
         default=True,
         help="Compress output file",
     )
+    base.add_argument("--db", required=True, help="Path to database file")
     base.add_argument("--output", required=True, help="Path to new OTA zip")
+    base.add_argument("device_name", help="Name of device (as in database)")
 
     convert = subparsers.add_parser(
         "convert", help="Convert full OTA zip to dummy zip", parents=[base]
     )
     convert.add_argument("--input", required=True, help="Path to original OTA zip")
 
-    download = subparsers.add_parser(
+    subparsers.add_parser(
         "download", help="Assemble dummy zip while downloading", parents=[base]
     )
-    download.add_argument("--db", required=True, help="Path to database file")
-    download.add_argument("device_name", help="Name of device (as in database)")
 
     return parser.parse_args(args=args)
 
