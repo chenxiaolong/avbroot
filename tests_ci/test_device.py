@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 
 import argparse
-import contextlib
 import hashlib
 import os
 import sys
+import unittest.mock
 import urllib
-import zipfile
 
 import tomlkit
 
@@ -16,49 +15,32 @@ from avbroot import util
 import dummy_image
 
 
-# We intentionally create a zip file with an invalid CRC for the payload.
-# The CRC of the zip will be checked when EOF is reached.
-# Although we never intentionally read all the way to the end, prefetching of a file
-# might lead to read until EOF and triggering the CRC check, which will fail.
-@contextlib.contextmanager
-def monkey_patches():
-    _update_crc = zipfile.ZipExtFile._update_crc
-
-    def _update_crc_new(self, newdata):
-        self._expected_crc = None
-        return _update_crc(self, newdata)
-
-    zipfile.ZipExtFile._update_crc = _update_crc_new
-
-    yield
-
-    zipfile.ZipExtFile._update_crc = _update_crc
-
-
 def test_device(test_file, magisk_file, hashes, workdir, no_test):
     output_file = os.path.join(workdir, "output.zip")
     test_key_prefix = os.path.join(
         sys.path[0], os.pardir, "tests", "keys", "TEST_KEY_DO_NOT_USE_"
     )
 
-    with monkey_patches():
-        avbroot.main.main(
-            [
-                "patch",
-                "--input",
-                test_file,
-                "--output",
-                output_file,
-                "--magisk",
-                magisk_file,
-                "--privkey-avb",
-                test_key_prefix + "avb.key",
-                "--privkey-ota",
-                test_key_prefix + "ota.key",
-                "--cert-ota",
-                test_key_prefix + "ota.crt",
-            ]
-        )
+    # We intentionally create a zip file with an invalid CRC for the payload.
+    # The CRC of the zip will be checked when EOF is reached.
+    # Although we never intentionally read all the way to the end, prefetching of a file
+    # might lead to read until EOF and triggering the CRC check, which will fail.
+    with unittest.mock.patch('zipfile.ZipExtFile._update_crc', lambda _, __: None):
+        avbroot.main.main([
+            'patch',
+            '--input',
+            test_file,
+            '--output',
+            output_file,
+            '--magisk',
+            magisk_file,
+            '--privkey-avb',
+            test_key_prefix + 'avb.key',
+            '--privkey-ota',
+            test_key_prefix + 'ota.key',
+            '--cert-ota',
+            test_key_prefix + 'ota.crt',
+        ])
 
     avbroot.main.main(
         [
