@@ -9,9 +9,9 @@ runs:
   steps:
     - uses: actions/cache@v3
       with:
-        key: tox-${{ inputs.python-version }}-${{ hashFiles('tox.ini') }}
+        key: tox-${{ hashFiles('tox.ini') }}-${{ inputs.python-version }}
         restore-keys: |
-          tox-${{ inputs.python-version }}
+          tox-
         path: |
           .tox/
           ~/.cache/pip
