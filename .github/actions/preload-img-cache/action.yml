@@ -20,7 +20,7 @@ runs:
     - uses: actions/cache@v3
       id: cache-img
       with:
-        key: img-${{ inputs.device }}-${{ inputs.filename }}
+        key: img-${{ hashFiles(inputs.test-db-path) }}-${{ inputs.device }}
         path: |
           workdir/${{ inputs.filename }}
     - if: ${{ ! steps.cache-img.outputs.cache-hit }}
