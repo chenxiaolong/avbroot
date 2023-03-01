@@ -28,7 +28,6 @@ jobs:
       magisk-key: ${{ steps.get-magisk-cache.outputs.magisk-key }}
       magisk-url: ${{ steps.load-db.outputs.magisk-url }}
       img-to-cache: ${{ steps.load-db.outputs.img-to-cache }}
-      hit-magisk: ${{ fromJSON(steps.get-magisk-cache.outputs.magisk-hit).total_count != 0 }}
       hit-tox: |
         ${{ contains(fromJSON(steps.get-tox-cache.outputs.tox-hit).actions_caches.*.key, format('tox-py39-{0}', steps.get-tox-cache.outputs.tox-hash)) 
           && contains(fromJSON(steps.get-tox-cache.outputs.tox-hit).actions_caches.*.key, format('tox-py310-{0}', steps.get-tox-cache.outputs.tox-hash))
@@ -92,19 +91,11 @@ jobs:
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             -f 'key=${{ env.magisk-key }}' \
             /repos/${{ github.repository }}/actions/caches)" >> $GITHUB_OUTPUT
-
-  preload-magisk:
-    name: Preload Magisk
-    runs-on: ubuntu-latest
-    needs: setup
-    timeout-minutes: 2
-    if: ${{ ! fromJSON(needs.setup.outputs.hit-magisk) }}
-    steps:
-      - uses: actions/checkout@v3
       - uses: ./.github/actions/preload-magisk-cache
+        if: ${{ fromJSON(steps.get-magisk-cache.outputs.magisk-hit).total_count == 0 }}
         with:
-          cache-key: ${{ needs.setup.outputs.magisk-key }}
-          url: ${{ needs.setup.outputs.magisk-url }}
+          cache-key: ${{ steps.get-magisk-cache.outputs.magisk-key }}
+          url: ${{ steps.load-db.outputs.magisk-url }}
 
   preload-img:
     name: Preload device images
@@ -147,7 +138,7 @@ jobs:
   tests:
     name: Run test for ${{ matrix.device }} with ${{ matrix.python }}
     runs-on: ubuntu-latest
-    needs: [setup, preload-magisk, preload-img, preload-tox]
+    needs: [setup, preload-img, preload-tox]
     timeout-minutes: 5
     # Continue on skipped but not on failures or cancels
     if: ${{ always() && ! failure() && ! cancelled() }}
