@@ -94,10 +94,10 @@ class DownloadWorker(threading.Thread):
 
 
 class DisplayCallback:
-    def progress(self, current, total):
+    def progress(self, current: int, total: int):
         raise NotImplementedError()
 
-    def error(self, msg):
+    def error(self, msg: str):
         raise NotImplementedError()
 
     def finish(self):
@@ -105,11 +105,16 @@ class DisplayCallback:
 
 
 class DefaultDisplayCallback(DisplayCallback):
-    def __init__(self, delay_ms=50):
+    # Speed is a simple moving average over 5 seconds
+    AVG_INTERVAL_MS = 100
+    AVG_WINDOW_SIZE = 5000 / AVG_INTERVAL_MS
+
+    def __init__(self, interval_ms: int = 50):
         self.current = 0
         self.total = 0
-        self.delay_ms = delay_ms
+        self.interval_ms = interval_ms
         self.last_render = None
+        self.avg = collections.deque()
 
     def progress(self, current, total):
         self.current = current
@@ -117,11 +122,27 @@ class DefaultDisplayCallback(DisplayCallback):
 
         now = time.perf_counter_ns()
 
+        if not self.avg or \
+                (now - self.avg[-1][0]) / 1_000_000 > self.AVG_INTERVAL_MS:
+            if len(self.avg) == self.AVG_WINDOW_SIZE:
+                self.avg.popleft()
+
+            self.avg.append((now, current))
+
         if self.last_render is None or \
-                (now - self.last_render) / 1_000_000 > self.delay_ms:
+                (now - self.last_render) / 10 ** 6 > self.interval_ms:
+            current_mib = current / 1024 ** 2
+            total_mib = total / 1024 ** 2
+            if len(self.avg) == 1:
+                speed_mib_s = 0
+            else:
+                avg_window_mib = (self.avg[-1][1] - self.avg[0][1]) / 1024 ** 2
+                avg_window_secs = (self.avg[-1][0] - self.avg[0][0]) / 10 ** 9
+                speed_mib_s = avg_window_mib / avg_window_secs
+
             self._clear_line()
-            self._print(f'{current / 1024 / 1024:.1f} / '
-                        f'{total / 1024 / 1024:.1f} MiB')
+            self._print(f'{current_mib:.1f} / {total_mib:.1f} MiB '
+                        f'({speed_mib_s:.1f} MiB/s)')
             self.last_render = now
 
     def error(self, msg):
