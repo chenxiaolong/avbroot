@@ -75,15 +75,18 @@ class DownloadWorker(threading.Thread):
         req.add_header('Range', f'bytes={self.range.start}-{self.range.end}')
 
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            buf = bytearray(self.buf_size)
+            buf_view = memoryview(buf)
+
             while self.range:
-                n = min(self.buf_size, self.range.size())
-                data = resp.read(n)
+                to_read = min(self.buf_size, self.range.size())
+                n = resp.readinto(buf_view[:to_read])
 
-                if not data or len(data) != n:
+                if n != to_read:
                     raise EOFError(f'Expected {n} bytes, but downloaded '
-                                   f'{len(data)} bytes in {self.range}')
+                                   f'{to_read} bytes in {self.range}')
 
-                self.output_queue.put((self.ident, data))
+                self.output_queue.put((self.ident, buf_view[:n]))
 
                 new_end = self.input_queue.get()
                 self.range.start += n
