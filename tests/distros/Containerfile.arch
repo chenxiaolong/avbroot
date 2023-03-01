@@ -1,4 +1,4 @@
 FROM docker.io/archlinux/archlinux:latest
 
-RUN pacman --noconfirm -Syu --needed aria2 openssl python-lz4 python-protobuf \
+RUN pacman --noconfirm -Syu --needed openssl python-lz4 python-protobuf \
     && yes | pacman -Scc

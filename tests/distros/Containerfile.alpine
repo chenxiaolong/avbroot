@@ -1,3 +1,3 @@
 FROM docker.io/library/alpine:3.17
 
-RUN apk add --no-cache aria2 openssl py3-lz4 py3-protobuf
+RUN apk add --no-cache openssl py3-lz4 py3-protobuf
