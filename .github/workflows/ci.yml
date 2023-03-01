@@ -52,6 +52,18 @@ jobs:
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             -f 'key=img-${{ hashFiles(env.test-db-path) }}-' \
             /repos/${{ github.repository }}/actions/caches)" >> $GITHUB_OUTPUT
+      - name: Checking for cached magisk apk
+        id: get-magisk-cache
+        env:
+          magisk-key: magisk-${{ hashFiles(env.test-db-path) }}
+        run: |
+          echo "magisk-key=${{ env.magisk-key }}" >> $GITHUB_OUTPUT
+          echo "magisk-hit=$(gh api \
+            --method GET \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            -f 'key=${{ env.magisk-key }}' \
+            /repos/${{ github.repository }}/actions/caches)" >> $GITHUB_OUTPUT
       - name: Loading device test database
         id: load-db
         shell: python
@@ -66,18 +78,6 @@ jobs:
             f.write(f"device-db={db['device']}" + '\n')
             f.write(f"device-list={[i for i in db['device']]}" + '\n')
             f.write(f"magisk-url={db['magisk']['url']}" + '\n')
-      - name: Checking for cached magisk apk
-        id: get-magisk-cache
-        env:
-          magisk-key: magisk-${{ hashFiles(env.test-db-path) }}
-        run: |
-          echo "magisk-key=${{ env.magisk-key }}" >> $GITHUB_OUTPUT
-          echo "magisk-hit=$(gh api \
-            --method GET \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            -f 'key=${{ env.magisk-key }}' \
-            /repos/${{ github.repository }}/actions/caches)" >> $GITHUB_OUTPUT
       - uses: ./.github/actions/preload-magisk-cache
         if: ${{ fromJSON(steps.get-magisk-cache.outputs.magisk-hit).total_count == 0 }}
         with:
