@@ -25,7 +25,7 @@ jobs:
     outputs:
       device-db: ${{ steps.load-db.outputs.device-db }}
       device-list: ${{ steps.load-db.outputs.device-list }}
-      magisk-hash: ${{ steps.load-db.outputs.magisk-hash }}
+      magisk-key: ${{ steps.get-magisk-cache.outputs.magisk-key }}
       magisk-url: ${{ steps.load-db.outputs.magisk-url }}
       img-to-cache: ${{ steps.load-db.outputs.img-to-cache }}
       hit-magisk: ${{ fromJSON(steps.get-magisk-cache.outputs.magisk-hit).total_count != 0 }}
@@ -78,17 +78,19 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
             f.write(f"device-db={db['device']}" + '\n')
             f.write(f"device-list={[i for i in db['device']]}" + '\n')
-            f.write(f"magisk-hash={db['magisk']['sha256']}" + '\n')
             f.write(f"magisk-url={db['magisk']['url']}" + '\n')
             f.write(f"img-to-cache={devices_to_cache}" + '\n')
       - name: Checking for cached magisk apk
         id: get-magisk-cache
+        env:
+          magisk-key: magisk-${{ hashFiles(env.test-db-path) }}
         run: |
+          echo "magisk-key=${{ env.magisk-key }}" >> $GITHUB_OUTPUT
           echo "magisk-hit=$(gh api \
             --method GET \
             -H 'Accept: application/vnd.github+json' \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
-            -f 'key=magisk-${{ steps.load-db.outputs.magisk-hash }}' \
+            -f 'key=${{ env.magisk-key }}' \
             /repos/${{ github.repository }}/actions/caches)" >> $GITHUB_OUTPUT
 
   preload-magisk:
@@ -101,7 +103,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/preload-magisk-cache
         with:
-          hash: ${{ needs.setup.outputs.magisk-hash }}
+          cache-key: ${{ needs.setup.outputs.magisk-key }}
           url: ${{ needs.setup.outputs.magisk-url }}
 
   preload-img:
@@ -161,7 +163,7 @@ jobs:
           submodules: true
       - uses: ./.github/actions/preload-magisk-cache
         with:
-          hash: ${{ needs.setup.outputs.magisk-hash }}
+          cache-key: ${{ needs.setup.outputs.magisk-key }}
           url: ${{ needs.setup.outputs.magisk-url }}
       - uses: ./.github/actions/preload-img-cache
         with:

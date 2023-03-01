@@ -1,7 +1,7 @@
 name: Preload Magisk
 inputs:
-  hash:
-    description: 'Magisk hash'
+  cache-key:
+    description: 'Magisk cache-key'
     required: true
   url:
     description: 'Magisk URL'
@@ -13,7 +13,7 @@ runs:
     - uses: actions/cache@v3
       id: cache-magisk
       with:
-        key: magisk-${{ inputs.hash }}
+        key: ${{ inputs.cache-key }}
         path: |
           workdir/magisk.apk
     - name: Creating workdir
