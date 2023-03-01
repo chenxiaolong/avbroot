@@ -1,0 +1,24 @@
+name: Preload tox cache
+inputs:
+  python-version:
+    description: 'Python version'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/cache@v3
+      with:
+        key: tox-${{ hashFiles('tox.ini') }}-${{ inputs.python-version }}
+        restore-keys: |
+          tox-
+        path: |
+          .tox/
+          ~/.cache/pip
+    - uses: awalsh128/cache-apt-pkgs-action@v1
+      with:
+        packages: tox
+    - uses: actions/setup-python@v4
+      with:
+        python-version: |
+          ${{ fromJson('{ "py39": "3.9", "py310": "3.10", "py311": "3.11" }')[inputs.python-version] }}

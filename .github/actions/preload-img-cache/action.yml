@@ -1,0 +1,47 @@
+name: Preload img cache
+inputs:
+  device:
+    description: 'Device name'
+    required: true
+  filename:
+    description: 'Name of file in workdir'
+    required: true
+  test-db-path:
+    description: 'Path to test database'
+    required: true
+outputs:
+  cache-hit:
+    description: 'Did we hit the cache?'
+    value: ${{ steps.cache-img.outputs.cache-hit }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/cache@v3
+      id: cache-img
+      with:
+        key: img-${{ hashFiles(inputs.test-db-path) }}-${{ inputs.device }}
+        path: |
+          workdir/${{ inputs.filename }}
+    - if: ${{ ! steps.cache-img.outputs.cache-hit }}
+      uses: awalsh128/cache-apt-pkgs-action@v1
+      with:
+        packages: python3-lz4 python3-protobuf
+    - if: ${{ ! steps.cache-img.outputs.cache-hit }}
+      uses: awalsh128/cache-apt-pkgs-action@v1
+      with:
+        packages: python3-tomlkit
+    - name: Creating workdir
+      if: ${{ ! steps.cache-img.outputs.cache-hit }}
+      shell: sh
+      run: mkdir -p workdir
+    - name: Downloading device image for ${{ inputs.device }}
+      if: ${{ ! steps.cache-img.outputs.cache-hit }}
+      shell: sh
+      run: |
+        ./tests_ci/dummy_image.py \
+          download \
+          --no-compress \
+          --db ${{ inputs.test-db-path }} \
+          --output workdir/${{ inputs.filename }} \
+          ${{ inputs.device }}
