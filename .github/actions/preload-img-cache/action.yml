@@ -1,18 +1,11 @@
 name: Preload img cache
 inputs:
+  cache-key-prefix:
+    description: 'Device cache-key prefix'
+    required: true
   device:
     description: 'Device name'
     required: true
-  filename:
-    description: 'Name of file in workdir'
-    required: true
-  test-db-path:
-    description: 'Path to test database'
-    required: true
-outputs:
-  cache-hit:
-    description: 'Did we hit the cache?'
-    value: ${{ steps.cache-img.outputs.cache-hit }}
 
 runs:
   using: "composite"
@@ -20,38 +13,40 @@ runs:
     - uses: actions/cache@v3
       id: cache-img
       with:
-        key: img-v2-${{ hashFiles(inputs.test-db-path) }}-${{ inputs.device }}
-        path: |
-          workdir/${{ inputs.filename }}-sparse.tar
+        key: ${{ inputs.cache-key-prefix }}${{ inputs.device }}
+        path: tests/files/${{ inputs.device }}-sparse.tar
+
     - if: ${{ steps.cache-img.outputs.cache-hit }}
       name: Extracting image from sparse archive
       shell: sh
       run: |
-        tar -C workdir -xf workdir/${{ inputs.filename }}-sparse.tar
+        tar -C tests/files -xf tests/files/${{ inputs.device }}-sparse.tar
+
     - if: ${{ ! steps.cache-img.outputs.cache-hit }}
       uses: awalsh128/cache-apt-pkgs-action@v1
       with:
         packages: python3-lz4 python3-protobuf
+
     - if: ${{ ! steps.cache-img.outputs.cache-hit }}
       uses: awalsh128/cache-apt-pkgs-action@v1
       with:
-        packages: python3-tomlkit
-    - name: Creating workdir
-      if: ${{ ! steps.cache-img.outputs.cache-hit }}
-      shell: sh
-      run: mkdir -p workdir
+        packages: python3-strictyaml
+
     - name: Downloading device image for ${{ inputs.device }}
       if: ${{ ! steps.cache-img.outputs.cache-hit }}
       shell: sh
       run: |
-        ./tests_ci/dummy_image.py \
+        ./tests/tests.py \
           download \
-          --no-compress \
-          --db ${{ inputs.test-db-path }} \
-          --output workdir/${{ inputs.filename }} \
+          --stripped \
+          --no-magisk \
+          --device \
           ${{ inputs.device }}
+
     - if: ${{ ! steps.cache-img.outputs.cache-hit }}
       name: Creating sparse archive from image
       shell: sh
       run: |
-        tar -C workdir --sparse -cf workdir/${{ inputs.filename }}-sparse.tar ${{ inputs.filename }}
+        cd tests/files
+        tar --sparse -cf ${{ inputs.device }}-sparse.tar \
+          ${{ inputs.device }}/*.stripped

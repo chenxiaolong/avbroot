@@ -1,0 +1,138 @@
+magisk:
+  url: https://github.com/topjohnwu/Magisk/releases/download/v25.2/Magisk-v25.2.apk
+  hash: 0bdc32918b6ea502dca769b1c7089200da51ea1def170824c2812925b426d509
+
+device:
+  # What's unique: init_boot (boot v4) + vendor_boot (vendor v4)
+  cheetah: # Google Pixel 7 Pro
+    url: https://dl.google.com/dl/android/aosp/cheetah-ota-tq1a.230205.002-ad27a6d7.zip
+    sections:
+    - start: 0
+      end: 149482
+    - start: 956810
+      end: 21464229
+    - start: 21633246
+      end: 23130213
+    - start: 2012062382
+      end: 2012066454
+    - start: 2278970391
+      end: 2296636084
+    - start: 2307348326
+      end: 2307353442
+    hash:
+      original:
+        full: ad27a6d7ca78c0d3fb7f51864cc6a9e6bc91f536f9e9bab5da06253df602525f
+        stripped: a46831a0636da6258571094e30df781ec4089810609638883649bd6cc2707936
+      patched:
+        full: a711b2033a6ebe39c2ba22e885bd570db33092897eda1793e508f3e8ffb8000a
+        stripped: 433aa27dbf55bc677c1631d3259e1db695e91b9243cb7691b883ea08d113acca
+      avb_images:
+        init_boot.img: 73783fc6083c256188e141699fde8c1f054682e5102c26fb86a59eff2cc5c07c
+        vbmeta.img: f6629cd26485093a792dec15c3e6fdc4456875e32949f5c7d82a74170d8dbbf8
+        vendor_boot.img: 0aa3679c6d55c5ab6ad5f7c70afb4fca369e2bb4396d01b9d58426f6be391d90
+
+  # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
+  bluejay: # Google Pixel 6a
+    url: https://dl.google.com/dl/android/aosp/bluejay-ota-tq1a.230205.002-1ec64b58.zip
+    sections:
+    - start: 0
+      end: 139779
+    - start: 1058270
+      end: 21565697
+    - start: 1871582186
+      end: 1871586146
+    - start: 2051986898
+      end: 2074913522
+    - start: 2081226738
+      end: 2081231854
+    hash:
+      original:
+        full: 1ec64b589cba8d9687ea8f85cf6c2e5d09c9e4fbdae15417aa06d5ba976fbe79
+        stripped: d1f1270f663402a99da0763aae7978d6784c81b59a4973afc69c4bf856b6e552
+      patched:
+        full: d0d59a90e0aba065f50fcd0c8c6c5c01910c08dc1caf9faee0dd3b9fbf1f4308
+        stripped: 69d5b353be8797842b582fd92fc5dcef384c80044e777afca49ccbb586d2fdc8
+      avb_images:
+        boot.img: 01165a0ff01ca985f3738cbede85744b2420c36eb54762b1df6faecf2747701c
+        vbmeta.img: 524c01a8759d145201008ea583b4198b750efc8578c0442883fafb99705d168e
+        vendor_boot.img: cf4e882dde2ec9ef9cab8823a134a597d1222c7f44a2e1ec97e206e4a00819ef
+
+  # What's unique: boot (boot v3) + vendor_boot (vendor v3)
+  bramble: # Google Pixel 4a 5G
+    url: https://dl.google.com/dl/android/aosp/bramble-ota-tq1a.230205.002-49f2dc71.zip
+    sections:
+    - start: 0
+      end: 139860
+    - start: 495580
+      end: 11663821
+    - start: 1637447711
+      end: 1637449951
+    - start: 1870498525
+      end: 1893837709
+    - start: 1896650617
+      end: 1896655734
+    hash:
+      original:
+        full: 49f2dc71f63eadec07537ce0d1b0c42995518a9447f008eb6266b6edd03a8a92
+        stripped: 61558bb3a6f55f4bea3ae6db64aca3fb4f4fd876d91ed30ffeef5939ecc42e18
+      patched:
+        full: 6f5b4290fc28625e8cd98f85c31bd00df2fe73903a2562fd669d5fa037c4111e
+        stripped: 105e952a4dc3dd4fff10853f27ce61ac3a756749cefc9beba12ab0621f06b24a
+      avb_images:
+        boot.img: 2fdfe70f7b058c90867a93b545bdc568581c8ab823f0c04af75555e48d128651
+        vbmeta.img: b93b8fbd356ec693930d22907d295c7ffb95b600eb139f3d2ddb6637a99eeaf8
+        vendor_boot.img: 1d93f7cbb06f14b4c98ce3d56d5fa723ea3211badbd8180177abaac8cc1066f0
+
+  # What's unique: boot (boot v2)
+  sunfish: # Google Pixel 4a
+    url: https://dl.google.com/dl/android/aosp/sunfish-ota-tq1a.230205.002-536bce5f.zip
+    sections:
+    - start: 0
+      end: 128864
+    - start: 476024
+      end: 34020613
+    - start: 1611037619
+      end: 1611039859
+    - start: 1809626019
+      end: 1809631037
+    hash:
+      original:
+        full: 536bce5f0038173c83a82072385bf56c0ceebbb6caefcf3190de45b0aff754a9
+        stripped: eaba4da0d43b2ea6aabc3d6416f3d2106aeee82590a458bcb881e5ac500b0a07
+      patched:
+        full: 948b9f3eaeaccf00f8a937b12682d7e466818ab3be7814d5119cfdb11c28f35a
+        stripped: 7ff7f49155012e814dd4fb35aaa0ba14f124ae9ff50dabfad598796c283f4aee
+      avb_images:
+        boot.img: 0405b0197c04e1c8ac8c462379c04ef07d4ed232999af049f5bcd23d7d3e82e6
+        vbmeta.img: 2b231313ed8264cfcd310347f47613705ddd25055e369cbfd334f5c56c54f837
+
+  # What's unique:
+  # - boot (boot v4) + recovery (boot v4)
+  # - boot images have VTS signature block filled with all 0s
+  # - payload.bin uses ZERO blocks
+  ossi: # OnePlus 10 Pro
+    url: https://android.googleapis.com/packages/ota-api/package/6812ccee9a8a891032af1e053e3217731ac7ad92.zip
+    sections:
+    - start: 0
+      end: 201624
+    - start: 1196332
+      end: 23427211
+    - start: 25849763
+      end: 38696303
+    - start: 39073011
+      end: 39075767
+    - start: 474699863
+      end: 490863356
+    - start: 5094768711
+      end: 5094772524
+    hash:
+      original:
+        full: 09319bf66abf362dcb11a4af981900f393af87e10de10a03371c9d4e3785931f
+        stripped: 611851183f2cd3544e762be9f5aa7f11754fca71466c568eb43056d5e7205960
+      patched:
+        full: a9f06c7d2a3e1f2d0f81ac93262c516aa6f4dd79e909ce239bcf0df368295262
+        stripped: 4c80064336eac0ab9a36bd7bbb26beb4d7ae8004c14b4a4dab9077defb6d54b4
+      avb_images:
+        boot.img: 423303f69345e2b0212cf39802a6df7b0a6e18030cbfc31111d621e1764476c8
+        recovery.img: 3df61853ce5ba79a5de611e18e6f344135ab070d8d2ac54d140b87f461d00708
+        vbmeta.img: be0a20d865af8d6647c3b31e32ef178e3b4c09fa3f01f0ae675c54000ac7283c

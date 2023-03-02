@@ -24,6 +24,7 @@ RUN pacman --noconfirm -Sy \
         mingw-w64-x86_64-openssl \
         mingw-w64-x86_64-python \
         mingw-w64-x86_64-python-lz4 \
+        mingw-w64-x86_64-python-pip \
         mingw-w64-x86_64-python-protobuf \
         mingw-w64-x86_64-zlib \
         wine \
@@ -39,6 +40,12 @@ RUN cat /var/lib/pacman/local/mingw-w64-x86_64-ca-certificates-*/install \
     | bash -s
 
 COPY --chmod=755 wine/python3.sh /usr/local/bin/python3
+
+# msys2 does not have strictyaml in its repos
+run WINEDLLOVERRIDES=winemenubuilder.exe=d \
+    WINEPREFIX=/tmp/wine \
+    python3 -m pip install strictyaml \
+    && rm -rf /tmp/wine
 
 # We don't precreate a wine prefix because openssl fails to gather entropy when
 # using a persisted wine prefix for some reason. It doesn't seem to actually be

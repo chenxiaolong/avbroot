@@ -235,7 +235,7 @@ def main():
             args.image_prefix,
             # Doesn't matter which distro image we use to download
             next(iter(distros)),
-            extra_args=['--download-only'],
+            extra_args=['download'],
             default_args=False,
             network=True,
         ),
@@ -247,7 +247,7 @@ def main():
         test_cmds[d] = test_cmd(
             args.image_prefix,
             d,
-            extra_args=args.test_arg,
+            extra_args=['test', *args.test_arg],
         )
 
     # Let it rip!
