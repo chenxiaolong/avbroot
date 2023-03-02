@@ -3,6 +3,9 @@ import os
 import tempfile
 
 
+_ZERO_BLOCK = memoryview(b'\0' * 16384)
+
+
 @contextlib.contextmanager
 def open_output_file(path):
     '''
@@ -145,3 +148,21 @@ def read_exact(f, size: int) -> bytes:
         return bytes(data)
     else:
         return data
+
+
+def is_zero(data):
+    '''
+    Check if all bytes in the bytes-like object are null bytes.
+    '''
+
+    view = memoryview(data)
+
+    while view:
+        n = min(len(view), len(_ZERO_BLOCK))
+
+        if view[:n] != _ZERO_BLOCK[:n]:
+            return False
+
+        view = view[n:]
+
+    return True
