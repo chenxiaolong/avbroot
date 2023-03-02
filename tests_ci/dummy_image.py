@@ -38,12 +38,6 @@ def strtobool(val):
 class Crc32Hasher:
     existing_crc32 = None
 
-    def get_checksum(self):
-        return self.existing_crc32
-
-    def set_checksum(self, existing_crc32):
-        self.existing_crc32 = existing_crc32
-
     def update(self, *args, **kwargs):
         if self.existing_crc32:
             args = args + (self.existing_crc32, )
@@ -80,7 +74,7 @@ def output_writer(f_in, f_out, size, db=None):
             # Combine sections if adjacent
             if db and db[-1]['range'][1] == f_out.tell() - 1:
                 entry = db.pop()
-                crc_hash.set_checksum(entry['checksum'])
+                crc_hash.existing_crc32 = entry['checksum']
                 section_start = entry['range'][0]
             else:
                 section_start = f_out.tell()
@@ -92,7 +86,7 @@ def output_writer(f_in, f_out, size, db=None):
         if mapping:
             db.append({
                 'range': [section_start, section_end],
-                'checksum': crc_hash.get_checksum(),
+                'checksum': crc_hash.existing_crc32,
             })
 
 
@@ -108,7 +102,7 @@ def download_file(f_out, url, section):
                            section['range'][1] - section['range'][0] + 1,
                            hasher=crc_hash)
 
-    if crc_hash.get_checksum() != int(section['checksum'], 16):
+    if crc_hash.existing_crc32 != int(section['checksum'], 16):
         raise Exception(
             f"ERROR: Checksum of range {section['range']} doesn't match")
 
