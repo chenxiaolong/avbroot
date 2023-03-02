@@ -38,12 +38,6 @@ def strtobool(val):
 class Crc32Hasher:
     existing_crc32 = None
 
-    def get_checksum(self):
-        return self.existing_crc32
-
-    def set_checksum(self, existing_crc32):
-        self.existing_crc32 = existing_crc32
-
     def update(self, *args, **kwargs):
         if self.existing_crc32:
             args = args + (self.existing_crc32, )
@@ -66,7 +60,7 @@ def output_open(filename, mode, compress=True):
 
 def output_writer(f_in, f_out, size, db=None):
     if not f_in:
-        util.zero_n(f_out, size)
+        f_out.seek(size, os.SEEK_CUR)
     else:
         crc_hash = None
         mapping = None
@@ -80,7 +74,7 @@ def output_writer(f_in, f_out, size, db=None):
             # Combine sections if adjacent
             if db and db[-1]['range'][1] == f_out.tell() - 1:
                 entry = db.pop()
-                crc_hash.set_checksum(entry['checksum'])
+                crc_hash.existing_crc32 = entry['checksum']
                 section_start = entry['range'][0]
             else:
                 section_start = f_out.tell()
@@ -92,7 +86,7 @@ def output_writer(f_in, f_out, size, db=None):
         if mapping:
             db.append({
                 'range': [section_start, section_end],
-                'checksum': crc_hash.get_checksum(),
+                'checksum': crc_hash.existing_crc32,
             })
 
 
@@ -108,7 +102,7 @@ def download_file(f_out, url, section):
                            section['range'][1] - section['range'][0] + 1,
                            hasher=crc_hash)
 
-    if crc_hash.get_checksum() != int(section['checksum'], 16):
+    if crc_hash.existing_crc32 != int(section['checksum'], 16):
         raise Exception(
             f"ERROR: Checksum of range {section['range']} doesn't match")
 
@@ -128,7 +122,7 @@ def download_dummy_image(args):
     previous_offset = 0
     with output_open(args.output, 'wb', args.compress) as f_out:
         for section in device_entry['sections']:
-            util.zero_n(f_out, section['range'][0] - previous_offset)
+            f_out.seek(section['range'][0] - previous_offset, os.SEEK_CUR)
             download_file(f_out, device_entry['url'], section)
             previous_offset = section['range'][1] + 1
 
@@ -260,7 +254,7 @@ def parse_args(args=None):
     base.add_argument(
         '--compress',
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help='Compress output file',
     )
     base.add_argument('--db', required=True, help='Path to database file')
