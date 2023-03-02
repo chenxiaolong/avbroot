@@ -60,7 +60,7 @@ def output_open(filename, mode, compress=True):
 
 def output_writer(f_in, f_out, size, db=None):
     if not f_in:
-        util.zero_n(f_out, size)
+        f_out.seek(size, os.SEEK_CUR)
     else:
         crc_hash = None
         mapping = None
@@ -122,7 +122,7 @@ def download_dummy_image(args):
     previous_offset = 0
     with output_open(args.output, 'wb', args.compress) as f_out:
         for section in device_entry['sections']:
-            util.zero_n(f_out, section['range'][0] - previous_offset)
+            f_out.seek(section['range'][0] - previous_offset, os.SEEK_CUR)
             download_file(f_out, device_entry['url'], section)
             previous_offset = section['range'][1] + 1
 
