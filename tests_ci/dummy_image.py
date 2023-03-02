@@ -254,7 +254,7 @@ def parse_args(args=None):
     base.add_argument(
         '--compress',
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help='Compress output file',
     )
     base.add_argument('--db', required=True, help='Path to database file')
