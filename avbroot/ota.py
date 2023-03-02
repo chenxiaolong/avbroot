@@ -659,7 +659,11 @@ class _TeeFileDescriptor:
             self.capture.write(data)
         else:
             for stream in self.streams:
-                stream.write(data)
+                # Naive hole punching to create sparse files
+                if stream is self.backing and util.is_zero(data):
+                    stream.seek(len(data), os.SEEK_CUR)
+                else:
+                    stream.write(data)
 
         return len(data)
 
