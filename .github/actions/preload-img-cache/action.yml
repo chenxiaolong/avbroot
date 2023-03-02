@@ -20,9 +20,14 @@ runs:
     - uses: actions/cache@v3
       id: cache-img
       with:
-        key: img-${{ hashFiles(inputs.test-db-path) }}-${{ inputs.device }}
+        key: img-v2-${{ hashFiles(inputs.test-db-path) }}-${{ inputs.device }}
         path: |
-          workdir/${{ inputs.filename }}
+          workdir/${{ inputs.filename }}-sparse.tar
+    - if: ${{ steps.cache-img.outputs.cache-hit }}
+      name: Extracting image from sparse archive
+      shell: sh
+      run: |
+        tar -C workdir -xf workdir/${{ inputs.filename }}-sparse.tar
     - if: ${{ ! steps.cache-img.outputs.cache-hit }}
       uses: awalsh128/cache-apt-pkgs-action@v1
       with:
@@ -45,3 +50,8 @@ runs:
           --db ${{ inputs.test-db-path }} \
           --output workdir/${{ inputs.filename }} \
           ${{ inputs.device }}
+    - if: ${{ ! steps.cache-img.outputs.cache-hit }}
+      name: Creating sparse archive from image
+      shell: sh
+      run: |
+        tar -C workdir --sparse -cf workdir/${{ inputs.filename }}-sparse.tar ${{ inputs.filename }}
