@@ -12,7 +12,7 @@ import unittest.mock
 import zipfile
 
 sys.path.append(os.path.join(sys.path[0], '..'))
-from avbroot import external, ota, util
+from avbroot import ota, util
 from avbroot.main import PARTITION_PRIORITIES, PATH_PAYLOAD
 import avbroot.main
 import ota_utils
