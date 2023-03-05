@@ -1,5 +1,3 @@
-from . import external
-
 import argparse
 import concurrent.futures
 import copy
