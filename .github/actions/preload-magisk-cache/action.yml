@@ -3,9 +3,6 @@ inputs:
   cache-key:
     description: 'Magisk cache-key'
     required: true
-  url:
-    description: 'Magisk URL'
-    required: true
 
 runs:
   using: "composite"
@@ -14,14 +11,23 @@ runs:
       id: cache-magisk
       with:
         key: ${{ inputs.cache-key }}
-        path: |
-          workdir/magisk.apk
-    - name: Creating workdir
-      if: ${{ ! steps.cache-magisk.outputs.cache-hit }}
-      shell: sh
-      run: mkdir -p workdir
+        path: tests/files/magisk
+
+    - if: ${{ ! steps.cache-img.outputs.cache-hit }}
+      uses: awalsh128/cache-apt-pkgs-action@v1
+      with:
+        packages: python3-lz4 python3-protobuf
+
+    - if: ${{ ! steps.cache-img.outputs.cache-hit }}
+      uses: awalsh128/cache-apt-pkgs-action@v1
+      with:
+        packages: python3-strictyaml
+
     - name: Downloading Magisk
       if: ${{ ! steps.cache-magisk.outputs.cache-hit }}
       shell: sh
       run: |
-        curl -L -o workdir/magisk.apk ${{ inputs.url }}
+        ./tests/tests.py \
+          download \
+          --magisk \
+          --no-devices

@@ -1,4 +1,6 @@
 FROM docker.io/archlinux/archlinux:latest
 
-RUN pacman --noconfirm -Syu --needed openssl python-lz4 python-protobuf \
+RUN pacman --noconfirm -Syu --needed openssl python-lz4 python-pip python-protobuf \
     && yes | pacman -Scc
+# Arch does not have strictyaml in its repos
+RUN pip install strictyaml

@@ -1,4 +1,4 @@
 FROM registry.fedoraproject.org/fedora-toolbox:37
 
-RUN dnf install -y openssl python3-lz4 python3-protobuf \
+RUN dnf install -y openssl python3-lz4 python3-protobuf python3-strictyaml \
     && find /var/cache/dnf -mindepth 1 -delete

@@ -1,5 +1,8 @@
 name: Preload tox cache
 inputs:
+  cache-key-prefix:
+    description: 'Tox cache-key prefix'
+    required: true
   python-version:
     description: 'Python version'
     required: true
@@ -9,15 +12,17 @@ runs:
   steps:
     - uses: actions/cache@v3
       with:
-        key: tox-${{ hashFiles('tox.ini') }}-${{ inputs.python-version }}
+        key: ${{ inputs.cache-key-prefix }}${{ inputs.python-version }}
         restore-keys: |
           tox-
         path: |
           .tox/
           ~/.cache/pip
+
     - uses: awalsh128/cache-apt-pkgs-action@v1
       with:
         packages: tox
+
     - uses: actions/setup-python@v4
       with:
         python-version: |
