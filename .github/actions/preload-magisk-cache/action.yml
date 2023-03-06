@@ -13,12 +13,12 @@ runs:
         key: ${{ inputs.cache-key }}
         path: tests/files/magisk
 
-    - if: ${{ ! steps.cache-img.outputs.cache-hit }}
+    - if: ${{ ! steps.cache-magisk.outputs.cache-hit }}
       uses: awalsh128/cache-apt-pkgs-action@v1
       with:
         packages: python3-lz4 python3-protobuf
 
-    - if: ${{ ! steps.cache-img.outputs.cache-hit }}
+    - if: ${{ ! steps.cache-magisk.outputs.cache-hit }}
       uses: awalsh128/cache-apt-pkgs-action@v1
       with:
         packages: python3-strictyaml
