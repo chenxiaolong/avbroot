@@ -109,7 +109,8 @@ jobs:
         with:
           submodules: true
 
-      - uses: ./.github/actions/preload-img-cache
+      - name: Preloading image cache
+        uses: ./.github/actions/preload-img-cache
         with:
           cache-key-prefix: ${{ needs.setup.outputs.img-key-prefix }}
           device: ${{ matrix.device }}
@@ -129,7 +130,8 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - uses: ./.github/actions/preload-tox-cache
+      - name: Preloading tox cache
+        uses: ./.github/actions/preload-tox-cache
         with:
           cache-key-prefix: ${{ needs.setup.outputs.tox-key-prefix }}
           python-version: ${{ matrix.python }}
@@ -153,16 +155,19 @@ jobs:
         with:
           submodules: true
 
-      - uses: ./.github/actions/preload-magisk-cache
+      - name: Restoring Magisk cache
+        uses: ./.github/actions/preload-magisk-cache
         with:
           cache-key: ${{ needs.setup.outputs.magisk-key }}
 
-      - uses: ./.github/actions/preload-img-cache
+      - name: Restoring image cache
+        uses: ./.github/actions/preload-img-cache
         with:
           cache-key-prefix: ${{ needs.setup.outputs.img-key-prefix }}
           device: ${{ matrix.device }}
 
-      - uses: ./.github/actions/preload-tox-cache
+      - name: Restoring tox cache
+        uses: ./.github/actions/preload-tox-cache
         with:
           cache-key-prefix: ${{ needs.setup.outputs.tox-key-prefix }}
           python-version: ${{ matrix.python }}
