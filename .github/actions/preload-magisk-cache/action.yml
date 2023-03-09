@@ -11,6 +11,7 @@ runs:
       id: cache-magisk
       with:
         key: ${{ inputs.cache-key }}
+        # Make sure any changes to path are also reflected in ci.yml setup
         path: tests/files/magisk
 
     - if: ${{ ! steps.cache-magisk.outputs.cache-hit }}

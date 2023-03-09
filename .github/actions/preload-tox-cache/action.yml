@@ -15,6 +15,7 @@ runs:
         key: ${{ inputs.cache-key-prefix }}${{ inputs.python-version }}
         restore-keys: |
           tox-
+        # Make sure any changes to path are also reflected in ci.yml setup
         path: |
           .tox/
           ~/.cache/pip

@@ -14,6 +14,7 @@ runs:
       id: cache-img
       with:
         key: ${{ inputs.cache-key-prefix }}${{ inputs.device }}
+        # Make sure any changes to path are also reflected in ci.yml setup
         path: tests/files/${{ inputs.device }}-sparse.tar
 
     - if: ${{ steps.cache-img.outputs.cache-hit }}
