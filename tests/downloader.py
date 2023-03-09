@@ -1,8 +1,6 @@
 import argparse
 import collections
 import copy
-import dataclasses
-import functools
 import json
 import os
 import queue
@@ -12,6 +10,9 @@ import time
 import typing
 import urllib.request
 
+sys.path.append(os.path.join(sys.path[0], '..'))
+from avbroot import util
+
 # This is a Python adaptation of the parallel downloader written for samfusdl.
 
 MIN_CHUNK_SIZE = 1 * 1024 * 1024  # 1 MiB
@@ -20,25 +21,6 @@ DEFAULT_BUF_SIZE = 16384
 DEFAULT_RETRIES = 3
 DEFAULT_THREADS = 4
 DEFAULT_TIMEOUT = 30
-
-
-@dataclasses.dataclass
-@functools.total_ordering
-class Range:
-    start: int
-    end: int
-
-    def __lt__(self, other) -> bool:
-        return (self.start, self.end) < (other.start, other.end)
-
-    def __eq__(self, other) -> bool:
-        return (self.start, self.end) == (other.start, other.end)
-
-    def __bool__(self) -> bool:
-        return self.start < self.end
-
-    def size(self) -> int:
-        return self.end - self.start
 
 
 class DownloadWorker(threading.Thread):
@@ -51,7 +33,7 @@ class DownloadWorker(threading.Thread):
     than expected in order to split the work for better resource utilization.
     '''
 
-    def __init__(self, url: str, range: Range, output_queue: queue.Queue,
+    def __init__(self, url: str, range: util.Range, output_queue: queue.Queue,
                  buf_size: typing.Optional[int] = None,
                  timeout: typing.Optional[int] = None):
         super().__init__()
@@ -84,7 +66,7 @@ class DownloadWorker(threading.Thread):
 
                 if n != to_read:
                     raise EOFError(f'Expected {n} bytes, but downloaded '
-                                   f'{to_read} bytes in {self.range}')
+                                   f'{to_read} bytes in {self.range!r}')
 
                 self.output_queue.put((self.ident, buf_view[:n]))
 
@@ -170,7 +152,7 @@ def _get_content_length(url: str, timeout: typing.Optional[int] = None) -> int:
         return int(resp.headers['content-length'])
 
 
-def _download_ranges(f: typing.BinaryIO, url: str, ranges: list[Range],
+def _download_ranges(f: typing.BinaryIO, url: str, ranges: list[util.Range],
                      display: DisplayCallback,
                      buf_size: typing.Optional[int] = None,
                      retries: typing.Optional[int] = None,
@@ -194,7 +176,7 @@ def _download_ranges(f: typing.BinaryIO, url: str, ranges: list[Range],
     f.truncate(file_size)
 
     if not ranges:
-        ranges.append(Range(0, file_size))
+        ranges.append(util.Range(0, file_size))
 
     progress = file_size - sum(r.size() for r in ranges)
 
@@ -213,8 +195,8 @@ def _download_ranges(f: typing.BinaryIO, url: str, ranges: list[Range],
                     size = old_range.size()
 
                     if size >= MIN_CHUNK_SIZE:
-                        new_range = Range(old_range.start + size // 2,
-                                          old_range.end)
+                        new_range = util.Range(old_range.start + size // 2,
+                                               old_range.end)
                         old_range.end = new_range.start
 
                         remaining.appendleft(new_range)
@@ -304,7 +286,7 @@ def _open_or_create(path: os.PathLike[str]) -> typing.BinaryIO():
 
 
 def download_ranges(out: os.PathLike[str], url: str,
-                    initial_ranges: typing.Optional[list[Range]],
+                    initial_ranges: typing.Optional[list[util.Range]],
                     display: DisplayCallback,
                     buf_size: typing.Optional[int] = None,
                     retries: typing.Optional[int] = None,
@@ -325,7 +307,7 @@ def download_ranges(out: os.PathLike[str], url: str,
     try:
         with open(state_file, 'r') as f:
             ranges_json = json.load(f)
-            ranges = [Range(r['start'], r['end']) for r in ranges_json]
+            ranges = [util.Range(r['start'], r['end']) for r in ranges_json]
     except FileNotFoundError:
         ranges = list(initial_ranges) if initial_ranges else []
 
@@ -362,7 +344,7 @@ def parse_range(arg: str):
     start = int(start)
     end = int(end)
 
-    return Range(start, end)
+    return util.Range(start, end)
 
 
 def parse_args(args=None):

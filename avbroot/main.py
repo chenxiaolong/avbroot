@@ -1,6 +1,7 @@
 import argparse
 import concurrent.futures
 import copy
+import io
 import os
 import shutil
 import tempfile
@@ -14,6 +15,9 @@ from . import openssl
 from . import ota
 from . import util
 from . import vbmeta
+from .formats import bootimage
+from .formats import compression
+from .formats import cpio
 
 
 PATH_METADATA = 'META-INF/com/android/metadata'
@@ -21,10 +25,6 @@ PATH_METADATA_PB = f'{PATH_METADATA}.pb'
 PATH_OTACERT = 'META-INF/com/android/otacert'
 PATH_PAYLOAD = 'payload.bin'
 PATH_PROPERTIES = 'payload_properties.txt'
-
-# Half-open range
-MAGISK_MIN_VERSION = 22000
-MAGISK_MAX_VERSION = 25300
 
 PARTITION_PRIORITIES = {
     '@vbmeta': ('vbmeta',),
@@ -76,7 +76,7 @@ def get_required_images(manifest, boot_partition):
 
 
 def patch_ota_payload(f_in, open_more_f_in, f_out, file_size, boot_partition,
-                      magisk, prepatched, clear_vbmeta_flags, privkey_avb,
+                      root_patch, clear_vbmeta_flags, privkey_avb,
                       passphrase_avb, privkey_ota, passphrase_ota, cert_ota):
     with tempfile.TemporaryDirectory() as temp_dir:
         extract_dir = os.path.join(temp_dir, 'extract')
@@ -95,15 +95,7 @@ def patch_ota_payload(f_in, open_more_f_in, f_out, file_size, boot_partition,
         ota.extract_images(open_more_f_in, manifest, blob_offset,
                            extract_dir, unique_images)
 
-        image_patches = {}
-
-        if magisk is not None:
-            image_patches[images['@rootpatch']] = \
-                [boot.MagiskRootPatch(magisk)]
-        else:
-            image_patches[images['@rootpatch']] = \
-                [boot.PrepatchedImage(prepatched)]
-
+        image_patches = {images['@rootpatch']: [root_patch]}
         image_patches.setdefault(images['@otacerts'], []).append(
             boot.OtaCertPatch(cert_ota))
 
@@ -158,7 +150,7 @@ def patch_ota_payload(f_in, open_more_f_in, f_out, file_size, boot_partition,
         )
 
 
-def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, magisk, prepatched,
+def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, root_patch,
                   clear_vbmeta_flags, privkey_avb, passphrase_avb, privkey_ota,
                   passphrase_ota, cert_ota):
     with (
@@ -249,8 +241,7 @@ def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, magisk, prepatched,
                         f_out,
                         info.file_size,
                         boot_partition,
-                        magisk,
-                        prepatched,
+                        root_patch,
                         clear_vbmeta_flags,
                         privkey_avb,
                         passphrase_avb,
@@ -287,33 +278,24 @@ def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, magisk, prepatched,
         return metadata
 
 
-def get_magisk_version(magisk):
-    with zipfile.ZipFile(magisk, 'r') as z:
-        with z.open('assets/util_functions.sh', 'r') as f:
-            for line in f:
-                if line.startswith(b'MAGISK_VER_CODE='):
-                    return int(line[16:].strip())
-
-    raise Exception(f'Failed to get Magisk version from: {magisk}')
-
-
 def patch_subcommand(args):
     output = args.output
     if output is None:
         output = args.input + '.patched'
 
     if args.magisk is not None:
-        magisk_version = get_magisk_version(args.magisk)
-        if magisk_version < MAGISK_MIN_VERSION or \
-                magisk_version >= MAGISK_MAX_VERSION:
-            message = f'Unsupported Magisk version {magisk_version} ' \
-                    f'(supported: >={MAGISK_MIN_VERSION}, ' \
-                    f'<{MAGISK_MAX_VERSION})'
+        root_patch = boot.MagiskRootPatch(args.magisk,
+                                          args.magisk_rules_device)
 
-            if args.ignore_magisk_version:
-                print_warning(message)
+        try:
+            root_patch.validate()
+        except ValueError as e:
+            if args.ignore_magisk_warnings:
+                print_warning(e)
             else:
-                raise Exception(message)
+                raise e
+    else:
+        root_patch = boot.PrepatchedImage(args.prepatched)
 
     # Get passphrases for keys
     passphrase_avb = openssl.prompt_passphrase(args.privkey_avb)
@@ -336,8 +318,7 @@ def patch_subcommand(args):
                 args.input,
                 temp,
                 args.boot_partition,
-                args.magisk,
-                args.prepatched,
+                root_patch,
                 args.clear_vbmeta_flags,
                 args.privkey_avb,
                 passphrase_avb,
@@ -368,7 +349,10 @@ def extract_subcommand(args):
                                 for p in manifest.partitions)
         else:
             images = get_required_images(manifest, args.boot_partition)
-            unique_images = set(images.values())
+            if args.boot_only:
+                unique_images = {images['@rootpatch']}
+            else:
+                unique_images = set(images.values())
 
         print_status('Extracting', ', '.join(sorted(unique_images)),
                      'from the payload')
@@ -381,6 +365,26 @@ def extract_subcommand(args):
         ota.extract_images(lambda: z.open(info, 'r'),
                            manifest, blob_offset, args.directory,
                            unique_images)
+
+
+def magisk_info_subcommand(args):
+    with open(args.image, 'rb') as f:
+        img = bootimage.load_autodetect(f)
+
+    if not img.ramdisks:
+        raise ValueError('Boot image does not have a ramdisk')
+
+    with (
+        io.BytesIO(img.ramdisks[0]) as f_raw,
+        compression.CompressedFile(f_raw, 'rb', raw_if_unknown=True) as f,
+    ):
+        entries = cpio.load(f.fp)
+        config = next((e for e in entries if e.name == b'.backup/.magisk'),
+                      None)
+        if config is None:
+            raise ValueError('Not a Magisk-patched boot image')
+
+        print(config.content.decode('ascii'), end='')
 
 
 def parse_args(argv=None):
@@ -409,8 +413,10 @@ def parse_args(argv=None):
     boot_group.add_argument('--prepatched',
                             help='Path to prepatched boot image')
 
-    patch.add_argument('--ignore-magisk-version', action='store_true',
-                       help='Allow patching with unsupported Magisk versions')
+    patch.add_argument('--magisk-rules-device', type=int,
+                       help='Magisk rules device ID')
+    patch.add_argument('--ignore-magisk-warnings', action='store_true',
+                       help='Ignore Magisk compatibility/version warnings')
 
     patch.add_argument('--clear-vbmeta-flags', action='store_true',
                        help='Forcibly clear vbmeta flags if they disable AVB')
@@ -422,18 +428,28 @@ def parse_args(argv=None):
                          help='Path to patched OTA zip')
     extract.add_argument('--directory', default='.',
                          help='Output directory for extracted images')
-    extract.add_argument('--all', action='store_true',
-                         help='Extract all images from payload')
+    extract_group = extract.add_mutually_exclusive_group()
+    extract_group.add_argument('--all', action='store_true',
+                               help='Extract all images from the payload')
+    extract_group.add_argument('--boot-only', action='store_true',
+                               help='Extract only the boot image')
 
     for subcmd in (patch, extract):
         subcmd.add_argument('--boot-partition', default='@gki_ramdisk',
                             help='Boot partition name')
 
+    magisk_info = subparsers.add_parser(
+        'magisk-info', help='Print Magisk config from a patched boot image')
+    magisk_info.add_argument('--image', required=True,
+                             help='Patch to Magisk-patched boot image')
+
     args = parser.parse_args(args=argv)
 
-    if args.subcommand == 'patch' and \
-            args.ignore_magisk_version and args.magisk is None:
-        parser.error('--ignore-magisk-version requires --magisk')
+    if args.subcommand == 'patch' and args.magisk is None:
+        if args.magisk_rules_device:
+            parser.error('--magisk-rules-device requires --magisk')
+        elif args.ignore_magisk_warnings:
+            parser.error('--ignore-magisk-warnings requires --magisk')
 
     return args
 
@@ -445,5 +461,7 @@ def main(argv=None):
         patch_subcommand(args)
     elif args.subcommand == 'extract':
         extract_subcommand(args)
+    elif args.subcommand == 'magisk-info':
+        magisk_info_subcommand(args)
     else:
         raise NotImplementedError()
