@@ -78,28 +78,15 @@ def parse_args():
 
 def load_archive(path, **cpio_kwargs):
     with open(path, 'rb') as f_raw:
-        decompressed = False
-
-        try:
-            with compression.CompressedFile(f_raw, 'rb') as f:
-                decompressed = True
-                return cpio.load(f.fp, **cpio_kwargs), f.format
-        except ValueError:
-            # Not the best API
-            if decompressed:
-                raise
-            else:
-                f_raw.seek(0)
-                return cpio.load(f_raw, **cpio_kwargs), None
+        with compression.CompressedFile(f_raw, 'rb', raw_if_unknown=True) as f:
+            return cpio.load(f.fp, **cpio_kwargs), f.format
 
 
 def save_archive(path, entries, format):
     with open(path, 'wb') as f_raw:
-        if format:
-            with compression.CompressedFile(f_raw, 'wb', format=format) as f:
-                cpio.save(f.fp, entries)
-        else:
-            cpio.save(f_raw, entries)
+        with compression.CompressedFile(f_raw, 'wb', format=format,
+                                        raw_if_unknown=True) as f:
+            cpio.save(f.fp, entries)
 
 
 def main():

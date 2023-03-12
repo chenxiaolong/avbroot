@@ -141,14 +141,15 @@ To install the Python dependencies:
 
     If `--output` is not specified, then the output file is written to `<input>.patched`.
 
-    If you already have a prepatched boot image and don't want avbroot to apply the Magisk patches itself, see the [advanced usage section](#advanced-usage).
+    **NOTE:** If you are using Magisk version >=25207, you need to know the rules device ID (`--magisk-rules-device <ID>`). For details, see the [Magisk rules device section](#magisk-rules-device).
+
+    If you prefer to use an existing boot image patched by the Magisk app or you want to use KernelSU, see the [advanced usage section](#advanced-usage).
 
 6. **[Initial setup only]** Unlock the bootloader. This will trigger a data wipe.
 
 7. **[Initial setup only]** Extract the patched images from the patched OTA.
 
     ```bash
-    mkdir extracted
     python avbroot.py \
         extract \
         --input /path/to/ota.zip.patched \
@@ -202,6 +203,34 @@ python clearotacerts/build.py
 ```
 
 and flash the `clearotacerts/dist/clearotacerts-<version>.zip` file in Magisk. The module simply overrides `/system/etc/security/otacerts.zip` at runtime with an empty zip so that even if an OTA is downloaded, signature verification will fail.
+
+## Magisk rules device
+
+Magisk versions 25207 and newer require the device ID for a writable partition that is used to store custom SELinux rules. This can only be determined on a real device, so avbroot requires the device ID to be specified via `--magisk-rules-device <ID>`. To find the device ID:
+
+1. Extract the boot image from the original/unpatched OTA:
+
+    ```bash
+    python avbroot.py \
+        extract \
+        --input /path/to/ota.zip \
+        --directory . \
+        --boot-only
+    ```
+
+2. Patch the boot image via the Magisk app. This **MUST** be done on the target device! The device ID will be incorrect if patched from Magisk on a different device.
+
+3. Find the device ID from the patched boot image:
+
+    ```bash
+    python avbroot.py \
+        magisk-info \
+        --image magisk_patched-*.img
+    ```
+
+    The device ID shown in the output (`RULESDEVICE=<ID>`) can be passed to avbroot via `--magisk-rules-device <ID>`. The ID should be saved somewhere for future reference since it does not change across updates.
+
+If it's not possible to run the Magisk app on the target device (eg. device is currently unbootable), patch and flash the OTA once using `--ignore-magisk-warnings`, follow these steps, and the repatch and reflash the OTA with `--magisk-rules-device <ID>`.
 
 ## Advanced Usage
 

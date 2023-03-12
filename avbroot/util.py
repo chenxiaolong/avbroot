@@ -1,9 +1,43 @@
 import contextlib
+import dataclasses
+import functools
 import os
 import tempfile
 
 
 _ZERO_BLOCK = memoryview(b'\0' * 16384)
+
+
+@dataclasses.dataclass
+@functools.total_ordering
+class Range:
+    '''
+    Simple class to represent a half-open interval.
+    '''
+
+    start: int
+    end: int
+
+    def __repr__(self) -> str:
+        return f'[{self.start}, {self.end})'
+
+    def __str__(self) -> str:
+        return f'>={self.start}, <{self.end}'
+
+    def __lt__(self, other) -> bool:
+        return (self.start, self.end) < (other.start, other.end)
+
+    def __eq__(self, other) -> bool:
+        return (self.start, self.end) == (other.start, other.end)
+
+    def __contains__(self, item) -> bool:
+        return item >= self.start and item < self.end
+
+    def __bool__(self) -> bool:
+        return self.start < self.end
+
+    def size(self) -> int:
+        return self.end - self.start
 
 
 @contextlib.contextmanager

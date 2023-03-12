@@ -52,8 +52,35 @@ class MagiskRootPatch(BootImagePatch):
     Root the boot image with Magisk.
     '''
 
-    def __init__(self, magisk_apk):
+    # Half-open intervals
+    VER_SUPPORTED = util.Range(22000, 25211)
+    VER_RULES_DEVICE = util.Range(25207, VER_SUPPORTED.end)
+
+    def __init__(self, magisk_apk, rules_device):
         self.magisk_apk = magisk_apk
+        self.rules_device = rules_device
+
+    def _get_version(self):
+        with zipfile.ZipFile(self.magisk_apk, 'r') as z:
+            with z.open('assets/util_functions.sh', 'r') as f:
+                for line in f:
+                    if line.startswith(b'MAGISK_VER_CODE='):
+                        return int(line[16:].strip())
+
+        raise Exception('Failed to determine Magisk version from: '
+                        f'{self.magisk_apk}')
+
+    def validate(self):
+        version = self._get_version()
+
+        if version not in self.VER_SUPPORTED:
+            raise ValueError(f'Unsupported Magisk version {version} '
+                             f'(supported: >={self.VER_SUPPORTED})')
+
+        if self.rules_device is None and version in self.VER_RULES_DEVICE:
+            raise ValueError(f'Magisk version {version} '
+                             f'({self.VER_RULES_DEVICE}) requires a rules '
+                             f'device to be specified')
 
     def patch(self, image_file, boot_image):
         with zipfile.ZipFile(self.magisk_apk, 'r') as zip:
@@ -125,8 +152,10 @@ class MagiskRootPatch(BootImagePatch):
             b'KEEPVERITY=true\n' \
             b'KEEPFORCEENCRYPT=true\n' \
             b'PATCHVBMETAFLAG=false\n' \
-            b'RECOVERYMODE=false\n' \
-            b'SHA1=%s\n' % hasher.hexdigest().encode('ascii')
+            b'RECOVERYMODE=false\n'
+        if self.rules_device is not None:
+            magisk_config += b'RULESDEVICE=%d\n' % self.rules_device
+        magisk_config += b'SHA1=%s\n' % hasher.hexdigest().encode('ascii')
         entries.append(cpio.CpioEntryNew.new_file(
             b'.backup/.magisk', perms=0o000, data=magisk_config))
 

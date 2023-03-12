@@ -211,7 +211,7 @@ def download_image(config_data, device, work_dir, stripped, revalidate):
     if stripped:
         sha256_key = 'stripped'
         image_file += '.stripped'
-        sections = [downloader.Range(s['start'].data, s['end'].data)
+        sections = [util.Range(s['start'].data, s['end'].data)
                     for s in image_config['sections']]
 
     return download(

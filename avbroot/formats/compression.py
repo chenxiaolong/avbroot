@@ -156,6 +156,7 @@ class CompressedFile:
         fp: typing.BinaryIO,
         mode: typing.Literal['rb', 'wb'] = 'rb',
         format: typing.Optional[Format] = None,
+        raw_if_unknown = False,
     ):
         if mode == 'rb' and not format:
             magic = fp.read(_MAGIC_MAX_SIZE)
@@ -170,6 +171,8 @@ class CompressedFile:
             format_fp = gzip.GzipFile(fileobj=fp, mode=mode, mtime=0)
         elif format == Format.LZ4_LEGACY:
             format_fp = Lz4Legacy(fp, mode)
+        elif raw_if_unknown:
+            format_fp = fp
         else:
             raise ValueError('Unknown compression format')
 
