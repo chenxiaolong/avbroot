@@ -285,7 +285,7 @@ def patch_subcommand(args):
 
     if args.magisk is not None:
         root_patch = boot.MagiskRootPatch(args.magisk,
-                                          args.magisk_rules_device)
+                                          args.magisk_preinit_device)
 
         try:
             root_patch.validate()
@@ -413,8 +413,8 @@ def parse_args(argv=None):
     boot_group.add_argument('--prepatched',
                             help='Path to prepatched boot image')
 
-    patch.add_argument('--magisk-rules-device', type=int,
-                       help='Magisk rules device ID')
+    patch.add_argument('--magisk-preinit-device',
+                       help='Magisk preinit device')
     patch.add_argument('--ignore-magisk-warnings', action='store_true',
                        help='Ignore Magisk compatibility/version warnings')
 
@@ -446,8 +446,8 @@ def parse_args(argv=None):
     args = parser.parse_args(args=argv)
 
     if args.subcommand == 'patch' and args.magisk is None:
-        if args.magisk_rules_device:
-            parser.error('--magisk-rules-device requires --magisk')
+        if args.magisk_preinit_device:
+            parser.error('--magisk-preinit-device requires --magisk')
         elif args.ignore_magisk_warnings:
             parser.error('--ignore-magisk-warnings requires --magisk')
 

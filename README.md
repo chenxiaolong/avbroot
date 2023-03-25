@@ -141,7 +141,7 @@ To install the Python dependencies:
 
     If `--output` is not specified, then the output file is written to `<input>.patched`.
 
-    **NOTE:** If you are using Magisk version >=25207, you need to know the rules device ID (`--magisk-rules-device <ID>`). For details, see the [Magisk rules device section](#magisk-rules-device).
+    **NOTE:** If you are using Magisk version >=25211, you need to know the preinit partition name (`--magisk-preinit-device <name>`). For details, see the [Magisk preinit device section](#magisk-preinit-device).
 
     If you prefer to use an existing boot image patched by the Magisk app or you want to use KernelSU, see the [advanced usage section](#advanced-usage).
 
@@ -206,9 +206,9 @@ python clearotacerts/build.py
 
 and flash the `clearotacerts/dist/clearotacerts-<version>.zip` file in Magisk. The module simply overrides `/system/etc/security/otacerts.zip` at runtime with an empty zip so that even if an OTA is downloaded, signature verification will fail.
 
-## Magisk rules device
+## Magisk preinit device
 
-Magisk versions 25207 and newer require the device ID for a writable partition that is used to store custom SELinux rules. This can only be determined on a real device, so avbroot requires the device ID to be specified via `--magisk-rules-device <ID>`. To find the device ID:
+Magisk versions 25211 and newer require a writable partition for storing custom SELinux rules that need to be accessed during early boot stages. This can only be determined on a real device, so avbroot requires the partition's block device name to be specified via `--magisk-preinit-device <name>`. To find the partition name:
 
 1. Extract the boot image from the original/unpatched OTA:
 
@@ -220,9 +220,15 @@ Magisk versions 25207 and newer require the device ID for a writable partition t
         --boot-only
     ```
 
-2. Patch the boot image via the Magisk app. This **MUST** be done on the target device! The device ID will be incorrect if patched from Magisk on a different device.
+2. Patch the boot image via the Magisk app. This **MUST** be done on the target device! The partition name will be incorrect if patched from Magisk on a different device.
 
-3. Find the device ID from the patched boot image:
+    The Magisk app will include a line like the following in the output:
+
+    ```
+    - Pre-init storage partition device ID: <name>
+    ```
+
+    Alternatively, avbroot can print out what Magisk detected by running:
 
     ```bash
     python avbroot.py \
@@ -230,9 +236,11 @@ Magisk versions 25207 and newer require the device ID for a writable partition t
         --image magisk_patched-*.img
     ```
 
-    The device ID shown in the output (`RULESDEVICE=<ID>`) can be passed to avbroot via `--magisk-rules-device <ID>`. The ID should be saved somewhere for future reference since it does not change across updates.
+    The partition name will be shown as `PREINITDEVICE=<name>`.
 
-If it's not possible to run the Magisk app on the target device (eg. device is currently unbootable), patch and flash the OTA once using `--ignore-magisk-warnings`, follow these steps, and the repatch and reflash the OTA with `--magisk-rules-device <ID>`.
+    Now that the partition name is known, it can be passed to avbroot when patching via `--magisk-preinit-device <name>`. The partition name should be saved somewhere for future reference since it's unlikely to change across Magisk updates.
+
+If it's not possible to run the Magisk app on the target device (eg. device is currently unbootable), patch and flash the OTA once using `--ignore-magisk-warnings`, follow these steps, and then repatch and reflash the OTA with `--magisk-preinit-device <name>`.
 
 ## Advanced Usage
 
