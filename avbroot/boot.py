@@ -52,18 +52,28 @@ class MagiskRootPatch(BootImagePatch):
     Root the boot image with Magisk.
     '''
 
-    # Half-open intervals
-    VER_SUPPORTED = (
-        # Before RULESDEVICE was introduced
+    # Half-open intervals. Versions 25207 through 25210, which temporarily
+    # introduced the rules device stored in rdev major/minor form, are not
+    # supported.
+    VERS_SUPPORTED = (
         util.Range(22000, 25207),
-        # After RULESDEVICE was replaced with PREINITDEVICE
-        util.Range(25211, 25212),
+        util.Range(25211, 26002),
     )
-    VER_PREINIT_DEVICE = VER_SUPPORTED[-1]
+    VER_PREINIT_DEVICE = util.Range(25211, VERS_SUPPORTED[-1].end)
+    VER_RANDOM_SEED = util.Range(25211, VERS_SUPPORTED[-1].end)
 
-    def __init__(self, magisk_apk, preinit_device):
+    def __init__(self, magisk_apk, preinit_device, random_seed):
         self.magisk_apk = magisk_apk
+        self.version = self._get_version()
+
         self.preinit_device = preinit_device
+
+        if random_seed is None:
+            # Use a hardcoded random seed by default to ensure byte-for-byte
+            # reproducibility
+            self.random_seed = 0xfedcba9876543210
+        else:
+            self.random_seed = random_seed
 
     def _get_version(self):
         with zipfile.ZipFile(self.magisk_apk, 'r') as z:
@@ -76,15 +86,14 @@ class MagiskRootPatch(BootImagePatch):
                         f'{self.magisk_apk}')
 
     def validate(self):
-        version = self._get_version()
-
-        if not any(version in s for s in self.VER_SUPPORTED):
-            supported = '; '.join(str(s) for s in self.VER_SUPPORTED)
-            raise ValueError(f'Unsupported Magisk version {version} '
+        if not any(self.version in s for s in self.VERS_SUPPORTED):
+            supported = '; '.join(str(s) for s in self.VERS_SUPPORTED)
+            raise ValueError(f'Unsupported Magisk version {self.version} '
                              f'(supported: {supported})')
 
-        if self.preinit_device is None and version in self.VER_PREINIT_DEVICE:
-            raise ValueError(f'Magisk version {version} '
+        if self.preinit_device is None and \
+                self.version in self.VER_PREINIT_DEVICE:
+            raise ValueError(f'Magisk version {self.version} '
                              f'({self.VER_PREINIT_DEVICE}) requires a preinit '
                              f'device to be specified')
 
@@ -159,10 +168,16 @@ class MagiskRootPatch(BootImagePatch):
             b'KEEPFORCEENCRYPT=true\n' \
             b'PATCHVBMETAFLAG=false\n' \
             b'RECOVERYMODE=false\n'
-        if self.preinit_device is not None:
+
+        if self.version in self.VER_PREINIT_DEVICE:
             magisk_config += b'PREINITDEVICE=%s\n' % \
                 self.preinit_device.encode('ascii')
+
         magisk_config += b'SHA1=%s\n' % hasher.hexdigest().encode('ascii')
+
+        if self.version in self.VER_RANDOM_SEED:
+            magisk_config += b'RANDOMSEED=0x%x\n' % self.random_seed
+
         entries.append(cpio.CpioEntryNew.new_file(
             b'.backup/.magisk', perms=0o000, data=magisk_config))
 
