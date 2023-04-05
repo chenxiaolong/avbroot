@@ -284,8 +284,8 @@ def patch_subcommand(args):
         output = args.input + '.patched'
 
     if args.magisk is not None:
-        root_patch = boot.MagiskRootPatch(args.magisk,
-                                          args.magisk_preinit_device)
+        root_patch = boot.MagiskRootPatch(
+            args.magisk, args.magisk_preinit_device, args.magisk_random_seed)
 
         try:
             root_patch.validate()
@@ -387,6 +387,14 @@ def magisk_info_subcommand(args):
         print(config.content.decode('ascii'), end='')
 
 
+def uint64_arg(arg):
+    value = int(arg)
+    if value < 0 or value >= 2 ** 64:
+        raise ValueError('Out of range for unsigned 64-bit integer')
+
+    return value
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest='subcommand', required=True,
@@ -415,6 +423,8 @@ def parse_args(argv=None):
 
     patch.add_argument('--magisk-preinit-device',
                        help='Magisk preinit device')
+    patch.add_argument('--magisk-random-seed', type=uint64_arg,
+                       help='Magisk random seed')
     patch.add_argument('--ignore-magisk-warnings', action='store_true',
                        help='Ignore Magisk compatibility/version warnings')
 
@@ -448,6 +458,8 @@ def parse_args(argv=None):
     if args.subcommand == 'patch' and args.magisk is None:
         if args.magisk_preinit_device:
             parser.error('--magisk-preinit-device requires --magisk')
+        elif args.magisk_random_seed:
+            parser.error('--magisk-random-seed requires --magisk')
         elif args.ignore_magisk_warnings:
             parser.error('--ignore-magisk-warnings requires --magisk')
 

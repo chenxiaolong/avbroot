@@ -227,6 +227,13 @@ def patch_image(input_file, output_file, stripped, extra_args=[]):
     print('Patching', input_file)
 
     with ignore_zip_crc() if stripped else contextlib.suppress():
+        if '--magisk' in extra_args:
+            # This doesn't need to be correct. The test outputs aren't meant to
+            # be booted on real devices.
+            preinit_args = ['--magisk-preinit-device', 'metadata']
+        else:
+            preinit_args = []
+
         avbroot.main.main([
             'patch',
             '--privkey-avb', TEST_KEY_PREFIX + 'avb.key',
@@ -234,6 +241,7 @@ def patch_image(input_file, output_file, stripped, extra_args=[]):
             '--cert-ota', TEST_KEY_PREFIX + 'ota.crt',
             '--input', input_file,
             '--output', output_file,
+            *preinit_args,
             *extra_args,
         ])
 
@@ -486,7 +494,7 @@ def parse_args(args=None):
     p_patch.add_argument(
         '--delete-on-success',
         action=argparse.BooleanOptionalAction,
-        help='Delete output files on success',
+        help='Delete patched output files on success',
     )
     p_patch.add_argument(
         '--output-file-suffix',
