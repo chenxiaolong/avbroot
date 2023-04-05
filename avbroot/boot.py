@@ -52,11 +52,16 @@ class MagiskRootPatch(BootImagePatch):
     Root the boot image with Magisk.
     '''
 
-    # Half-open intervals. Versions 25207 through 25210, which temporarily
-    # introduced the rules device stored in rdev major/minor form, are not
-    # supported.
+    # - Half-open intervals.
+    # - Versions <25102 are not supported because they're missing commit
+    #   1f8c063dc64806c4f7320ed66c785ff7bc116383, which would leave devices
+    #   that use Android 13 GKIs unable to boot into recovery
+    # - Versions 25207 through 25210 are not supported because they used the
+    #   RULESDEVICE config option, which stored the writable block device as an
+    #   rdev major/minor pair, which was not consistent across reboots and was
+    #   replaced by PREINITDEVICE
     VERS_SUPPORTED = (
-        util.Range(22000, 25207),
+        util.Range(25102, 25207),
         util.Range(25211, 26002),
     )
     VER_PREINIT_DEVICE = util.Range(25211, VERS_SUPPORTED[-1].end)
