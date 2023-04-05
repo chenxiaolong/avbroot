@@ -1,138 +1,143 @@
 magisk:
-  url: https://github.com/topjohnwu/Magisk/releases/download/v25.2/Magisk-v25.2.apk
-  hash: 0bdc32918b6ea502dca769b1c7089200da51ea1def170824c2812925b426d509
+  url: https://github.com/topjohnwu/Magisk/releases/download/v26.0/Magisk-v26.0.apk
+  hash: 9e14d3d3ca1f1a2765f8ca215ebbf35ea5fd2896fb147eea581fcaa3b4e77d25
 
 device:
   # What's unique: init_boot (boot v4) + vendor_boot (vendor v4)
   cheetah: # Google Pixel 7 Pro
-    url: https://dl.google.com/dl/android/aosp/cheetah-ota-tq1a.230205.002-ad27a6d7.zip
+    url: https://dl.google.com/dl/android/aosp/cheetah-ota-tq2a.230305.008.c1-6ac5ff2e.zip
     sections:
     - start: 0
-      end: 149482
-    - start: 956810
-      end: 21464229
-    - start: 21633246
-      end: 23130213
-    - start: 2012062382
-      end: 2012066454
-    - start: 2278970391
-      end: 2296636084
-    - start: 2307348326
-      end: 2307353442
+      end: 151715
+    - start: 961379
+      end: 21514020
+    - start: 21683150
+      end: 23179365
+    - start: 2043499985
+      end: 2043504053
+    - start: 2315331822
+      end: 2333060126
+    - start: 2344084950
+      end: 2344090066
     hash:
       original:
-        full: ad27a6d7ca78c0d3fb7f51864cc6a9e6bc91f536f9e9bab5da06253df602525f
-        stripped: a46831a0636da6258571094e30df781ec4089810609638883649bd6cc2707936
+        full: 6ac5ff2e14dc16755ea4ea30e6dbe25103b889a36a465194ef943bd0d665b91c
+        stripped: 1834c00a5c7feb7925dc684e93c33707b3b18cac3a2b54a188c571fd18844933
       patched:
-        full: a711b2033a6ebe39c2ba22e885bd570db33092897eda1793e508f3e8ffb8000a
-        stripped: 433aa27dbf55bc677c1631d3259e1db695e91b9243cb7691b883ea08d113acca
+        full: 7a9d103fd82a034ff349e9684be942b47094de946c13175dd7cacfbd5a2801c0
+        stripped: 337e0d0b2ab4b97a1630b4e7987389526f17d61b24a65e60c2ab7e62a37477a0
       avb_images:
-        init_boot.img: 73783fc6083c256188e141699fde8c1f054682e5102c26fb86a59eff2cc5c07c
-        vbmeta.img: f6629cd26485093a792dec15c3e6fdc4456875e32949f5c7d82a74170d8dbbf8
-        vendor_boot.img: 0aa3679c6d55c5ab6ad5f7c70afb4fca369e2bb4396d01b9d58426f6be391d90
+        init_boot.img: 07b5899a9259e4b054b1184226b07bec634a93933f5092c7f74089cf19dfb352
+        vbmeta.img: 903486b11bedb173e5f8ebfff3b80df3f4ac96e9267e98973e9a5c0dfd4a84e3
+        vendor_boot.img: a6746a6d8c8f1229984c063cb7f86198994f913b7f3fbbbac14337ffae15e9f0
 
   # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
   bluejay: # Google Pixel 6a
-    url: https://dl.google.com/dl/android/aosp/bluejay-ota-tq1a.230205.002-1ec64b58.zip
+    url: https://dl.google.com/dl/android/aosp/bluejay-ota-tq2a.230305.008.e1-915f9087.zip
     sections:
     - start: 0
-      end: 139779
-    - start: 1058270
-      end: 21565697
-    - start: 1871582186
-      end: 1871586146
-    - start: 2051986898
-      end: 2074913522
-    - start: 2081226738
-      end: 2081231854
+      end: 140787
+    - start: 1060207
+      end: 21612852
+    - start: 1886150700
+      end: 1886154660
+    - start: 2069112987
+      end: 2092260102
+    - start: 2098778558
+      end: 2098783674
     hash:
       original:
-        full: 1ec64b589cba8d9687ea8f85cf6c2e5d09c9e4fbdae15417aa06d5ba976fbe79
-        stripped: d1f1270f663402a99da0763aae7978d6784c81b59a4973afc69c4bf856b6e552
+        full: 915f9087b627b6961be9bb447dc63a7a1083b536753a78715e98641eaeb9c9d1
+        stripped: a56115e71e2c45385591281d287a1cc8a2f94be478f52b8d4f10ed4091733915
       patched:
-        full: d0d59a90e0aba065f50fcd0c8c6c5c01910c08dc1caf9faee0dd3b9fbf1f4308
-        stripped: 69d5b353be8797842b582fd92fc5dcef384c80044e777afca49ccbb586d2fdc8
+        full: ee904dacf01f340651dc50db9ba3732315ad66cc3147b7c8508017b083db3657
+        stripped: 62a2094b46328059166a404163bfce1ac4d31ac160fb781f1ef6440ed2800a73
       avb_images:
-        boot.img: 01165a0ff01ca985f3738cbede85744b2420c36eb54762b1df6faecf2747701c
-        vbmeta.img: 524c01a8759d145201008ea583b4198b750efc8578c0442883fafb99705d168e
-        vendor_boot.img: cf4e882dde2ec9ef9cab8823a134a597d1222c7f44a2e1ec97e206e4a00819ef
+        boot.img: 74a7561ee562bf267f1e67243b431cf60538859d5bf7ca624bfc99fe4d425861
+        vbmeta.img: 1afe23814943ad79915fdf2c1aac82d53d99587eb8e2966eace106bf966287fa
+        vendor_boot.img: 68454782e3e5107555b33567a6403a253aa8f63591889ab9c5afe29d03227393
 
   # What's unique: boot (boot v3) + vendor_boot (vendor v3)
   bramble: # Google Pixel 4a 5G
-    url: https://dl.google.com/dl/android/aosp/bramble-ota-tq1a.230205.002-49f2dc71.zip
+    url: https://dl.google.com/dl/android/aosp/bramble-ota-tq2a.230305.008.c1-a925dd09.zip
     sections:
     - start: 0
-      end: 139860
-    - start: 495580
-      end: 11663821
-    - start: 1637447711
-      end: 1637449951
-    - start: 1870498525
-      end: 1893837709
-    - start: 1896650617
-      end: 1896655734
+      end: 140531
+    - start: 496187
+      end: 11655082
+    - start: 1650283561
+      end: 1650285805
+    - start: 1884739919
+      end: 1908081011
+    - start: 1910894027
+      end: 1910899144
     hash:
       original:
-        full: 49f2dc71f63eadec07537ce0d1b0c42995518a9447f008eb6266b6edd03a8a92
-        stripped: 61558bb3a6f55f4bea3ae6db64aca3fb4f4fd876d91ed30ffeef5939ecc42e18
+        full: a925dd09c8d613d46cf72677c16f4fadee18bc21734d57047c6ccf31f672507b
+        stripped: 742a7c2282c684a3699d367ed4fb336f47517434e5702a16e78bf21d62d97580
       patched:
-        full: 6f5b4290fc28625e8cd98f85c31bd00df2fe73903a2562fd669d5fa037c4111e
-        stripped: 105e952a4dc3dd4fff10853f27ce61ac3a756749cefc9beba12ab0621f06b24a
+        full: 24e83b01a8c17f803e15956ee94476eab398436a49c03377a71fc4cff70bd255
+        stripped: 67fe136a276ef5db9fd54ede3c06becad69fa5ef4af72dd249e3c3729ca37c59
       avb_images:
-        boot.img: 2fdfe70f7b058c90867a93b545bdc568581c8ab823f0c04af75555e48d128651
-        vbmeta.img: b93b8fbd356ec693930d22907d295c7ffb95b600eb139f3d2ddb6637a99eeaf8
-        vendor_boot.img: 1d93f7cbb06f14b4c98ce3d56d5fa723ea3211badbd8180177abaac8cc1066f0
+        boot.img: e15eb2ff0609c9d84fef085ef72ccd7523ae4ac2a39082ae917e0402efdfd2f3
+        vbmeta.img: 23cb8e2fe74b3a709b49e78808f1d8561c8681700f22f0fda1fd1a9fd198e3c5
+        vendor_boot.img: 34901182f5e29d9ab92d5ab0f50fc96b44c6efffaa41c6b380234a92da9a2b10
 
   # What's unique: boot (boot v2)
   sunfish: # Google Pixel 4a
-    url: https://dl.google.com/dl/android/aosp/sunfish-ota-tq1a.230205.002-536bce5f.zip
+    url: https://dl.google.com/dl/android/aosp/sunfish-ota-tq2a.230305.008.c1-174fd16b.zip
     sections:
     - start: 0
-      end: 128864
-    - start: 476024
-      end: 34020613
-    - start: 1611037619
-      end: 1611039859
-    - start: 1809626019
-      end: 1809631037
+      end: 129700
+    - start: 476996
+      end: 34035261
+    - start: 1624751947
+      end: 1624754183
+    - start: 1823132563
+      end: 1823137581
     hash:
       original:
-        full: 536bce5f0038173c83a82072385bf56c0ceebbb6caefcf3190de45b0aff754a9
-        stripped: eaba4da0d43b2ea6aabc3d6416f3d2106aeee82590a458bcb881e5ac500b0a07
+        full: 174fd16b47ef994ea8f3cb0f3fb456df2654b0aa1f9ea6fb8e54e5c6319f2601
+        stripped: 4a06fb2293aa1f2788a342dea834d71044997bf00c85db10f468b6c758b9d484
       patched:
-        full: 948b9f3eaeaccf00f8a937b12682d7e466818ab3be7814d5119cfdb11c28f35a
-        stripped: 7ff7f49155012e814dd4fb35aaa0ba14f124ae9ff50dabfad598796c283f4aee
+        full: 928bb6bca12d3b4c9fe7e327855e010632c626df0d18971ad8212b64ef7fe4ba
+        stripped: 8cf8b2bea5049a4d7583dc0c262e27f2b8db92f06340b29730a3749432d4767a
       avb_images:
-        boot.img: 0405b0197c04e1c8ac8c462379c04ef07d4ed232999af049f5bcd23d7d3e82e6
-        vbmeta.img: 2b231313ed8264cfcd310347f47613705ddd25055e369cbfd334f5c56c54f837
+        boot.img: 36d4a348b2ea54655c28a71d14f865eb1181bb860b71057845afeb151d054817
+        vbmeta.img: e0923a65c9cd77f2327b43a679524c7945fdc1f9f6cf707b75f7f215dcd852cd
 
   # What's unique:
   # - boot (boot v4) + recovery (boot v4)
   # - boot images have VTS signature block filled with all 0s
   # - payload.bin uses ZERO blocks
+  # Build info:
+  # - Unofficial list of full OTAs: https://forum.xda-developers.com/t/oneplus-10-pro-rom-ota-oxygen-os-repo-of-oxygen-os-builds.4572593/
+  # - The North American builds are used because they're the only ones hosted on
+  #   a well known domain
+  # - The build number can be found in <my_manifest>/build.prop since it's not
+  #   obvious from the filename
   ossi: # OnePlus 10 Pro
-    url: https://android.googleapis.com/packages/ota-api/package/6812ccee9a8a891032af1e053e3217731ac7ad92.zip
+    # Build NE2215_11_C.26
+    url: https://android.googleapis.com/packages/ota-api/package/4cacbe5e6a3ab6a6fade68cc40f44d0fa6a2928a.zip
     sections:
     - start: 0
-      end: 201624
-    - start: 1196332
-      end: 23427211
-    - start: 25849763
-      end: 38696303
-    - start: 39073011
-      end: 39075767
-    - start: 474699863
-      end: 490863356
-    - start: 5094768711
-      end: 5094772524
+      end: 204048
+    - start: 19105432
+      end: 34966775
+    - start: 4984045446
+      end: 5019718276
+    - start: 5114504441
+      end: 5114507197
+    - start: 5140101511
+      end: 5140105324
     hash:
       original:
-        full: 09319bf66abf362dcb11a4af981900f393af87e10de10a03371c9d4e3785931f
-        stripped: 611851183f2cd3544e762be9f5aa7f11754fca71466c568eb43056d5e7205960
+        full: 929f892fbd70699cf7f118a119aac1ae1b86351e1ada17715666fa4401e63472
+        stripped: 6d9013c29aff5dc07ec549d844c5888089fe65f4a5c624bbd0afa04d1503ec8a
       patched:
-        full: a9f06c7d2a3e1f2d0f81ac93262c516aa6f4dd79e909ce239bcf0df368295262
-        stripped: 4c80064336eac0ab9a36bd7bbb26beb4d7ae8004c14b4a4dab9077defb6d54b4
+        full: 25f14582186e0f544480c6126b6b6ff0b6616023b796372d39af909300fb2e3a
+        stripped: 8c82dcc4427320fd8df4e1026c6d50ff92d5caf96e66a5c8f8b698f9fbe8806d
       avb_images:
-        boot.img: 423303f69345e2b0212cf39802a6df7b0a6e18030cbfc31111d621e1764476c8
-        recovery.img: 3df61853ce5ba79a5de611e18e6f344135ab070d8d2ac54d140b87f461d00708
-        vbmeta.img: be0a20d865af8d6647c3b31e32ef178e3b4c09fa3f01f0ae675c54000ac7283c
+        boot.img: ec703e143c24e7eb5b2eb96beb1d4342c1dd2179b12612d41430b1b55e7dec0f
+        recovery.img: 2ff62bc52a5900eb170cc44df0f0ee8062ee6dcb48ecf1899ac556145161f53c
+        vbmeta.img: c022cf79da301a8430af5c49704944c490707fa0306031fe3ea22c39ce4734f6
