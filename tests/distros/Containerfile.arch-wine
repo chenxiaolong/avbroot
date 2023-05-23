@@ -5,8 +5,8 @@ RUN pacman --noconfirm -Syu --needed aria2 xorg-server-xvfb \
 
 # Yep, we're installing Windows msys2 packages directly on top of Arch
 
-ARG KEYRING_VERSION=1~20221024-1
-ARG KEYRING_SHA256=e90fb4413f6056dbc8b2df9eac670924aa2851151bc97569e7df12c928acc209
+ARG KEYRING_VERSION=1~20230316-1
+ARG KEYRING_SHA256=eb672d0d41b2e857f97f0d9de6d3325113c992c5c1a9aab4bd468341e5471572
 
 RUN aria2c https://mirror.msys2.org/msys/x86_64/msys2-keyring-${KEYRING_VERSION}-any.pkg.tar.zst \
         --checksum SHA-256=${KEYRING_SHA256} \
