@@ -4,6 +4,7 @@ import copy
 import io
 import os
 import shutil
+import struct
 import tempfile
 import time
 import zipfile
@@ -150,6 +151,25 @@ def patch_ota_payload(f_in, open_more_f_in, f_out, file_size, boot_partition,
         )
 
 
+def strip_alignment_extra_field(extra):
+    offset = 0
+    new_extra = bytearray()
+
+    while offset < len(extra):
+        record_sig, record_len = \
+            struct.unpack('<HH', extra[offset:offset + 4])
+
+        next_offset = offset + 4 + record_len
+
+        # ALIGNMENT_ZIP_EXTRA_DATA_FIELD_HEADER_ID
+        if record_sig != 0xd935:
+            new_extra.extend(extra[offset:next_offset])
+
+        offset = next_offset
+
+    return new_extra
+
+
 def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, root_patch,
                   clear_vbmeta_flags, privkey_avb, passphrase_avb, privkey_ota,
                   passphrase_ota, cert_ota):
@@ -195,16 +215,17 @@ def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, root_patch,
 
         for info in infolist:
             out_info = copy.copy(info)
+            out_info.extra = strip_alignment_extra_field(out_info.extra)
 
             # Ignore because the plain-text legacy metadata file is regenerated
             # from the new metadata
             if info.filename == PATH_METADATA:
-                metadata_info = info
+                metadata_info = out_info
                 continue
 
             # The existing metadata is needed to generate a new signed zip
             elif info.filename == PATH_METADATA_PB:
-                metadata_pb_info = info
+                metadata_pb_info = out_info
 
                 with z_in.open(info, 'r') as f_in:
                     metadata_pb_raw = f_in.read()
