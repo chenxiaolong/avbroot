@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import io
 import os
 import re
@@ -117,13 +118,24 @@ def build_module(dist_dir, common_dir, module_dir, extra_files):
     return zip_path
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('module', nargs='*',
+                        default=('clearotacerts', 'oemunlockonboot'),
+                        help='Module to build')
+
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     dist_dir = os.path.join(sys.path[0], 'dist')
     os.makedirs(dist_dir, exist_ok=True)
 
     common_dir = os.path.join(sys.path[0], 'common')
 
-    for module in ('clearotacerts', 'oemunlockonboot'):
+    for module in args.module:
         module_dir = os.path.join(sys.path[0], module)
 
         if module == 'clearotacerts':
@@ -141,6 +153,8 @@ def main():
                     'file': os.path.join(module_dir, 'service.sh'),
                 },
             }
+        else:
+            raise ValueError(f'Invalid module: {module}')
 
         module_zip = build_module(dist_dir, common_dir, module_dir, extra_files)
         print('Built module', module_zip)
