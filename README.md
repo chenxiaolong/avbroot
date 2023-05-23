@@ -194,17 +194,27 @@ To update Android or Magisk:
 
 4. Reboot.
 
-## Blocking A/B OTA Updates
+## avbroot Magisk modules
 
-Unpatched OTA updates are already blocked in recovery because the original OTA certificate has been replaced with the custom certificate. To disable OTAs while booted into Android, turn off `Automatic system updates` in Android's Developer Options.
-
-To intentionally make A/B OTAs fail while booted into Android (to prevent accidental manual updates), build the `clearotacerts` module:
+avbroot's Magisk modules can be built by running:
 
 ```bash
-python clearotacerts/build.py
+python modules/build.py
 ```
 
-and flash the `clearotacerts/dist/clearotacerts-<version>.zip` file in Magisk. The module simply overrides `/system/etc/security/otacerts.zip` at runtime with an empty zip so that even if an OTA is downloaded, signature verification will fail.
+This requires Java and the Android SDK to be installed. The `ANDROID_HOME` environment variable should be set to the Android SDK path.
+
+### `clearotacerts`: Blocking A/B OTA Updates
+
+Unpatched OTA updates are already blocked in recovery because the original OTA certificate has been replaced with the custom certificate. To disable automatic OTAs while booted into Android, turn off `Automatic system updates` in Android's Developer Options.
+
+The `clearotacerts` module additionally makes A/B OTAs fail while booted into Android to prevent accidental manual updates. The module simply overrides `/system/etc/security/otacerts.zip` at runtime with an empty zip so that even if an OTA is downloaded, signature verification will fail.
+
+### `oemunlockonboot`: Enable OEM unlocking on every boot
+
+To help reduce the risk of OEM unlocking being accidentally disabled (or intentionally disabled as part of some OS's initial setup wizard), this module will attempt to enable the OEM unlocking option on every boot.
+
+The logs for this module can be found at `/data/local/tmp/avbroot_oem_unlock.log`.
 
 ## Magisk preinit device
 
