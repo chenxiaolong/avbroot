@@ -60,18 +60,19 @@ def get_partitions_by_type(manifest):
     return by_type
 
 
-def get_required_images(manifest, boot_partition):
+def get_required_images(manifest, boot_partition, with_root):
     all_partitions = set(p.partition_name for p in manifest.partitions)
     by_type = get_partitions_by_type(manifest)
     images = {k: v for k, v in by_type.items()
               if k in {'@otacerts', '@vbmeta'}}
 
-    if boot_partition in by_type:
-        images['@rootpatch'] = by_type[boot_partition]
-    elif boot_partition in all_partitions:
-        images['@rootpatch'] = boot_partition
-    else:
-        raise ValueError(f'Boot partition not found: {boot_partition}')
+    if with_root:
+        if boot_partition in by_type:
+            images['@rootpatch'] = by_type[boot_partition]
+        elif boot_partition in all_partitions:
+            images['@rootpatch'] = boot_partition
+        else:
+            raise ValueError(f'Boot partition not found: {boot_partition}')
 
     return images
 
@@ -88,7 +89,8 @@ def patch_ota_payload(f_in, open_more_f_in, f_out, file_size, boot_partition,
         os.mkdir(payload_dir)
 
         version, manifest, blob_offset = ota.parse_payload(f_in)
-        images = get_required_images(manifest, boot_partition)
+        images = get_required_images(manifest, boot_partition,
+                                     root_patch is not None)
         unique_images = set(images.values())
 
         print_status('Extracting', ', '.join(sorted(unique_images)),
@@ -96,7 +98,10 @@ def patch_ota_payload(f_in, open_more_f_in, f_out, file_size, boot_partition,
         ota.extract_images(open_more_f_in, manifest, blob_offset,
                            extract_dir, unique_images)
 
-        image_patches = {images['@rootpatch']: [root_patch]}
+        image_patches = {}
+        if root_patch is not None:
+            image_patches.setdefault(images['@rootpatch'], []).append(
+                root_patch)
         image_patches.setdefault(images['@otacerts'], []).append(
             boot.OtaCertPatch(cert_ota))
 
@@ -304,7 +309,9 @@ def patch_subcommand(args):
     if output is None:
         output = args.input + '.patched'
 
-    if args.magisk is not None:
+    if args.rootless:
+        root_patch = None
+    elif args.magisk is not None:
         root_patch = boot.MagiskRootPatch(
             args.magisk, args.magisk_preinit_device, args.magisk_random_seed)
 
@@ -369,7 +376,7 @@ def extract_subcommand(args):
             unique_images = set(p.partition_name
                                 for p in manifest.partitions)
         else:
-            images = get_required_images(manifest, args.boot_partition)
+            images = get_required_images(manifest, args.boot_partition, True)
             if args.boot_only:
                 unique_images = {images['@rootpatch']}
             else:
@@ -434,13 +441,13 @@ def parse_args(argv=None):
     patch.add_argument('--cert-ota', required=True,
                        help='Certificate for OTA payload signing key')
 
-    # The user can either allow us to patch or supply their own prepatched boot
-    # image (eg. by either Magisk or KernelSU)
     boot_group = patch.add_mutually_exclusive_group(required=True)
     boot_group.add_argument('--magisk',
                             help='Path to Magisk APK')
     boot_group.add_argument('--prepatched',
                             help='Path to prepatched boot image')
+    boot_group.add_argument('--rootless', action='store_true',
+                            help='Skip applying root patch')
 
     patch.add_argument('--magisk-preinit-device',
                        help='Magisk preinit device')

@@ -262,6 +262,10 @@ For KernelSU, also pass in `--boot-partition @gki_kernel` for both the `patch` a
 
 Note that avbroot will validate that the prepatched image is compatible with the original. If, for example, the header fields do not match or a boot image section is missing, then the patching process will abort. This check is not foolproof, but should help protect against accidental use of the wrong boot image.
 
+### Skipping root patches
+
+avbroot can be used for just resigning an OTA by specifying `--rootless` instead of `--magisk`/`--prepatched`. With this option, the patched OTA will not be rooted. The only modification applied is the replacement of the OTA verification certificate so that the OS can be upgraded with future (patched) OTAs.
+
 ### Clearing vbmeta flags
 
 Some Android builds may ship with a root `vbmeta` image with the flags set such that AVB is effectively disabled. When avbroot encounters these images, the patching process will fail with a message like:
