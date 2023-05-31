@@ -276,6 +276,40 @@ ValueError: vbmeta flags disable AVB: 0x3
 
 To forcibly enable AVB (by clearing the flags), pass in `--clear-vbmeta-flags`.
 
+### Non-interactive use
+
+avbroot prompts for the private key passphrases interactively by default. To run avbroot non-interactively, either:
+
+* Supply the passphrases via files:
+
+    ```bash
+    avbroot patch \
+        --passphrase-avb-file /path/to/avb.passphrase \
+        --passphrase-ota-file /path/to/ota.passphrase \
+        <...>
+    ```
+
+    On Unix-like systems, the "files" can be pipes. With shells that support process substituion (bash, zsh, etc.), the passphrase can be queried from a command (eg. querying a password manager).
+
+    ```bash
+    avbroot patch \
+        --passphrase-avb-file <(command to query AVB passphrase) \
+        --passphrase-ota-file <(command to query OTA passphrase) \
+        <...>
+    ```
+
+* Supply the passphrases via environment variables. This is less secure since any process running as the same user can see the environment variable values.
+
+    ```bash
+    export PASSPHRASE_AVB="the AVB passphrase"
+    export PASSPHRASE_OTA="the OTA passphrase"
+
+    avbroot patch \
+        --passphrase-avb-env-var PASSPHRASE_AVB \
+        --passphrase-ota-env-var PASSPHRASE_OTA \
+        <...>
+    ```
+
 ### Extracting the entire OTA
 
 To extract all images contained within the OTA's `payload.bin`, run:

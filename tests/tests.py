@@ -23,6 +23,10 @@ import downloader
 
 FILES_DIR = os.path.join(sys.path[0], 'files')
 TEST_KEY_PREFIX = os.path.join(sys.path[0], 'keys', 'TEST_KEY_DO_NOT_USE_')
+TEST_KEY_PASSPHRASE_AVB = \
+    'XltUCz36vqCNSzspPZxFMGXah3kLyrTXDwfmasgn6nL4CtZDw5OeeLwlmkDuV2Im'
+TEST_KEY_PASSPHRASE_OTA = \
+    '7DsqL2Sk9T609OFpeVXwnrWHRrK3iazccxEDHWDqr5zJ9tgZkONhDvXhXuCQY76o'
 
 PARTITIONS_TO_PRESERVE = set(sum(PARTITION_PRIORITIES.values(), ()))
 
@@ -234,16 +238,34 @@ def patch_image(input_file, output_file, stripped, extra_args=[]):
         else:
             preinit_args = []
 
-        avbroot.main.main([
-            'patch',
-            '--privkey-avb', TEST_KEY_PREFIX + 'avb.key',
-            '--privkey-ota', TEST_KEY_PREFIX + 'ota.key',
-            '--cert-ota', TEST_KEY_PREFIX + 'ota.crt',
-            '--input', input_file,
-            '--output', output_file,
-            *preinit_args,
-            *extra_args,
-        ])
+        env = os.environ.copy()
+        env['PASSPHRASE_AVB'] = TEST_KEY_PASSPHRASE_AVB
+
+        with (
+            unittest.mock.patch('os.environ', env),
+            tempfile.NamedTemporaryFile('w+', delete=False) as f,
+        ):
+            try:
+                f.write(TEST_KEY_PASSPHRASE_OTA)
+                f.write('\n')
+                # Needed for Windows
+                f.close()
+
+                avbroot.main.main([
+                    'patch',
+                    '--privkey-avb', TEST_KEY_PREFIX + 'avb.key',
+                    '--privkey-ota', TEST_KEY_PREFIX + 'ota.key',
+                    '--cert-ota', TEST_KEY_PREFIX + 'ota.crt',
+                    '--passphrase-avb-env-var', 'PASSPHRASE_AVB',
+                    '--passphrase-ota-file', f.name,
+                    '--input', input_file,
+                    '--output', output_file,
+                    *preinit_args,
+                    *extra_args,
+                ])
+            except BaseException:
+                os.unlink(f.name)
+                raise
 
 
 def extract_image(input_file, output_dir):
