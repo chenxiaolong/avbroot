@@ -310,6 +310,13 @@ avbroot prompts for the private key passphrases interactively by default. To run
         <...>
     ```
 
+* Use unencrypted private keys. This is not recommended, but can be done by:
+
+    ```bash
+    openssl pkcs8 -in avb.key -topk8 -nocrypt -out avb.unencrypted.key
+    openssl pkcs8 -in ota.key -topk8 -nocrypt -out ota.unencrypted.key
+    ```
+
 ### Extracting the entire OTA
 
 To extract all images contained within the OTA's `payload.bin`, run:
