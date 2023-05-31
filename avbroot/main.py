@@ -326,8 +326,16 @@ def patch_subcommand(args):
         root_patch = boot.PrepatchedImage(args.prepatched)
 
     # Get passphrases for keys
-    passphrase_avb = openssl.prompt_passphrase(args.privkey_avb)
-    passphrase_ota = openssl.prompt_passphrase(args.privkey_ota)
+    passphrase_avb = openssl.prompt_passphrase(
+        args.privkey_avb,
+        args.passphrase_avb_env_var,
+        args.passphrase_avb_file,
+    )
+    passphrase_ota = openssl.prompt_passphrase(
+        args.privkey_ota,
+        args.passphrase_ota_env_var,
+        args.passphrase_ota_file,
+    )
 
     # Ensure that the certificate matches the private key
     if not openssl.cert_matches_key(args.cert_ota, args.privkey_ota,
@@ -425,61 +433,132 @@ def uint64_arg(arg):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest='subcommand', required=True,
-                                       help='Subcommands')
+    subparsers = parser.add_subparsers(
+        dest='subcommand',
+        required=True,
+        help='Subcommands',
+    )
 
-    patch = subparsers.add_parser('patch', help='Patch a full OTA zip')
+    patch = subparsers.add_parser(
+        'patch',
+        help='Patch a full OTA zip',
+    )
 
-    patch.add_argument('--input', required=True,
-                       help='Path to original raw payload or OTA zip')
-    patch.add_argument('--output',
-                       help='Path to new raw payload or OTA zip')
-    patch.add_argument('--privkey-avb', required=True,
-                       help='Private key for signing root vbmeta image')
-    patch.add_argument('--privkey-ota', required=True,
-                       help='Private key for signing OTA payload')
-    patch.add_argument('--cert-ota', required=True,
-                       help='Certificate for OTA payload signing key')
+    patch.add_argument(
+        '--input',
+        required=True,
+        help='Path to original raw payload or OTA zip',
+    )
+    patch.add_argument(
+        '--output',
+        help='Path to new raw payload or OTA zip',
+    )
+    patch.add_argument(
+        '--privkey-avb',
+        required=True,
+        help='Private key for signing root vbmeta image',
+    )
+    patch.add_argument(
+        '--privkey-ota',
+        required=True,
+        help='Private key for signing OTA payload',
+    )
+    patch.add_argument(
+        '--cert-ota',
+        required=True,
+        help='Certificate for OTA payload signing key',
+    )
+
+    for arg in ('AVB', 'OTA'):
+        group = patch.add_mutually_exclusive_group()
+        group.add_argument(
+            f'--passphrase-{arg.lower()}-env-var',
+            help=f'Environment variable containing {arg} private key passphrase',
+        )
+        group.add_argument(
+            f'--passphrase-{arg.lower()}-file',
+            help=f'File containing {arg} private key passphrase',
+        )
 
     boot_group = patch.add_mutually_exclusive_group(required=True)
-    boot_group.add_argument('--magisk',
-                            help='Path to Magisk APK')
-    boot_group.add_argument('--prepatched',
-                            help='Path to prepatched boot image')
-    boot_group.add_argument('--rootless', action='store_true',
-                            help='Skip applying root patch')
+    boot_group.add_argument(
+        '--magisk',
+        help='Path to Magisk APK',
+    )
+    boot_group.add_argument(
+        '--prepatched',
+        help='Path to prepatched boot image',
+    )
+    boot_group.add_argument(
+        '--rootless',
+        action='store_true',
+        help='Skip applying root patch',
+    )
 
-    patch.add_argument('--magisk-preinit-device',
-                       help='Magisk preinit device')
-    patch.add_argument('--magisk-random-seed', type=uint64_arg,
-                       help='Magisk random seed')
-    patch.add_argument('--ignore-magisk-warnings', action='store_true',
-                       help='Ignore Magisk compatibility/version warnings')
+    patch.add_argument(
+        '--magisk-preinit-device',
+        help='Magisk preinit device',
+    )
+    patch.add_argument(
+        '--magisk-random-seed',
+        type=uint64_arg,
+        help='Magisk random seed',
+    )
+    patch.add_argument(
+        '--ignore-magisk-warnings',
+        action='store_true',
+        help='Ignore Magisk compatibility/version warnings',
+    )
 
-    patch.add_argument('--clear-vbmeta-flags', action='store_true',
-                       help='Forcibly clear vbmeta flags if they disable AVB')
+    patch.add_argument(
+        '--clear-vbmeta-flags',
+        action='store_true',
+        help='Forcibly clear vbmeta flags if they disable AVB',
+    )
 
     extract = subparsers.add_parser(
-        'extract', help='Extract patched images from a patched OTA zip')
+        'extract',
+        help='Extract patched images from a patched OTA zip',
+    )
 
-    extract.add_argument('--input', required=True,
-                         help='Path to patched OTA zip')
-    extract.add_argument('--directory', default='.',
-                         help='Output directory for extracted images')
+    extract.add_argument(
+        '--input',
+        required=True,
+        help='Path to patched OTA zip',
+    )
+    extract.add_argument(
+        '--directory',
+        default='.',
+        help='Output directory for extracted images',
+    )
     extract_group = extract.add_mutually_exclusive_group()
-    extract_group.add_argument('--all', action='store_true',
-                               help='Extract all images from the payload')
-    extract_group.add_argument('--boot-only', action='store_true',
-                               help='Extract only the boot image')
+    extract_group.add_argument(
+        '--all',
+        action='store_true',
+        help='Extract all images from the payload',
+    )
+    extract_group.add_argument(
+        '--boot-only',
+        action='store_true',
+        help='Extract only the boot image',
+    )
 
     for subcmd in (patch, extract):
-        subcmd.add_argument('--boot-partition', default='@gki_ramdisk',
-                            help='Boot partition name')
+        subcmd.add_argument(
+            '--boot-partition',
+            default='@gki_ramdisk',
+            help='Boot partition name',
+        )
 
     magisk_info = subparsers.add_parser(
-        'magisk-info', help='Print Magisk config from a patched boot image')
-    magisk_info.add_argument('--image', required=True,
-                             help='Patch to Magisk-patched boot image')
+        'magisk-info',
+        help='Print Magisk config from a patched boot image',
+    )
+    magisk_info.add_argument(
+        '--image',
+        required=True,
+        help='Patch to Magisk-patched boot image',
+    )
 
     args = parser.parse_args(args=argv)
 

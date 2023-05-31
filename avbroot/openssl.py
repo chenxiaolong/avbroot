@@ -192,15 +192,28 @@ def _is_encrypted(pkey):
     return False
 
 
-def prompt_passphrase(pkey):
+def prompt_passphrase(pkey, passphrase_env_var=None, passphrase_file=None):
     '''
-    Prompt and return passphrase if the private key is encrypted.
+    If the private key is encrypted:
+
+    * try to read from the specified passphrase file (first line with trailing
+      line endings stripped)
+    * try to read from the passphrase environment variable
+    * prompt for the passphrase interactively
+
+    There is no fallback behavior.
     '''
 
     if not _is_encrypted(pkey):
         return None
 
-    passphrase = getpass.getpass(f'Passphrase for {pkey}: ')
+    if passphrase_file is not None:
+        with open(passphrase_file, 'r') as f:
+            passphrase = f.readline().rstrip('\r\n')
+    elif passphrase_env_var is not None:
+        passphrase = os.environ[passphrase_env_var]
+    else:
+        passphrase = getpass.getpass(f'Passphrase for {pkey}: ')
 
     # Verify that it is correct
     with inject_passphrase(passphrase):
