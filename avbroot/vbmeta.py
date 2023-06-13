@@ -1,4 +1,6 @@
 import contextlib
+import os
+import typing
 import unittest.mock
 
 import avbtool
@@ -32,30 +34,31 @@ def smuggle_descriptors():
         yield
 
 
-def _get_descriptor_overrides(avb, paths):
+def _get_descriptor_overrides(
+    avb: avbtool.Avb,
+    images: dict[str, os.PathLike[str]],
+) -> typing.Tuple[dict[str, bytes], dict[str, avbtool.AvbDescriptor]]:
     '''
-    Build a set of chain and hash descriptor overrides for the given paths
-    based on whether they are signed.
+    Build a set of public key (chain) and hash/hashtree descriptor overrides
+    that should be inserted in the parent vbmeta image for the given partition
+    images.
+
+    If a partition image itself is signed, then a chain descriptor will be used.
+    Otherwise, the existing hash or hashtree descriptor is used.
     '''
 
     # Partition name -> raw public key
-    chains = {}
-    # Partition name -> hash descriptor
-    hashes = {}
+    out_public_keys = {}
+    # Partition name -> descriptor
+    out_descriptors = {}
 
     # Construct descriptor overrides
-    for path in paths:
+    for name, path in images.items():
         image = avbtool.ImageHandler(path, read_only=True)
         footer, header, descriptors, image_size = avb._parse_image(image)
 
-        # Find the partition name in the first hash descriptor
-        hash = next(d for d in descriptors
-                    if isinstance(d, avbtool.AvbHashDescriptor))
-
-        if hash is None:
-            raise Exception(f'{path} has no hash descriptor')
-        elif hash.partition_name in chains or hash.partition_name in hashes:
-            raise Exception(f'Duplicate partition name: {hash.partition_name}')
+        if name in out_public_keys or name in out_descriptors:
+            raise ValueError(f'Duplicate partition name: {name}')
 
         if header.public_key_size:
             # vbmeta is signed; use a chain descriptor
@@ -63,19 +66,64 @@ def _get_descriptor_overrides(avb, paths):
             offset = header.SIZE + \
                 header.authentication_data_block_size + \
                 header.public_key_offset
-            chains[hash.partition_name] = \
+            out_public_keys[name] = \
                 blob[offset:offset + header.public_key_size]
         else:
-            # vbmeta is unsigned; use a hash descriptor
-            hashes[hash.partition_name] = hash
+            # vbmeta is unsigned; use the existing descriptor in the footer
+            partition_descriptor = next(
+                (d for d in descriptors
+                    if (isinstance(d, avbtool.AvbHashDescriptor)
+                        or isinstance(d, avbtool.AvbHashtreeDescriptor))
+                        and d.partition_name == name),
+                None,
+            )
+            if partition_descriptor is None:
+                raise ValueError(f'{path} has no descriptor for itself')
 
-    return (chains, hashes)
+            out_descriptors[name] = partition_descriptor
+
+    return (out_public_keys, out_descriptors)
 
 
-def patch_vbmeta_root(avb, images, input_path, output_path, key, passphrase,
-                      padding_size, clear_flags):
+def get_vbmeta_deps(
+    avb: avbtool.Avb,
+    vbmeta_images: dict[str, os.PathLike[str]],
+) -> dict[str, set[str]]:
     '''
-    Patch the root vbmeta image to reference the provided images.
+    Return the forward and reverse dependency tree for the specified vbmeta
+    images.
+    '''
+
+    deps = {}
+
+    for name, path in vbmeta_images.items():
+        image = avbtool.ImageHandler(path, read_only=True)
+        _, _, descriptors, _ = avb._parse_image(image)
+
+        deps.setdefault(name, set())
+
+        for d in descriptors:
+            if isinstance(d, avbtool.AvbChainPartitionDescriptor) \
+                or isinstance(d, avbtool.AvbHashDescriptor) \
+                    or isinstance(d, avbtool.AvbHashtreeDescriptor):
+                deps[name].add(d.partition_name)
+                deps.setdefault(d.partition_name, set())
+
+    return deps
+
+
+def patch_vbmeta_image(
+    avb: avbtool.Avb,
+    images: dict[str, os.PathLike[str]],
+    input_path: os.PathLike[str],
+    output_path: os.PathLike[str],
+    key: os.PathLike[str],
+    passphrase: str,
+    padding_size: int,
+    clear_flags: bool,
+):
+    '''
+    Patch the vbmeta image to reference the provided images.
     '''
 
     # Load the original root vbmeta image
@@ -91,23 +139,25 @@ def patch_vbmeta_root(avb, images, input_path, output_path, key, passphrase,
     # Build a set of new descriptors in the same order as the original
     # descriptors, except with the descriptors patched to reference the given
     # images
-    chains, hashes = _get_descriptor_overrides(avb, images)
+    override_public_keys, override_descriptors = \
+        _get_descriptor_overrides(avb, images)
     new_descriptors = []
 
     for d in descriptors:
         if isinstance(d, avbtool.AvbChainPartitionDescriptor) and \
-                d.partition_name in chains:
-            d.public_key = chains.pop(d.partition_name)
-        elif isinstance(d, avbtool.AvbHashDescriptor) and \
-                d.partition_name in hashes:
-            d = hashes.pop(d.partition_name)
+                d.partition_name in override_public_keys:
+            d.public_key = override_public_keys.pop(d.partition_name)
+        elif (isinstance(d, avbtool.AvbHashDescriptor) or \
+                isinstance(d, avbtool.AvbHashtreeDescriptor)) and \
+                d.partition_name in override_descriptors:
+            d = override_descriptors.pop(d.partition_name)
 
         new_descriptors.append(d)
 
-    if chains:
-        raise Exception(f'Unused chain overrides: {chains}')
-    if hashes:
-        raise Exception(f'Unused hash overrides: {hashes}')
+    if override_public_keys:
+        raise Exception(f'Unused public key overrides: {override_public_keys}')
+    if override_descriptors:
+        raise Exception(f'Unused descriptor overrides: {override_descriptors}')
 
     algorithm_name = avbtool.lookup_algorithm_by_type(header.algorithm_type)[0]
 
