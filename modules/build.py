@@ -41,6 +41,8 @@ def build_dex(sources):
     build_tools = newest_child_by_name(os.path.join(sdk, 'build-tools'))
     platform = newest_child_by_name(os.path.join(sdk, 'platforms'))
     d8 = os.path.join(build_tools, 'd8')
+    if os.name == 'nt':
+        d8 += '.bat'
     android_jar = os.path.join(platform, 'android.jar')
 
     with tempfile.TemporaryDirectory() as temp_dir:
