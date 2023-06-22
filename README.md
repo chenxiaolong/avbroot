@@ -1,8 +1,8 @@
 # avbroot
 
-avbroot is a script for patching Android boot images with Magisk root while preserving AVB (Android Verified Boot) using custom keys.
+avbroot is a program for patching Android A/B-style OTA images for root access while preserving AVB (Android Verified Boot) using custom signing keys. It is compatible with both Magisk and KernelSU.
 
-I do not recommend using this project without a deep understanding of the implementation of AVB and A/B OTAs. It is meant for use with proprietary stock firmware. For folks running open-source Android firmware, I highly recommend adding Magisk to the build process and then compiling from source instead.
+Having a good understanding of how AVB and A/B OTAs work is recommended prior to using avbroot. At the very least, please make sure the [warnings and caveats](#warnings-and-caveats) are well-understood to avoid the risk of hard bricking.
 
 ## Patches
 
