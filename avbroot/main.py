@@ -1,5 +1,6 @@
 import argparse
 import concurrent.futures
+import contextlib
 import copy
 import io
 import os
@@ -7,6 +8,7 @@ import shutil
 import struct
 import tempfile
 import time
+import unittest.mock
 import zipfile
 
 import avbtool
@@ -156,7 +158,7 @@ def patch_ota_payload(f_in, open_more_f_in, f_out, file_size, boot_partition,
         )
 
 
-def strip_alignment_extra_field(extra):
+def strip_bad_extra_fields(extra):
     offset = 0
     new_extra = bytearray()
 
@@ -166,13 +168,43 @@ def strip_alignment_extra_field(extra):
 
         next_offset = offset + 4 + record_len
 
-        # ALIGNMENT_ZIP_EXTRA_DATA_FIELD_HEADER_ID
-        if record_sig != 0xd935:
+        # 0xd935: ALIGNMENT_ZIP_EXTRA_DATA_FIELD_HEADER_ID
+        # 0x0001: zip64 size (zipfile will write a new record)
+        if record_sig not in (0x0001, 0xd935):
             new_extra.extend(extra[offset:next_offset])
 
         offset = next_offset
 
     return new_extra
+
+
+@contextlib.contextmanager
+def fix_streaming_local_header_sizes():
+    '''
+    Some Python versions have a regression [1] where the local file header's
+    compressed and uncompressed size fields are incorrectly set to 0xffffffff
+    when data descriptors are used. This function monkey patches zipfile's
+    local file header serialization to manually fix this issue.
+
+    [1] https://github.com/python/cpython/issues/106218
+    '''
+
+    orig = zipfile.ZipInfo.FileHeader
+
+    def wrapper(*args, **kwargs):
+        blob = orig(*args, **kwargs)
+        fields = list(struct.unpack_from(zipfile.structFileHeader, blob))
+        if fields[3] & (1 << 3):
+            fields[8] = 0
+            fields[9] = 0
+
+            return struct.pack(zipfile.structFileHeader, *fields) + \
+                blob[zipfile.sizeFileHeader:]
+        else:
+            return blob
+
+    with unittest.mock.patch('zipfile.ZipInfo.FileHeader', wrapper):
+        yield
 
 
 def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, root_patch,
@@ -220,7 +252,7 @@ def patch_ota_zip(f_zip_in, f_zip_out, boot_partition, root_patch,
 
         for info in infolist:
             out_info = copy.copy(info)
-            out_info.extra = strip_alignment_extra_field(out_info.extra)
+            out_info.extra = strip_bad_extra_fields(out_info.extra)
 
             # Ignore because the plain-text legacy metadata file is regenerated
             # from the new metadata
@@ -349,6 +381,7 @@ def patch_subcommand(args):
             ota.open_signing_wrapper(temp_raw, args.privkey_ota,
                                      passphrase_ota, args.cert_ota) as temp,
             ota.match_android_zip64_limit(),
+            fix_streaming_local_header_sizes(),
         ):
             metadata = patch_ota_zip(
                 args.input,
