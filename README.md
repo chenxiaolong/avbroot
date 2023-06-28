@@ -260,7 +260,7 @@ avbroot can replace the boot image with a prepatched image instead of applying t
 
 For KernelSU, also pass in `--boot-partition @gki_kernel` for both the `patch` and `extract` commands. avbroot defaults to Magisk's semantics where the boot image containing the GKI ramdisk is needed, whereas KernelSU requires the boot image containing the GKI kernel. This only affects devices launching with Android 13, where the GKI kernel and ramdisk are in different partitions (`boot` vs. `init_boot`), but it is safe and recommended to always use this option for KernelSU.
 
-Note that avbroot will validate that the prepatched image is compatible with the original. If, for example, the header fields do not match or a boot image section is missing, then the patching process will abort. This check is not foolproof, but should help protect against accidental use of the wrong boot image.
+Note that avbroot will validate that the prepatched image is compatible with the original. If, for example, the header fields do not match or a boot image section is missing, then the patching process will abort. The checks are not foolproof, but should help protect against accidental use of the wrong boot image. To bypass a somewhat "safe" subset of the checks, use `--ignore-prepatched-compat`. To ignore all checks (strongly discouraged!), pass it in twice.
 
 ### Skipping root patches
 

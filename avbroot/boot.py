@@ -292,11 +292,16 @@ class PrepatchedImage(BootImagePatch):
     be higher than the original image.
     '''
 
+    MIN_LEVEL = 0
+    MAX_LEVEL = 2
+
     VERSION_REGEX = re.compile(
         b'Linux version (\d+\.\d+).\d+-(android\d+)-(\d+)-')
 
-    def __init__(self, prepatched):
+    def __init__(self, prepatched, fatal_level, warning_fn):
         self.prepatched = prepatched
+        self.fatal_level = fatal_level
+        self.warning_fn = warning_fn
 
     def patch(self, image_file, boot_image):
         with open(self.prepatched, 'r+b') as f:
@@ -305,40 +310,62 @@ class PrepatchedImage(BootImagePatch):
         old_header = boot_image.to_dict()
         new_header = prepatched_image.to_dict()
 
-        errors = []
+        # Level 0: Warnings that don't affect booting
+        # Level 1: Warnings that may affect booting
+        # Level 2: Warnings that are very likely to affect booting
+        issues = [[], [], []]
 
         for k in new_header.keys() - old_header.keys():
-            errors.append(f'{k} header field was added')
+            issues[2].append(f'{k} header field was added')
 
         for k in old_header.keys() - new_header.keys():
-            errors.append(f'{k} header field was removed')
+            issues[2].append(f'{k} header field was removed')
 
         for k in old_header.keys() & new_header.keys():
             if old_header[k] != new_header[k]:
-                errors.append(f'{k} header field was changed: '
-                              f'{old_header[k]} -> {new_header[k]}')
+                if k in ('id', 'os_version'):
+                    level = 0
+                elif k in ('cmdline', 'extra_cmdline'):
+                    level = 1
+                else:
+                    level = 2
+
+                issues[level].append(f'{k} header field was changed: '
+                                     f'{old_header[k]} -> {new_header[k]}')
 
         for attr in 'kernel', 'second', 'recovery_dtbo', 'dtb', 'bootconfig':
             original_val = getattr(boot_image, attr)
             prepatched_val = getattr(prepatched_image, attr)
 
             if original_val is None and prepatched_val is not None:
-                errors.append(f'{attr} section was added')
+                issues[1].append(f'{attr} section was added')
             elif original_val is not None and prepatched_val is None:
-                errors.append(f'{attr} section was removed')
+                issues[2].append(f'{attr} section was removed')
 
         if len(prepatched_image.ramdisks) < len(boot_image.ramdisks):
-            errors.append('Number of ramdisk sections decreased: '
-                          f'{len(boot_image.ramdisks)} -> '
-                          f'{len(prepatched_image.ramdisks)}')
+            issues[2].append('Number of ramdisk sections decreased: '
+                             f'{len(boot_image.ramdisks)} -> '
+                             f'{len(prepatched_image.ramdisks)}')
 
         if boot_image.kernel is not None:
             old_kmi = self._get_kmi_version(boot_image)
             new_kmi = self._get_kmi_version(prepatched_image)
 
             if old_kmi != new_kmi:
-                errors.append('Kernel module interface version changed: '
-                              f'{old_kmi} -> {new_kmi}')
+                issues[2].append('Kernel module interface version changed: '
+                                 f'{old_kmi} -> {new_kmi}')
+
+        warnings = [e for i in range(self.MIN_LEVEL,
+                                     min(self.MAX_LEVEL + 1, self.fatal_level))
+                    for e in issues[i]]
+        errors = [e for i in range(max(self.MIN_LEVEL, self.fatal_level),
+                                   self.MAX_LEVEL + 1)
+                  for e in issues[i]]
+
+        if warnings:
+            self.warning_fn('The prepatched boot image may not be compatible '
+                            'with the original:\n' +
+                            '\n'.join(f'- {w}' for w in warnings))
 
         if errors:
             raise ValueError('The prepatched boot image is not compatible '
