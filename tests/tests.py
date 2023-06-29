@@ -13,7 +13,7 @@ import zipfile
 
 sys.path.append(os.path.join(sys.path[0], '..'))
 from avbroot import ota, util
-from avbroot.main import PARTITION_PRIORITIES, PATH_PAYLOAD
+from avbroot.main import get_required_images, PATH_PAYLOAD
 import avbroot.main
 import ota_utils
 import update_metadata_pb2
@@ -27,8 +27,6 @@ TEST_KEY_PASSPHRASE_AVB = \
     'XltUCz36vqCNSzspPZxFMGXah3kLyrTXDwfmasgn6nL4CtZDw5OeeLwlmkDuV2Im'
 TEST_KEY_PASSPHRASE_OTA = \
     '7DsqL2Sk9T609OFpeVXwnrWHRrK3iazccxEDHWDqr5zJ9tgZkONhDvXhXuCQY76o'
-
-PARTITIONS_TO_PRESERVE = set(sum(PARTITION_PRIORITIES.values(), ()))
 
 
 def hash_zeroes(hasher, size):
@@ -111,8 +109,11 @@ def strip_image(input, output):
 
         Type = update_metadata_pb2.InstallOperation.Type
 
+        required_images = get_required_images(manifest, '@gki_ramdisk', True)
+        required_images = set(required_images.values())
+
         for p in manifest.partitions:
-            if p.partition_name not in PARTITIONS_TO_PRESERVE:
+            if p.partition_name not in required_images:
                 for op in p.operations:
                     if op.type == Type.ZERO or op.type == Type.DISCARD:
                         continue
