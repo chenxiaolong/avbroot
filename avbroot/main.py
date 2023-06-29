@@ -355,7 +355,11 @@ def patch_subcommand(args):
             else:
                 raise e
     else:
-        root_patch = boot.PrepatchedImage(args.prepatched)
+        root_patch = boot.PrepatchedImage(
+            args.prepatched,
+            args.ignore_prepatched_compat + 1,
+            print_warning,
+        )
 
     # Get passphrases for keys
     passphrase_avb = openssl.prompt_passphrase(
@@ -542,6 +546,12 @@ def parse_args(argv=None):
         action='store_true',
         help='Ignore Magisk compatibility/version warnings',
     )
+    patch.add_argument(
+        '--ignore-prepatched-compat',
+        default=0,
+        action='count',
+        help='Ignore compatibility issues with prepatched boot images',
+    )
 
     patch.add_argument(
         '--clear-vbmeta-flags',
@@ -595,13 +605,17 @@ def parse_args(argv=None):
 
     args = parser.parse_args(args=argv)
 
-    if args.subcommand == 'patch' and args.magisk is None:
-        if args.magisk_preinit_device:
-            parser.error('--magisk-preinit-device requires --magisk')
-        elif args.magisk_random_seed:
-            parser.error('--magisk-random-seed requires --magisk')
-        elif args.ignore_magisk_warnings:
-            parser.error('--ignore-magisk-warnings requires --magisk')
+    if args.subcommand == 'patch':
+        if args.magisk is None:
+            if args.magisk_preinit_device:
+                parser.error('--magisk-preinit-device requires --magisk')
+            elif args.magisk_random_seed:
+                parser.error('--magisk-random-seed requires --magisk')
+            elif args.ignore_magisk_warnings:
+                parser.error('--ignore-magisk-warnings requires --magisk')
+        elif args.prepatched is None:
+            if args.ignore_prepatched_compat:
+                parser.error('--ignore-prepatched-compat requires --prepatched')
 
     return args
 
