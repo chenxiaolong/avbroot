@@ -143,8 +143,8 @@ device:
         full: 929f892fbd70699cf7f118a119aac1ae1b86351e1ada17715666fa4401e63472
         stripped: 4eabaf79b6c2b5df305e3ecdc2b9570c0dd27350b4e8d6434584000c4989ff3d
       patched:
-        full: c152a9c49a81d521b7652662807d017655cbb999d503f869599753ab907b2133
-        stripped: 15e04f3fcca564384c2258c9a93cd5986d82f5b8b68d08a4e067fa7aae0b3dcc
+        full: 2c44c34fa25feda472ded5ab693e9b7fdd746c770ecfcc0e3b95d06a1fe35a61
+        stripped: 24a8cbd86a3221aef9cca0751e9218a2221f33a8e1a34f3a60a10473fc18d495
       avb_images:
         boot.img: ec703e143c24e7eb5b2eb96beb1d4342c1dd2179b12612d41430b1b55e7dec0f
         recovery.img: 2ff62bc52a5900eb170cc44df0f0ee8062ee6dcb48ecf1899ac556145161f53c
