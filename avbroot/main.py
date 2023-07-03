@@ -259,22 +259,25 @@ def strip_bad_extra_fields(extra):
 @contextlib.contextmanager
 def fix_streaming_local_header_sizes():
     '''
-    Some Python versions have a regression [1] where the local file header's
-    compressed and uncompressed size fields are incorrectly set to 0xffffffff
-    when data descriptors are used. This function monkey patches zipfile's
-    local file header serialization to manually fix this issue.
-
-    [1] https://github.com/python/cpython/issues/106218
+    Older Python versions don't set the local header's two 32-bit size fields to
+    0xffffffff when writing a zip64 entry to an unseekable file. This function
+    monkey patches zipfile's local file header serialization to manually fix
+    this issue.
     '''
 
     orig = zipfile.ZipInfo.FileHeader
 
     def wrapper(*args, **kwargs):
         blob = orig(*args, **kwargs)
+        zip64 = kwargs.get('zip64')
+        if zip64 is None:
+            zip64 = args[0].file_size > zipfile.ZIP64_LIMIT or \
+                args[0].compress_size > zipfile.ZIP64_LIMIT
+
         fields = list(struct.unpack_from(zipfile.structFileHeader, blob))
-        if fields[3] & (1 << 3):
-            fields[8] = 0
-            fields[9] = 0
+        if fields[3] & (1 << 3) and zip64:
+            fields[8] = 0xffffffff
+            fields[9] = 0xffffffff
 
             return struct.pack(zipfile.structFileHeader, *fields) + \
                 blob[zipfile.sizeFileHeader:]
