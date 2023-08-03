@@ -210,6 +210,8 @@ Unpatched OTA updates are already blocked in recovery because the original OTA c
 
 The `clearotacerts` module additionally makes A/B OTAs fail while booted into Android to prevent accidental manual updates. The module simply overrides `/system/etc/security/otacerts.zip` at runtime with an empty zip so that even if an OTA is downloaded, signature verification will fail.
 
+Alternatively, see [Custota](https://github.com/chenxiaolong/Custota) for a custom OTA updater app that pulls from a self-hosted OTA server.
+
 ### `oemunlockonboot`: Enable OEM unlocking on every boot
 
 To help reduce the risk of OEM unlocking being accidentally disabled (or intentionally disabled as part of some OS's initial setup wizard), this module will attempt to enable the OEM unlocking option on every boot.
