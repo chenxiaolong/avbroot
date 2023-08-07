@@ -7,6 +7,21 @@ import tempfile
 
 _ZERO_BLOCK = memoryview(b'\0' * 16384)
 
+umask = None
+
+
+def load_umask_unsafe():
+    # POSIX provides no way to query the umask without changing it. Parsing
+    # /proc/self/status can work, but it's Linux only. Instead, we'll just do it
+    # once when the program is initially started.
+    global umask
+
+    if os.name != 'nt' and umask is None:
+        current_umask = os.umask(0o777)
+        os.umask(current_umask)
+
+        umask = current_umask
+
 
 @dataclasses.dataclass
 @functools.total_ordering
@@ -68,6 +83,10 @@ def open_output_file(path):
                     os.unlink(path)
                 except FileNotFoundError:
                     pass
+            else:
+                # NamedTemporaryFile always uses 600 permissions with no way to
+                # override it. We'll do our own umask-respecting chmod.
+                os.fchmod(f.fileno(), 0o666 & ~umask)
 
             os.rename(f.name, path)
         except BaseException:

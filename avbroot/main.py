@@ -719,6 +719,8 @@ def parse_args(argv=None):
 def main(argv=None):
     args = parse_args(argv=argv)
 
+    util.load_umask_unsafe()
+
     if args.subcommand == 'patch':
         patch_subcommand(args)
     elif args.subcommand == 'extract':
