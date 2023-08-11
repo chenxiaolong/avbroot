@@ -204,6 +204,8 @@ python modules/build.py
 
 This requires Java and the Android SDK to be installed. The `ANDROID_HOME` environment variable should be set to the Android SDK path.
 
+Alternatively, prebuilt modules can be downloaded [from GitHub Actions](https://github.com/chenxiaolong/avbroot/actions/workflows/modules.yml?query=branch%3Amaster). Select the latest workflow run and then download `avbroot-modules-<version>` at the bottom of the page. Note that GitHub only allows downloading the file when logged in.
+
 ### `clearotacerts`: Blocking A/B OTA Updates
 
 Unpatched OTA updates are already blocked in recovery because the original OTA certificate has been replaced with the custom certificate. To disable automatic OTAs while booted into Android, turn off `Automatic system updates` in Android's Developer Options.

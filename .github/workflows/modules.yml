@@ -1,0 +1,29 @@
+---
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+jobs:
+  build-app:
+    name: Build modules
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: get_version
+        shell: bash
+        run: echo "version=r$(git rev-list --count HEAD).$(git rev-parse --short HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and test
+        run: ./modules/build.py
+
+      - name: Archive artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: avbroot-modules-${{ steps.get_version.outputs.version }}
+          path: modules/dist/
