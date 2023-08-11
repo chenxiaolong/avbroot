@@ -780,7 +780,8 @@ def open_signing_wrapper(f, privkey, passphrase, cert):
 
         comment.write(struct.pack(
             '<HHH',
-            # Absolute value of the offset of the signature from EOF
+            # Absolute value of the offset of the signature from the end of the
+            # archive comment
             comment_size - len(message),
             0xffff,
             comment_size,
