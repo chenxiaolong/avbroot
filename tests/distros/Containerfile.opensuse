@@ -1,4 +1,0 @@
-FROM registry.opensuse.org/opensuse/toolbox:latest
-
-RUN zypper install -y openssl python3-lz4 python3-protobuf python3-strictyaml \
-    && zypper clean -a

@@ -1,9 +1,0 @@
-[submodule "external/avb"]
-	path = external/avb
-	url = https://android.googlesource.com/platform/external/avb/
-[submodule "external/update_engine"]
-	path = external/update_engine
-	url = https://android.googlesource.com/platform/system/update_engine
-[submodule "external/build"]
-	path = external/build
-	url = https://android.googlesource.com/platform/build

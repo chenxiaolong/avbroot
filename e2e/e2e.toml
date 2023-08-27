@@ -1,0 +1,116 @@
+[magisk]
+"url" = "https://github.com/topjohnwu/Magisk/releases/download/v26.0/Magisk-v26.0.apk"
+"hash" = "9e14d3d3ca1f1a2765f8ca215ebbf35ea5fd2896fb147eea581fcaa3b4e77d25"
+
+# Google Pixel 7 Pro
+# What's unique: init_boot (boot v4) + vendor_boot (vendor v4)
+[device.cheetah]
+url = "https://dl.google.com/dl/android/aosp/cheetah-ota-tq2a.230305.008.c1-6ac5ff2e.zip"
+sections = [
+    { start = 0, end = 151715 },
+    { start = 21683150, end = 23179365 },
+    { start = 2043499985, end = 2043508325 },
+    { start = 2315331822, end = 2333060126 },
+    { start = 2344084950, end = 2344090066 },
+]
+hash.original.full = "6ac5ff2e14dc16755ea4ea30e6dbe25103b889a36a465194ef943bd0d665b91c"
+hash.original.stripped = "549522015f0369a3b89385f532ab62235b47c2c39540bd0adaaf6acc81fdda94"
+hash.patched.full = "b380720852e2a1e994bcf38064f577bac68b18e799cf8166cb6a7edb8a661cb4"
+hash.patched.stripped = "560cdf4d7b25fb5bc650f96ae5a3c7593ac229a364bb39887287cfb734f6b377"
+hash.avb_images."init_boot.img" = "fac9305ce22b897fbfb193968d5346f4c70f6c18c3060bb106226f134ce5f433"
+hash.avb_images."vbmeta.img" = "0b3d719b751dd43bbec95d02b1bf57b5dae62e42a52502895892a207b773e77d"
+hash.avb_images."vbmeta_system.img" = "cf8c77dcf0a4474d49b5bdc2a44bdb3646464d5212fbe12aa5d3c5f531742f4f"
+hash.avb_images."vbmeta_vendor.img" = "660d8f61acd95a4f8ad416b4cbe126e9c039706462b4236ad723953c72ac49a8"
+hash.avb_images."vendor_boot.img" = "c788d4d8eb7926ad1bfa2a9c000343c3c73cedc580449f5270a711feb620f033"
+
+# Google Pixel 6a
+# What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
+[device.bluejay]
+url = "https://dl.google.com/dl/android/aosp/bluejay-ota-tq2a.230305.008.e1-915f9087.zip"
+sections = [
+    { start = 0, end = 140787 },
+    { start = 1060207, end = 21612852 },
+    { start = 1886150700, end = 1886158844 },
+    { start = 2069112987, end = 2092260102 },
+    { start = 2098778558, end = 2098783674 },
+]
+hash.original.full = "915f9087b627b6961be9bb447dc63a7a1083b536753a78715e98641eaeb9c9d1"
+hash.original.stripped = "a3ee5b6e39e687665c31790118ab9f47715b0b8285ae9847dbf81307f963db14"
+hash.patched.full = "bfa7b26d90bdc889a7a199439e1564b219e5e2dbfddc1657bc1c6b73229be67e"
+hash.patched.stripped = "4e56ee4a8554f2b08ffc2f1470ad60b9b63d2b6fb469ed1f7c4b1204bbf8ad7d"
+hash.avb_images."boot.img" = "a1a705092e7034d20b83c94d78291418e13c343b1573c1b11e0fc884fc00ae62"
+hash.avb_images."vbmeta.img" = "3c123705be57ab142d2b43beef9b123eaad129df17a523b59b1d63b9122d28b0"
+hash.avb_images."vbmeta_system.img" = "285b83e4290f3257dc3678f0c3191794830bb2d72fb0969b69fc8f09d7ddff12"
+hash.avb_images."vbmeta_vendor.img" = "981f736586b91a9f4c93c4208a0d191a35ff15118c6fa505d755ee7fda8b2477"
+hash.avb_images."vendor_boot.img" = "ceffcb4fdb33aa3bb2c70621060acd5af612206b21cc413d5c2d39fee25144ab"
+
+# Google Pixel 4a 5G
+# What's unique: boot (boot v3) + vendor_boot (vendor v3)
+[device.bramble]
+url = "https://dl.google.com/dl/android/aosp/bramble-ota-tq2a.230305.008.c1-a925dd09.zip"
+sections = [
+    { start = 0, end = 140531 },
+    { start = 496187, end = 11655082 },
+    { start = 1650283561, end = 1650287993 },
+    { start = 1884739919, end = 1908081011 },
+    { start = 1910894027, end = 1910899144 },
+]
+hash.original.full = "a925dd09c8d613d46cf72677c16f4fadee18bc21734d57047c6ccf31f672507b"
+hash.original.stripped = "79322b0b417359e8f072032de676d7e5bd2715a3b3554c48ed5cc9e9a25c6866"
+hash.patched.full = "cf79cd60acd3635f5085d8bb411d4a8dc4d7e62440f62a14e7ea12f5a9b7cd8a"
+hash.patched.stripped = "b684a78fe08014f1633e74d1f380e137823ba77a47ddf428bc649364f5548b75"
+hash.avb_images."boot.img" = "2bbf2c6d2f82d454426b26ac3b4887b26ca0591b458e6cf137207ecbb8f7649d"
+hash.avb_images."vbmeta.img" = "ab3b2487671b3fc28e163898621d6c068164d335b6ddd9b94e4fde9471c95d66"
+hash.avb_images."vbmeta_system.img" = "2fcd52d7462916a8510bbb07f2f5a14200afe2de97568396fe75e04c5c283152"
+hash.avb_images."vendor_boot.img" = "e27f157c4ebf4e958165997a4b87d4de1cfc34f4dea423a153327a27b053cac7"
+
+# Google Pixel 4a
+# What's unique: boot (boot v2)
+[device.sunfish]
+url = "https://dl.google.com/dl/android/aosp/sunfish-ota-tq2a.230305.008.c1-174fd16b.zip"
+sections = [
+    { start = 0, end = 129700 },
+    { start = 476996, end = 34035261 },
+    { start = 1624751947, end = 1624756371 },
+    { start = 1823132563, end = 1823137581 },
+]
+hash.original.full = "174fd16b47ef994ea8f3cb0f3fb456df2654b0aa1f9ea6fb8e54e5c6319f2601"
+hash.original.stripped = "943ce3ae2aac8a0ccd4a7e9d4e38a9c495c39639f2621c6853be4c7a3fa0fc26"
+hash.patched.full = "cdfffa731f0aca0ab9eff1e7d7bfee8c4716054d64cf0a47e50f50da6cbdb849"
+hash.patched.stripped = "35b720058c460dd28b00f40bed4bcd1d133522d42d00ba048172b3092a7444ee"
+hash.avb_images."boot.img" = "22182f2efc7043f35d79e71abb400ce919c6b3b8419405e16469644932367ee6"
+hash.avb_images."vbmeta.img" = "4cbe171bb37515f59cd4082cc2d982ca1edfeba9db09dd62c8959dd318423888"
+hash.avb_images."vbmeta_system.img" = "7cdb590bfc1056a5a8c7606ff05e99eb344efe108296682698b5cfe83905e0cd"
+
+# OnePlus 10 Pro
+# Build NE2215_11_C.26
+# What's unique:
+# - boot (boot v4) + recovery (boot v4)
+# - boot images have VTS signature block filled with all 0s
+# - payload.bin uses ZERO blocks
+# Build info:
+# - Unofficial list of full OTAs: https://forum.xda-developers.com/t/oneplus-10-pro-rom-ota-oxygen-os-repo-of-oxygen-os-builds.4572593/
+# - The North American builds are used because they're the only ones hosted on
+#   a well known domain
+# - The build number can be found in <my_manifest>/build.prop since it's not
+#   obvious from the filename
+[device.ossi]
+url = "https://android.googleapis.com/packages/ota-api/package/4cacbe5e6a3ab6a6fade68cc40f44d0fa6a2928a.zip"
+sections = [
+    { start = 0, end = 204048 },
+    { start = 19105432, end = 34966775 },
+    { start = 2657405750, end = 2657407254 },
+    { start = 4984045446, end = 5006377281 },
+    { start = 5114504441, end = 5114507197 },
+    { start = 5138158449, end = 5138159817 },
+    { start = 5140101511, end = 5140105324 },
+]
+hash.original.full = "929f892fbd70699cf7f118a119aac1ae1b86351e1ada17715666fa4401e63472"
+hash.original.stripped = "4eabaf79b6c2b5df305e3ecdc2b9570c0dd27350b4e8d6434584000c4989ff3d"
+hash.patched.full = "8e9cf3159e57d706047325a7b774dc2dc84f0d56baae100ad54c0c723b621469"
+hash.patched.stripped = "0b5dcdfdfea742bf6662b286ba260f8572a7b0081bb1129b7274c29214cdfb49"
+hash.avb_images."boot.img" = "f5dc3b147c54589be8db00ca15257a3688424a9eb88bd9c2cec82ebf4f6bf859"
+hash.avb_images."recovery.img" = "a42c0bf4f023cd24394184a33ee113783a9c89a7cc4c0c582a5f72cc23b72309"
+hash.avb_images."vbmeta.img" = "c022cf79da301a8430af5c49704944c490707fa0306031fe3ea22c39ce4734f6"
+hash.avb_images."vbmeta_system.img" = "749616b7f04487c05e9e363ad2071a0ab3bae29d497daf1f1a7695f7c8cfa82a"
+hash.avb_images."vbmeta_vendor.img" = "a6037fce745384425fb12745b8568386b84fb57ca6f94f6e47bcf754de341ae4"

@@ -11,9 +11,86 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -C strip=symbols
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+        with:
+          # For git describe
+          fetch-depth: 0
+
+      - name: Get version
+        id: get_version
+        shell: bash
+        run: |
+          echo -n 'version=' >> "${GITHUB_OUTPUT}"
+          git describe --always \
+              | sed -E "s/^v//g;s/([^-]*-g)/r\1/;s/-/./g" \
+              >> "${GITHUB_OUTPUT}"
+
+      - name: Get Rust LLVM target triple
+        id: get_target
+        shell: bash
+        env:
+          RUSTC_BOOTSTRAP: '1'
+        run: |
+          echo -n 'name=' >> "${GITHUB_OUTPUT}"
+          rustc -Z unstable-options --print target-spec-json \
+              | jq -r '."llvm-target"' \
+              >> "${GITHUB_OUTPUT}"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --release --workspace --features static
+
+      - name: Build
+        run: cargo build --release --workspace --features static
+
+      - name: Tests
+        run: cargo test --release --workspace --features static
+
+      - name: Archive documentation
+        uses: actions/upload-artifact@v3
+        with:
+          name: avbroot-${{ steps.get_version.outputs.version }}-${{ steps.get_target.outputs.name }}
+          path: |
+            LICENSE
+            README.md
+
+      # This is separate so we can have a flat directory structure.
+      - name: Archive executable
+        uses: actions/upload-artifact@v3
+        with:
+          name: avbroot-${{ steps.get_version.outputs.version }}-${{ steps.get_target.outputs.name }}
+          path: |
+            target/release/avbroot
+            target/release/avbroot.exe
+
+      - name: Cache e2e executable
+        uses: actions/cache@v3
+        with:
+          key: e2e-${{ github.sha }}-${{ runner.os }}
+          path: |
+            target/release/e2e
+            target/release/e2e.exe
+
   setup:
     name: Prepare workflow data
     runs-on: ubuntu-latest
+    needs: build
     timeout-minutes: 2
     outputs:
       config-path: ${{ steps.load-config.outputs.config-path }}
@@ -21,53 +98,35 @@ jobs:
       magisk-key: ${{ steps.cache-keys.outputs.magisk-key }}
       img-key-prefix: ${{ steps.cache-keys.outputs.img-key-prefix }}
       img-hit: ${{ steps.get-img-cache.outputs.cache-matched-key }}
-      tox-key-prefix: ${{ steps.cache-keys.outputs.tox-key-prefix }}
-      tox-hit: ${{ steps.get-tox-cache.outputs.cache-matched-key }}
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: true
 
-      - uses: awalsh128/cache-apt-pkgs-action@v1
+      - name: Restore e2e executable
+        uses: actions/cache/restore@v3
         with:
-          packages: python3-strictyaml
+          key: e2e-${{ github.sha }}-${{ runner.os }}
+          fail-on-cache-miss: true
+          path: |
+            target/release/e2e
+            target/release/e2e.exe
 
       - name: Loading test config
         id: load-config
-        shell: python
+        working-directory: e2e
         run: |
-          import json
-          import os
-          import sys
-
-          sys.path.append(os.environ['GITHUB_WORKSPACE'])
-          import tests.config
-
-          config_data = tests.config.load_config()
-          devices = [d.data for d in config_data['device']]
-
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f'config-path={tests.config.CONFIG_PATH}\n')
-              f.write(f"device-list={json.dumps(devices)}\n")
+          echo 'config-path=e2e/e2e.toml' >> "${GITHUB_OUTPUT}"
+          echo -n 'device-list=' >> "${GITHUB_OUTPUT}"
+          ../target/release/e2e list \
+            | jq -cnR '[inputs | select(length > 0)]' \
+            >> "${GITHUB_OUTPUT}"
 
       - name: Generating cache keys
         id: cache-keys
         run: |
           {
-            echo "tox-key-prefix=tox-${{ hashFiles('tox.ini') }}-"; \
             echo "img-key-prefix=img-${{ hashFiles(steps.load-config.outputs.config-path) }}-"; \
             echo "magisk-key=magisk-${{ hashFiles(steps.load-config.outputs.config-path) }}";
           } >> $GITHUB_OUTPUT
-
-      - name: Checking for cached tox environments
-        id: get-tox-cache
-        uses: actions/cache/restore@v3
-        with:
-          key: ${{ steps.cache-keys.outputs.tox-key-prefix }}
-          lookup-only: true
-          path: |
-            .tox/
-            ~/.cache/pip
 
       - name: Checking for cached device images
         id: get-img-cache
@@ -76,7 +135,7 @@ jobs:
           key: ${{ steps.cache-keys.outputs.img-key-prefix }}
           lookup-only: true
           path: |
-            tests/files/${{ fromJSON(steps.load-config.outputs.device-list)[0] }}-sparse.tar
+            e2e/files/${{ fromJSON(steps.load-config.outputs.device-list)[0] }}-sparse.tar
 
       - name: Checking for cached magisk apk
         id: get-magisk-cache
@@ -84,7 +143,7 @@ jobs:
         with:
           key: ${{ steps.cache-keys.outputs.magisk-key }}
           lookup-only: true
-          path: tests/files/magisk
+          path: e2e/files/magisk
 
       - name: Preloading Magisk cache
         if: ${{ ! steps.get-magisk-cache.outputs.cache-hit }}
@@ -106,8 +165,6 @@ jobs:
         device: ${{ fromJSON(needs.setup.outputs.device-list) }}
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: true
 
       - name: Preloading image cache
         uses: ./.github/actions/preload-img-cache
@@ -115,45 +172,24 @@ jobs:
           cache-key-prefix: ${{ needs.setup.outputs.img-key-prefix }}
           device: ${{ matrix.device }}
 
-  preload-tox:
-    name: Preload tox environments
-    runs-on: ubuntu-latest
-    needs: setup
-    timeout-minutes: 5
-    # Assume that preloading always succesfully cached all tox environments before.
-    # If for some reason only some got cached, on the first run, the cache will not be preloaded
-    # which will result in some being downloaded multiple times when running the tests.
-    if: ${{ ! needs.setup.outputs.tox-hit }}
-    strategy:
-      matrix:
-        python: [py39, py310, py311]
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Preloading tox cache
-        uses: ./.github/actions/preload-tox-cache
-        with:
-          cache-key-prefix: ${{ needs.setup.outputs.tox-key-prefix }}
-          python-version: ${{ matrix.python }}
-
-      - name: Generating tox environment
-        run: tox -e ${{ matrix.python }} --notest
-
   tests:
-    name: Run test for ${{ matrix.device }} with ${{ matrix.python }}
+    name: Run test for ${{ matrix.device }} on ${{ matrix.os }}
     runs-on: ubuntu-latest
-    needs: [setup, preload-img, preload-tox]
+    needs:
+      - setup
+      - preload-img
     timeout-minutes: 10
     # Continue on skipped but not on failures or cancels
     if: ${{ always() && ! failure() && ! cancelled() }}
     strategy:
       matrix:
         device: ${{ fromJSON(needs.setup.outputs.device-list) }}
-        python: [py39, py310, py311]
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: true
 
       - name: Restoring Magisk cache
         uses: ./.github/actions/preload-magisk-cache
@@ -166,12 +202,16 @@ jobs:
           cache-key-prefix: ${{ needs.setup.outputs.img-key-prefix }}
           device: ${{ matrix.device }}
 
-      - name: Restoring tox cache
-        uses: ./.github/actions/preload-tox-cache
+      - name: Restore e2e executable
+        uses: actions/cache/restore@v3
         with:
-          cache-key-prefix: ${{ needs.setup.outputs.tox-key-prefix }}
-          python-version: ${{ matrix.python }}
+          key: e2e-${{ github.sha }}-${{ runner.os }}
+          fail-on-cache-miss: true
+          path: |
+            target/release/e2e
+            target/release/e2e.exe
 
       # Finally run tests
-      - name: Run test for ${{ matrix.device }} with ${{ matrix.python }}
-        run: tox -e ${{ matrix.python }} -- --stripped -d ${{ matrix.device }}
+      - name: Run test for ${{ matrix.device }}
+        working-directory: e2e
+        run: ../target/release/e2e test --stripped -d ${{ matrix.device }}
