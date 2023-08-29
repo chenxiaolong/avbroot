@@ -224,8 +224,7 @@ checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
 [[package]]
 name = "bzip2"
 version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdb116a6ef3f6c3698828873ad02c3014b3c85cadb88496095628e3ef1e347f8"
+source = "git+https://github.com/jongiddy/bzip2-rs?rev=2aefcb4d3634de1df226c73d93f758d65228bb8c#2aefcb4d3634de1df226c73d93f758d65228bb8c"
 dependencies = [
  "bzip2-sys",
  "libc",
@@ -234,8 +233,7 @@ dependencies = [
 [[package]]
 name = "bzip2-sys"
 version = "0.1.11+1.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "736a955f3fa7875102d57c82b8cac37ec45224a07fd32d58f9f7a186b6cd4cdc"
+source = "git+https://github.com/jongiddy/bzip2-rs?rev=2aefcb4d3634de1df226c73d93f758d65228bb8c#2aefcb4d3634de1df226c73d93f758d65228bb8c"
 dependencies = [
  "cc",
  "libc",

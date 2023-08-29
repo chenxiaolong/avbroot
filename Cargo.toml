@@ -10,7 +10,6 @@ edition = "2021"
 anyhow = "1.0.75"
 base64 = "0.21.3"
 byteorder = "1.4.3"
-bzip2 = "0.4.4"
 clap = { version = "4.4.1", features = ["derive"] }
 clap_complete = "4.4.0"
 cms = { version = "0.2.2", features = ["std"] }
@@ -44,6 +43,15 @@ toml_edit = { version = "0.19.14", features = ["serde"] }
 topological-sort = "0.2.2"
 x509-cert = { version = "0.2.4", features = ["builder"] }
 xz2 = "0.1.7"
+
+# There's an upstream bug that causes an infinite loop in the write::BzDecoder
+# destructor if the decoder is fed invalid data. While this never happens during
+# normal operation, it is possible to run into this by running `ota extract`
+# against a `--stripped` OTA file.
+# https://github.com/alexcrichton/bzip2-rs/pull/99
+[dependencies.bzip2]
+git = "https://github.com/jongiddy/bzip2-rs"
+rev = "2aefcb4d3634de1df226c73d93f758d65228bb8c"
 
 # https://github.com/zip-rs/zip/pull/383
 [dependencies.zip]
