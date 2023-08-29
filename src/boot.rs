@@ -405,6 +405,39 @@ impl OtaCertPatcher {
         Self { cert }
     }
 
+    pub fn get_certificates(boot_image: &BootImage) -> Result<Vec<Certificate>> {
+        let mut ramdisks = vec![];
+
+        match boot_image {
+            BootImage::V0Through2(b) => ramdisks.push(&b.ramdisk),
+            BootImage::V3Through4(b) => ramdisks.push(&b.ramdisk),
+            BootImage::VendorV3Through4(b) => ramdisks.extend(b.ramdisks.iter()),
+        }
+
+        let mut certificates = vec![];
+
+        for ramdisk in ramdisks {
+            let (entries, _) = load_ramdisk(ramdisk)?;
+            let Some(entry) = entries.iter().find(|e| e.name == Self::OTACERTS_PATH) else {
+                continue;
+            };
+
+            let mut zip = ZipArchive::new(Cursor::new(&entry.content))?;
+
+            for index in 0..zip.len() {
+                let zip_entry = zip.by_index(index)?;
+                if !zip_entry.name().ends_with(".x509.pem") {
+                    continue;
+                }
+
+                let certificate = crypto::read_pem_cert(zip_entry)?;
+                certificates.push(certificate);
+            }
+        }
+
+        Ok(certificates)
+    }
+
     fn patch_ramdisk(&self, data: &mut Vec<u8>) -> Result<bool> {
         let (mut entries, ramdisk_format) = load_ramdisk(data)?;
         let Some(entry) = entries.iter_mut().find(|e| e.name == Self::OTACERTS_PATH) else {

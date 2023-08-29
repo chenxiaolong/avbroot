@@ -32,6 +32,7 @@ use crate::{
     format::{
         avb::Header,
         avb::{self, AlgorithmType, Descriptor},
+        bootimage::BootImage,
         ota::{self, SigningWriter, ZipEntry},
         padding,
         payload::{self, CompressedPartitionWriter, PayloadHeader, PayloadWriter},
@@ -1129,6 +1130,25 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &Arc<AtomicBool>) -> Re
         &unique_images,
         cancel_signal,
     )?;
+
+    status!("Checking ramdisk's otacerts.zip");
+
+    let boot_image = {
+        let partitions_by_type = get_partitions_by_type(&header.manifest)?;
+        let path = temp_dir
+            .path()
+            .join(format!("{}.img", partitions_by_type["@otacerts"]));
+        let file =
+            File::open(&path).with_context(|| anyhow!("Failed to open for reading: {path:?}"))?;
+        BootImage::from_reader(BufReader::new(file))
+            .with_context(|| anyhow!("Failed to read boot image: {path:?}"))?
+    };
+
+    let ramdisk_certs = OtaCertPatcher::get_certificates(&boot_image)
+        .with_context(|| anyhow!("Failed to read ramdisk's otacerts.zip"))?;
+    if !ramdisk_certs.contains(&ota_cert) {
+        bail!("Ramdisk's otacerts.zip does not contain OTA certificate");
+    }
 
     status!("Verifying AVB signatures");
 
