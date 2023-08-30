@@ -3,6 +3,7 @@ name = "avbroot"
 version = "0.1.0"
 license = "GPL-3.0-only"
 edition = "2021"
+repository = "https://github.com/chenxiaolong/avbroot"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -74,4 +75,10 @@ assert_matches = "1.5.0"
 static = ["bzip2/static", "xz2/static"]
 
 [workspace]
-members = ["e2e"]
+members = ["e2e", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+license = "GPL-3.0-only"
+edition = "2021"
+repository = "https://github.com/chenxiaolong/avbroot"

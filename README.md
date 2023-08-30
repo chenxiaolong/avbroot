@@ -142,7 +142,7 @@ To update Android or Magisk:
 avbroot's Magisk modules can be found on the [releases page](https://github.com/chenxiaolong/avbroot/releases) or they can be built locally by running:
 
 ```bash
-python modules/build.py
+cargo xtask modules -a
 ```
 
 This requires Java and the Android SDK to be installed. The `ANDROID_HOME` environment variable should be set to the Android SDK path.

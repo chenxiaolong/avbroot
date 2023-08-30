@@ -24,8 +24,8 @@ jobs:
               | sed -E "s/^v//g;s/([^-]*-g)/r\1/;s/-/./g" \
               >> "${GITHUB_OUTPUT}"
 
-      - name: Build and test
-        run: ./modules/build.py
+      - name: Build modules
+        run: cargo xtask modules -a
 
       - name: Archive artifacts
         uses: actions/upload-artifact@v3
