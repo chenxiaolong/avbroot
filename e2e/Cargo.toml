@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.75"
-avbroot = { path = ".." }
+avbroot = { path = "../avbroot" }
 clap = { version = "4.4.1", features = ["derive"] }
 ctrlc = "3.4.0"
 hex = { version = "0.4.3", features = ["serde"] }

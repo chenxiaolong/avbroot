@@ -13,4 +13,4 @@
 *.patched
 
 # We do want the test images
-!/tests/data/*.img
+!/avbroot/tests/data/*.img

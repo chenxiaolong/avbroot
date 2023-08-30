@@ -15,11 +15,11 @@ use rsa::RsaPrivateKey;
 
 fn get_test_key() -> RsaPrivateKey {
     let data = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
+        env!("CARGO_WORKSPACE_DIR"),
         "/e2e/keys/TEST_KEY_DO_NOT_USE_avb.key",
     ));
     let passphrase = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
+        env!("CARGO_WORKSPACE_DIR"),
         "/e2e/keys/TEST_KEY_DO_NOT_USE_avb.passphrase",
     ));
 
