@@ -5,22 +5,27 @@ on:
       - master
   pull_request:
 jobs:
-  build-app:
+  build:
     name: Build modules
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v3
         with:
+          # For git describe
           fetch-depth: 0
 
       - name: Get version
         id: get_version
         shell: bash
-        run: echo "version=r$(git rev-list --count HEAD).$(git rev-parse --short HEAD)" >> "${GITHUB_OUTPUT}"
+        run: |
+          echo -n 'version=' >> "${GITHUB_OUTPUT}"
+          git describe --always \
+              | sed -E "s/^v//g;s/([^-]*-g)/r\1/;s/-/./g" \
+              >> "${GITHUB_OUTPUT}"
 
-      - name: Build and test
-        run: ./modules/build.py
+      - name: Build modules
+        run: cargo xtask modules -a
 
       - name: Archive artifacts
         uses: actions/upload-artifact@v3

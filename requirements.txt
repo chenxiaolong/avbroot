@@ -1,3 +1,0 @@
-lz4
-# The pregenerated AOSP Python source is for version 3
-protobuf<4

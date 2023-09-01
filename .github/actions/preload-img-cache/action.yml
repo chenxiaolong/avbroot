@@ -15,39 +15,34 @@ runs:
       with:
         key: ${{ inputs.cache-key-prefix }}${{ inputs.device }}
         # Make sure any changes to path are also reflected in ci.yml setup
-        path: tests/files/${{ inputs.device }}-sparse.tar
+        path: e2e/files/${{ inputs.device }}-sparse.tar
 
     - if: ${{ steps.cache-img.outputs.cache-hit }}
       name: Extracting image from sparse archive
       shell: sh
-      run: |
-        tar -C tests/files -xf tests/files/${{ inputs.device }}-sparse.tar
+      working-directory: e2e/files
+      run: tar -xf ${{ inputs.device }}-sparse.tar
 
-    - if: ${{ ! steps.cache-img.outputs.cache-hit }}
-      uses: awalsh128/cache-apt-pkgs-action@v1
+    - name: Restore e2e executable
+      if: ${{ ! steps.cache-img.outputs.cache-hit }}
+      uses: actions/cache/restore@v3
       with:
-        packages: python3-lz4 python3-protobuf
-
-    - if: ${{ ! steps.cache-img.outputs.cache-hit }}
-      uses: awalsh128/cache-apt-pkgs-action@v1
-      with:
-        packages: python3-strictyaml
+        key: e2e-${{ github.sha }}-${{ runner.os }}
+        fail-on-cache-miss: true
+        path: |
+          target/release/e2e
+          target/release/e2e.exe
 
     - name: Downloading device image for ${{ inputs.device }}
       if: ${{ ! steps.cache-img.outputs.cache-hit }}
       shell: sh
-      run: |
-        ./tests/tests.py \
-          download \
-          --stripped \
-          --no-magisk \
-          --device \
-          ${{ inputs.device }}
+      working-directory: e2e
+      run: ../target/release/e2e download --stripped -d ${{ inputs.device }}
 
     - if: ${{ ! steps.cache-img.outputs.cache-hit }}
       name: Creating sparse archive from image
       shell: sh
+      working-directory: e2e/files
       run: |
-        cd tests/files
         tar --sparse -cf ${{ inputs.device }}-sparse.tar \
           ${{ inputs.device }}/*.stripped

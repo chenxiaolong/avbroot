@@ -1,0 +1,5 @@
+[alias]
+xtask = "run --package xtask --"
+
+[env]
+CARGO_WORKSPACE_DIR = { value = "", relative = true }

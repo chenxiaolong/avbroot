@@ -1,0 +1,10 @@
+[workspace]
+default-members = ["avbroot"]
+members = ["avbroot", "e2e", "xtask"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+license = "GPL-3.0-only"
+edition = "2021"
+repository = "https://github.com/chenxiaolong/avbroot"

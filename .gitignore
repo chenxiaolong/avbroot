@@ -1,5 +1,5 @@
-# Caches
-__pycache__/
+# Build directories
+/target/
 
 # Secrets
 *.pem
@@ -11,4 +11,6 @@ __pycache__/
 *.img
 *.zip
 *.patched
-.tox
+
+# We do want the test images
+!/avbroot/tests/data/*.img
