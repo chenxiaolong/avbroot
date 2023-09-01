@@ -9,7 +9,7 @@ use std::{
     path::Path,
 };
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Parser;
 use toml_edit::{value, Document};
 
@@ -64,6 +64,49 @@ fn update_module_version(path: &Path, version: &str) -> Result<()> {
     Ok(())
 }
 
+fn update_changelog_version(version: &str) -> Result<()> {
+    let path = Path::new(WORKSPACE_DIR).join("CHANGELOG.md");
+    let raw_reader = File::open(&path)?;
+    let mut reader = BufReader::new(raw_reader);
+    let mut result = String::new();
+    let mut line = String::new();
+
+    let expected = format!("### Version {version}");
+    let mut changed = false;
+
+    loop {
+        line.clear();
+
+        let n = reader.read_line(&mut line)?;
+        if n == 0 {
+            break;
+        }
+
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("### ") {
+            if trimmed == expected {
+                return Ok(());
+            } else if trimmed == "### Unreleased" {
+                result.push_str(&expected);
+                result.push('\n');
+                changed = true;
+                continue;
+            }
+        }
+
+        result.push_str(&line);
+    }
+
+    if !changed {
+        bail!("CHANGELOG.md does not contain 'Unreleased' heading");
+    }
+
+    fs::write(path, result)?;
+
+    Ok(())
+}
+
 pub fn set_version_subcommand(cli: &SetVersionCli) -> Result<()> {
     update_cargo_version(&cli.version)?;
 
@@ -79,6 +122,8 @@ pub fn set_version_subcommand(cli: &SetVersionCli) -> Result<()> {
             }
         }
     }
+
+    update_changelog_version(&cli.version)?;
 
     Ok(())
 }
