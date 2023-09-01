@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 2.0.0
 
 * Initial Rust release. The old Python implementation can be found in the `python` branch. ([PR #130 @chenxiaolong])
 
