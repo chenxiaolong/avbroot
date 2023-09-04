@@ -1,6 +1,6 @@
 id=com.chiller3.avbroot.clearotacerts
 name=clearotacerts
-version=v2.0.0
-versionCode=131072
+version=v2.0.1
+versionCode=131073
 author=chenxiaolong
 description=Block A/B OTAs by clearing verification certificates

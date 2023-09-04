@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 2.0.1
 
 * Add support for Magisk 263xx ([PR #132 @chenxiaolong])
 
