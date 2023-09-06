@@ -49,8 +49,6 @@ pub enum Error {
     UnknownMagic([u8; 4]),
     #[error("Unsupported payload version: {0}")]
     UnsupportedVersion(u64),
-    #[error("File is a delta OTA, not a full OTA")]
-    NotFullOta,
     #[error("Payload contains no signatures")]
     NoSignatures,
     #[error("Blob offset should be {0}, but is {1}")]
@@ -99,6 +97,15 @@ pub struct PayloadHeader {
     pub blob_offset: u64,
 }
 
+impl PayloadHeader {
+    pub fn is_full_ota(&self) -> bool {
+        self.manifest
+            .partitions
+            .iter()
+            .all(|p| p.old_partition_info.is_none())
+    }
+}
+
 impl<R: Read> FromReader<R> for PayloadHeader {
     type Error = Error;
 
@@ -127,15 +134,6 @@ impl<R: Read> FromReader<R> for PayloadHeader {
         let mut manifest_raw = vec![0u8; manifest_size];
         reader.read_exact(&mut manifest_raw)?;
         let manifest: DeltaArchiveManifest = util::read_protobuf(&manifest_raw)?;
-
-        // Fail as soon as possible since it's impossible to support delta OTAs.
-        if manifest
-            .partitions
-            .iter()
-            .any(|p| p.old_partition_info.is_some())
-        {
-            return Err(Error::NotFullOta);
-        }
 
         // Skip manifest signatures.
         reader.read_discard_exact(metadata_signature_size.into())?;
