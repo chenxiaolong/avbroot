@@ -7,13 +7,16 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Version 2.0.3
+
+* Upgrade xz version in precompiled binaries ([Issue #138], [PR #139 @chenxiaolong])
+    * This fixes the `ota extract` and `ota verify` commands in some multithreaded situations.
+* Add `--version` option to print out avbroot's version ([Issue #138], [PR #140 @chenxiaolong])
+
 ### Version 2.0.2
 
 * Fix `data_offset` being set for payload operations that don't need it ([PR #136 @chenxiaolong])
     * This fixes patched stock OnePlus images from being rejected when flashing.
-* Upgrade xz version in precompiled binaries ([Issue #138], [PR #139 @chenxiaolong])
-    * This fixes the `ota extract` and `ota verify` commands in some multithreaded situations.
-* Add `--version` option to print out avbroot's version ([Issue #138], [PR #140 @chenxiaolong])
 
 Behind-the-scenes changes:
 
