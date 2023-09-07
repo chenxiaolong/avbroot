@@ -9,6 +9,9 @@
 
 ### Unreleased
 
+* Fix `data_offset` being set for payload operations that don't need it ([PR #136 @chenxiaolong])
+    * This fixes patched stock OnePlus images from being rejected when flashing.
+
 Behind-the-scenes changes:
 
 * Move full OTA check to CLI functions to allow library functions to parse delta OTAs ([PR #135 @chenxiaolong])
@@ -25,3 +28,4 @@ Behind-the-scenes changes:
 [PR #130 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #135 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/135
+[PR #136 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/136
