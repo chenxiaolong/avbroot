@@ -96,12 +96,12 @@ fn strip_image(
 
     let mut raw_reader = File::open(input)
         .map(PSeekFile::new)
-        .with_context(|| anyhow!("Failed to open for reading: {input:?}"))?;
+        .with_context(|| format!("Failed to open for reading: {input:?}"))?;
     let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.clone()))
-        .with_context(|| anyhow!("Failed to read zip: {input:?}"))?;
+        .with_context(|| format!("Failed to read zip: {input:?}"))?;
     let payload_entry = zip_reader
         .by_name(ota::PATH_PAYLOAD)
-        .with_context(|| anyhow!("Failed to open zip entry: {:?}", ota::PATH_PAYLOAD))?;
+        .with_context(|| format!("Failed to open zip entry: {:?}", ota::PATH_PAYLOAD))?;
     let payload_offset = payload_entry.data_start();
     let payload_size = payload_entry.size();
 
@@ -113,7 +113,7 @@ fn strip_image(
     )?;
 
     let header = PayloadHeader::from_reader(&mut payload_reader)
-        .with_context(|| anyhow!("Failed to load OTA payload header"))?;
+        .context("Failed to load OTA payload header")?;
 
     let required_images =
         avbroot::cli::ota::get_required_images(&header.manifest, "@gki_ramdisk", true)?
@@ -147,10 +147,10 @@ fn strip_image(
 
     let mut context = ring::digest::Context::new(&ring::digest::SHA256);
     let raw_writer =
-        File::create(output).with_context(|| anyhow!("Failed to open for writing: {output:?}"))?;
+        File::create(output).with_context(|| format!("Failed to open for writing: {output:?}"))?;
     raw_writer
         .set_len(file_size)
-        .with_context(|| anyhow!("Failed to set file size: {output:?}"))?;
+        .with_context(|| format!("Failed to set file size: {output:?}"))?;
     let mut buf_writer = BufWriter::new(raw_writer);
     let mut buf_reader = BufReader::new(raw_reader);
 
@@ -198,7 +198,7 @@ fn hash_file(path: &Path, cancel_signal: &Arc<AtomicBool>) -> Result<[u8; 32]> {
     println!("Calculating hash of {path:?}");
 
     let raw_reader =
-        File::open(path).with_context(|| anyhow!("Failed to open for reading: {path:?}"))?;
+        File::open(path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
     let buf_reader = BufReader::new(raw_reader);
     let context = ring::digest::Context::new(&ring::digest::SHA256);
     let mut hashing_reader = HashingReader::new(buf_reader, context);
@@ -249,7 +249,7 @@ fn download_file(
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .with_context(|| anyhow!("Failed to create directory: {parent:?}"))?;
+            .with_context(|| format!("Failed to create directory: {parent:?}"))?;
     }
 
     let mut do_validate = validate != Validate::Never;
@@ -376,7 +376,7 @@ fn test_keys() -> Result<(TempDir, Vec<OsString>, Vec<OsString>)> {
         ("ota.crt", &ota_cert[..], Some("--cert-ota"), Some("--cert-ota")),
     ] {
         let path = temp_dir.path().join(name);
-        fs::write(&path, data).with_context(|| anyhow!("Failed to write test key: {path:?}"))?;
+        fs::write(&path, data).with_context(|| format!("Failed to write test key: {path:?}"))?;
 
         if let Some(arg) = patch_arg {
             patch_args.push(arg.into());
@@ -464,12 +464,12 @@ fn verify_image(input_file: &Path, cancel_signal: &Arc<AtomicBool>) -> Result<()
 
 fn get_magisk_partition(path: &Path) -> Result<String> {
     let raw_reader =
-        File::open(path).with_context(|| anyhow!("Failed to open for reading: {path:?}"))?;
+        File::open(path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
     let mut zip = ZipArchive::new(BufReader::new(raw_reader))
-        .with_context(|| anyhow!("Failed to read zip: {path:?}"))?;
+        .with_context(|| format!("Failed to read zip: {path:?}"))?;
     let payload_entry = zip
         .by_name(ota::PATH_PAYLOAD)
-        .with_context(|| anyhow!("Failed to open zip entry: {:?}", ota::PATH_PAYLOAD))?;
+        .with_context(|| format!("Failed to open zip entry: {:?}", ota::PATH_PAYLOAD))?;
     let payload_offset = payload_entry.data_start();
     let payload_size = payload_entry.size();
 
@@ -480,7 +480,7 @@ fn get_magisk_partition(path: &Path) -> Result<String> {
     let mut payload_reader = SectionReader::new(buf_reader, payload_offset, payload_size)?;
 
     let header = PayloadHeader::from_reader(&mut payload_reader)
-        .with_context(|| anyhow!("Failed to load OTA payload header"))?;
+        .context("Failed to load OTA payload header")?;
     let images = avbroot::cli::ota::get_partitions_by_type(&header.manifest)?;
 
     Ok(images["@gki_ramdisk"].clone())
@@ -625,11 +625,11 @@ fn add_subcommand(cli: &AddCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
 
     let config_serialized = document.to_string();
     fs::write(&cli.config.config, config_serialized)
-        .with_context(|| anyhow!("Failed to write config: {:?}", cli.config.config))?;
+        .with_context(|| format!("Failed to write config: {:?}", cli.config.config))?;
 
     if cli.patch.delete_on_success {
         for path in [full_ota_patched, stripped_ota_patched] {
-            fs::remove_file(&path).with_context(|| anyhow!("Failed to delete file: {path:?}"))?;
+            fs::remove_file(&path).with_context(|| format!("Failed to delete file: {path:?}"))?;
         }
     }
 
@@ -745,7 +745,7 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &Arc<AtomicBool>) -> Result<()>
         ];
 
         fs::remove_file(&patched_file)
-            .with_context(|| anyhow!("Failed to delete file: {patched_file:?}"))?;
+            .with_context(|| format!("Failed to delete file: {patched_file:?}"))?;
 
         patch_image(&image_file, &patched_file, &prepatched_args, cancel_signal)?;
 
@@ -753,7 +753,7 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &Arc<AtomicBool>) -> Result<()>
 
         if cli.patch.delete_on_success {
             fs::remove_file(&patched_file)
-                .with_context(|| anyhow!("Failed to delete file: {patched_file:?}"))?;
+                .with_context(|| format!("Failed to delete file: {patched_file:?}"))?;
         }
     }
 

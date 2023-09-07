@@ -5,7 +5,7 @@
 
 use std::{collections::BTreeMap, fs, ops::Range, path::Path};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use toml_edit::{
     ser::ValueSerializer,
@@ -131,9 +131,9 @@ pub fn add_device(document: &mut Document, name: &str, device: &Device) -> Resul
 
 pub fn load_config(path: &Path) -> Result<(Config, Document)> {
     let contents =
-        fs::read_to_string(path).with_context(|| anyhow!("Failed to read config: {path:?}"))?;
+        fs::read_to_string(path).with_context(|| format!("Failed to read config: {path:?}"))?;
     let config: Config = toml_edit::de::from_str(&contents)
-        .with_context(|| anyhow!("Failed to parse config: {path:?}"))?;
+        .with_context(|| format!("Failed to parse config: {path:?}"))?;
     let document: Document = contents.parse().unwrap();
 
     Ok((config, document))

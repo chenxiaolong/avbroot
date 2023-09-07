@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 use crate::{
@@ -82,7 +82,7 @@ fn read_avb_header_if_exists(path: &Path) -> Result<Option<Header>> {
         Err(e) => Err(e).with_context(|| format!("Failed to open for reading: {path:?}"))?,
     };
     let header = Header::from_reader(BufReader::new(file))
-        .with_context(|| anyhow!("Failed to read vbmeta header: {path:?}"))?;
+        .with_context(|| format!("Failed to read vbmeta header: {path:?}"))?;
 
     Ok(Some(header))
 }
@@ -106,7 +106,7 @@ fn write_text_if_not_empty(path: &Path, text: &str) -> Result<()> {
 
 fn write_avb_header(path: &Path, header: &Header) -> Result<()> {
     let file =
-        File::create(path).with_context(|| anyhow!("Failed to open for writing: {path:?}"))?;
+        File::create(path).with_context(|| format!("Failed to open for writing: {path:?}"))?;
     header.to_writer(BufWriter::new(file))?;
 
     Ok(())
@@ -272,9 +272,9 @@ fn info_subcommand(boot_cli: &BootCli, cli: &InfoCli) -> Result<()> {
 
 pub fn magisk_info_subcommand(cli: &MagiskInfoCli) -> Result<()> {
     let raw_reader = File::open(&cli.image)
-        .with_context(|| anyhow!("Failed to open for reading: {:?}", cli.image))?;
+        .with_context(|| format!("Failed to open for reading: {:?}", cli.image))?;
     let boot_image = BootImage::from_reader(BufReader::new(raw_reader))
-        .with_context(|| anyhow!("Failed to load boot image: {:?}", cli.image))?;
+        .with_context(|| format!("Failed to load boot image: {:?}", cli.image))?;
 
     let mut ramdisks = vec![];
 
@@ -297,9 +297,9 @@ pub fn magisk_info_subcommand(cli: &MagiskInfoCli) -> Result<()> {
     for (i, ramdisk) in ramdisks.iter().enumerate() {
         let reader = Cursor::new(ramdisk);
         let reader = CompressedReader::new(reader, true)
-            .with_context(|| anyhow!("Failed to load ramdisk #{i}"))?;
+            .with_context(|| format!("Failed to load ramdisk #{i}"))?;
         let entries = cpio::load(reader, false)
-            .with_context(|| anyhow!("Failed to load ramdisk #{i} cpio"))?;
+            .with_context(|| format!("Failed to load ramdisk #{i} cpio"))?;
 
         if let Some(e) = entries.iter().find(|e| e.name == b".backup/.magisk") {
             io::stdout().write_all(&e.content)?;
