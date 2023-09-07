@@ -28,6 +28,7 @@ pub enum Command {
 }
 
 #[derive(Debug, Parser)]
+#[command(version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
