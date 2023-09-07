@@ -44,7 +44,6 @@ thiserror = "1.0.47"
 toml_edit = { version = "0.19.14", features = ["serde"] }
 topological-sort = "0.2.2"
 x509-cert = { version = "0.2.4", features = ["builder"] }
-xz2 = "0.1.7"
 
 # There's an upstream bug that causes an infinite loop in the write::BzDecoder
 # destructor if the decoder is fed invalid data. While this never happens during
@@ -54,6 +53,14 @@ xz2 = "0.1.7"
 [dependencies.bzip2]
 git = "https://github.com/jongiddy/bzip2-rs"
 rev = "2aefcb4d3634de1df226c73d93f758d65228bb8c"
+
+# The upstream xz2 crate uses an old version of liblzma when compiling with the
+# `static` feature and doesn't enable all of the encoders and decoders. This
+# causes certain payload data to fail to decompress.
+# https://github.com/chenxiaolong/avbroot/issues/138
+[dependencies.xz2]
+git = "https://github.com/chenxiaolong/xz2-rs"
+rev = "fe2050b9c3395db15d8610f1dabb505440c1a556"
 
 # https://github.com/zip-rs/zip/pull/383
 [dependencies.zip]
