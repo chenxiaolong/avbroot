@@ -464,6 +464,10 @@ fn patch_ota_payload(
 ) -> Result<(String, u64)> {
     let header = PayloadHeader::from_reader(open_payload()?)
         .with_context(|| anyhow!("Failed to load OTA payload header"))?;
+    if !header.is_full_ota() {
+        bail!("Payload is a delta OTA, not a full OTA");
+    }
+
     let header = Mutex::new(header);
     let header_locked = header.lock().unwrap();
     let all_partitions = header_locked
@@ -1027,6 +1031,10 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &Arc<AtomicBool>) -> 
 
     let header = PayloadHeader::from_reader(&mut payload_reader)
         .with_context(|| anyhow!("Failed to load OTA payload header"))?;
+    if !header.is_full_ota() {
+        bail!("Payload is a delta OTA, not a full OTA");
+    }
+
     let mut unique_images = BTreeSet::new();
 
     if cli.all {
