@@ -145,7 +145,7 @@ async fn download_range(
         .send()
         .await
         .and_then(|r| r.error_for_status())
-        .with_context(|| anyhow!("Failed to start download for range: {initial_range:?}"))?;
+        .with_context(|| format!("Failed to start download for range: {initial_range:?}"))?;
     let mut stream = response.bytes_stream();
     let mut range = initial_range.clone();
 
@@ -246,11 +246,11 @@ async fn download_ranges(
             .create(true)
             .open(output)
             .map(PSeekFile::new)
-            .with_context(|| anyhow!("Failed to open for writing: {output:?}"))
+            .with_context(|| format!("Failed to open for writing: {output:?}"))
     })?;
 
     task::block_in_place(|| file.set_len(file_size))
-        .with_context(|| anyhow!("Failed to set file size: {output:?}"))?;
+        .with_context(|| format!("Failed to set file size: {output:?}"))?;
 
     // Queue of ranges that need to be downloaded.
     let mut remaining = VecDeque::from(match initial_ranges {
@@ -381,11 +381,11 @@ fn read_state(path: &Path) -> Result<Option<State>> {
     let data = match fs::read_to_string(path) {
         Ok(f) => f,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => Err(e).with_context(|| anyhow!("Failed to read download state: {path:?}"))?,
+        Err(e) => Err(e).with_context(|| format!("Failed to read download state: {path:?}"))?,
     };
 
     let state = toml_edit::de::from_str(&data)
-        .with_context(|| anyhow!("Failed to parse download state: {path:?}"))?;
+        .with_context(|| format!("Failed to parse download state: {path:?}"))?;
 
     Ok(Some(state))
 }
@@ -393,7 +393,7 @@ fn read_state(path: &Path) -> Result<Option<State>> {
 fn write_state(path: &Path, state: &State) -> Result<()> {
     let data = toml_edit::ser::to_string(state).unwrap();
 
-    fs::write(path, data).with_context(|| anyhow!("Failed to write download state: {path:?}"))?;
+    fs::write(path, data).with_context(|| format!("Failed to write download state: {path:?}"))?;
 
     Ok(())
 }

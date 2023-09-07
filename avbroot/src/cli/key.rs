@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 use crate::{
@@ -36,30 +36,30 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
                 crypto::generate_rsa_key_pair().context("Failed to generate RSA keypair")?;
 
             crypto::write_pem_key_file(&c.output, &private_key, &passphrase)
-                .with_context(|| anyhow!("Failed to write private key: {:?}", c.output))?;
+                .with_context(|| format!("Failed to write private key: {:?}", c.output))?;
         }
         KeyCommand::GenerateCert(c) => {
             let passphrase = get_passphrase(&c.passphrase, &c.key);
             let private_key = crypto::read_pem_key_file(&c.key, &passphrase)
-                .with_context(|| anyhow!("Failed to load key: {:?}", c.key))?;
+                .with_context(|| format!("Failed to load key: {:?}", c.key))?;
 
             let validity = Duration::from_secs(c.validity * 24 * 60 * 60);
             let cert = crypto::generate_cert(&private_key, rand::random(), validity, &c.subject)
                 .context("Failed to generate certificate")?;
 
             crypto::write_pem_cert_file(&c.output, &cert)
-                .with_context(|| anyhow!("Failed to write certificate: {:?}", c.output))?;
+                .with_context(|| format!("Failed to write certificate: {:?}", c.output))?;
         }
         KeyCommand::ExtractAvb(c) => {
             let public_key = if let Some(p) = &c.input.key {
                 let passphrase = get_passphrase(&c.passphrase, p);
                 let private_key = crypto::read_pem_key_file(p, &passphrase)
-                    .with_context(|| anyhow!("Failed to load key: {p:?}"))?;
+                    .with_context(|| format!("Failed to load key: {p:?}"))?;
 
                 private_key.to_public_key()
             } else if let Some(p) = &c.input.cert {
                 let certificate = crypto::read_pem_cert_file(p)
-                    .with_context(|| anyhow!("Failed to load certificate: {p:?}"))?;
+                    .with_context(|| format!("Failed to load certificate: {p:?}"))?;
 
                 crypto::get_public_key(&certificate)?
             } else {
@@ -67,10 +67,10 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
             };
 
             let encoded = avb::encode_public_key(&public_key)
-                .with_context(|| anyhow!("Failed to encode public key in AVB format"))?;
+                .context("Failed to encode public key in AVB format")?;
 
             fs::write(&c.output, encoded)
-                .with_context(|| anyhow!("Failed to write public key: {:?}", c.output))?;
+                .with_context(|| format!("Failed to write public key: {:?}", c.output))?;
         }
     }
 

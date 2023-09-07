@@ -50,14 +50,14 @@ pub fn verify_headers(
 
     let path = directory.join(format!("{name}.img"));
     let raw_reader =
-        File::open(&path).with_context(|| anyhow!("Failed to open for reading: {path:?}"))?;
+        File::open(&path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
     let (header, _, _) = avb::load_image(BufReader::new(raw_reader))
-        .with_context(|| anyhow!("Failed to load vbmeta structures: {path:?}"))?;
+        .with_context(|| format!("Failed to load vbmeta structures: {path:?}"))?;
 
     // Verify the header's signature.
     let public_key = header
         .verify()
-        .with_context(|| anyhow!("Failed to verify header signature: {path:?}"))?;
+        .with_context(|| format!("Failed to verify header signature: {path:?}"))?;
 
     if let Some(k) = &public_key {
         let prefix = format!("{name} has a signed vbmeta header");
@@ -92,7 +92,7 @@ pub fn verify_headers(
             }
             avb::Descriptor::ChainPartition(d) => {
                 let target_key = avb::decode_public_key(&d.public_key).with_context(|| {
-                    anyhow!("Failed to decode chained public key for: {target_name}")
+                    format!("Failed to decode chained public key for: {target_name}")
                 })?;
 
                 verify_headers(directory, target_name, Some(&target_key), seen, descriptors)?;
@@ -134,12 +134,12 @@ pub fn verify_descriptors(
                         || Ok(Box::new(BufReader::new(reader.clone()))),
                         cancel_signal,
                     )
-                    .with_context(|| anyhow!("Failed to verify hashtree descriptor for: {name}"))?;
+                    .with_context(|| format!("Failed to verify hashtree descriptor for: {name}"))?;
                 }
                 Descriptor::Hash(d) => {
                     status!("Verifying hash descriptor for: {name}");
                     d.verify(BufReader::new(reader), cancel_signal)
-                        .with_context(|| anyhow!("Failed to verify hash descriptor for: {name}"))?;
+                        .with_context(|| format!("Failed to verify hash descriptor for: {name}"))?;
                 }
                 _ => unreachable!("Non-verifiable descriptor: {descriptor:?}"),
             }
@@ -153,10 +153,10 @@ pub fn avb_main(cli: &AvbCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
     match &cli.command {
         AvbCommand::Dump(c) => {
             let raw_reader = File::open(&c.input)
-                .with_context(|| anyhow!("Failed to open for reading: {:?}", c.input))?;
+                .with_context(|| format!("Failed to open for reading: {:?}", c.input))?;
             let reader = BufReader::new(raw_reader);
             let (header, footer, image_size) = avb::load_image(reader)
-                .with_context(|| anyhow!("Failed to load vbmeta structures: {:?}", c.input))?;
+                .with_context(|| format!("Failed to load vbmeta structures: {:?}", c.input))?;
 
             println!("Image size: {image_size}");
             println!("Header: {header:#?}");
@@ -164,9 +164,9 @@ pub fn avb_main(cli: &AvbCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
         }
         AvbCommand::Verify(c) => {
             let public_key = if let Some(p) = &c.public_key {
-                let data = fs::read(p).with_context(|| anyhow!("Failed to read file: {p:?}"))?;
+                let data = fs::read(p).with_context(|| format!("Failed to read file: {p:?}"))?;
                 let key = avb::decode_public_key(&data)
-                    .with_context(|| anyhow!("Failed to decode public key: {p:?}"))?;
+                    .with_context(|| format!("Failed to decode public key: {p:?}"))?;
 
                 Some(key)
             } else {
@@ -177,7 +177,7 @@ pub fn avb_main(cli: &AvbCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
             let name = c
                 .input
                 .file_stem()
-                .with_context(|| anyhow!("Path is not a file: {:?}", c.input))?
+                .with_context(|| format!("Path is not a file: {:?}", c.input))?
                 .to_str()
                 .ok_or_else(|| anyhow!("Invalid UTF-8: {:?}", c.input))?;
 

@@ -159,14 +159,14 @@ fn open_input_streams(
             status!("Opening external image: {name}: {path:?}");
 
             let file = File::open(path)
-                .with_context(|| anyhow!("Failed to open external image: {path:?}"))?;
+                .with_context(|| format!("Failed to open external image: {path:?}"))?;
             input_streams.insert(name.clone(), Box::new(file));
         } else {
             status!("Extracting from original payload: {name}");
 
             let stream =
                 payload::extract_image_to_memory(&open_payload, header, name, cancel_signal)
-                    .with_context(|| anyhow!("Failed to extract from original payload: {name}"))?;
+                    .with_context(|| format!("Failed to extract from original payload: {name}"))?;
             input_streams.insert(name.clone(), Box::new(stream));
         }
     }
@@ -219,7 +219,7 @@ fn patch_boot_images(
             let mut writer = Cursor::new(Vec::new());
 
             boot::patch_boot(s, &mut writer, key_avb, &p, cancel_signal)
-                .with_context(|| anyhow!("Failed to patch boot image: {n}"))?;
+                .with_context(|| format!("Failed to patch boot image: {n}"))?;
 
             Ok((n, writer))
         })
@@ -247,7 +247,7 @@ fn get_vbmeta_patch_order(
     for name in vbmeta_images {
         let reader = images.get_mut(name).unwrap();
         let (header, footer, _) = avb::load_image(reader)
-            .with_context(|| anyhow!("Failed to load vbmeta image: {name}"))?;
+            .with_context(|| format!("Failed to load vbmeta image: {name}"))?;
 
         if let Some(f) = footer {
             warning!("{name} is a vbmeta partition, but has a footer: {f:?}");
@@ -366,7 +366,7 @@ fn update_vbmeta_descriptors(
 
             let reader = images.get_mut(dep).unwrap();
             let (header, _, _) = avb::load_image(reader)
-                .with_context(|| anyhow!("Failed to load vbmeta footer from image: {dep}"))?;
+                .with_context(|| format!("Failed to load vbmeta footer from image: {dep}"))?;
 
             if header.public_key.is_empty() {
                 // vbmeta is unsigned. Use the existing descriptor.
@@ -404,15 +404,15 @@ fn update_vbmeta_descriptors(
 
         parent_header
             .sign(key)
-            .with_context(|| anyhow!("Failed to sign vbmeta header for image: {name}"))?;
+            .with_context(|| format!("Failed to sign vbmeta header for image: {name}"))?;
 
         let mut writer = Cursor::new(Vec::new());
         parent_header
             .to_writer(&mut writer)
-            .with_context(|| anyhow!("Failed to write vbmeta image: {name}"))?;
+            .with_context(|| format!("Failed to write vbmeta image: {name}"))?;
 
         padding::write_zeros(&mut writer, block_size)
-            .with_context(|| anyhow!("Failed to write vbmeta padding: {name}"))?;
+            .with_context(|| format!("Failed to write vbmeta padding: {name}"))?;
 
         *images.get_mut(name).unwrap() = Box::new(writer);
     }
@@ -462,8 +462,8 @@ fn patch_ota_payload(
     cert_ota: &Certificate,
     cancel_signal: &Arc<AtomicBool>,
 ) -> Result<(String, u64)> {
-    let header = PayloadHeader::from_reader(open_payload()?)
-        .with_context(|| anyhow!("Failed to load OTA payload header"))?;
+    let header =
+        PayloadHeader::from_reader(open_payload()?).context("Failed to load OTA payload header")?;
     if !header.is_full_ota() {
         bail!("Payload is a delta OTA, not a full OTA");
     }
@@ -556,7 +556,7 @@ fn patch_ota_payload(
         .par_iter_mut()
         .map(|(name, stream)| -> Result<()> {
             compress_image(name, stream, &header, block_size, cancel_signal)
-                .with_context(|| anyhow!("Failed to compress image: {name}"))
+                .with_context(|| format!("Failed to compress image: {name}"))
         })
         .collect::<Result<()>>()?;
 
@@ -564,12 +564,12 @@ fn patch_ota_payload(
 
     let header_locked = header.lock().unwrap();
     let mut payload_writer = PayloadWriter::new(writer, header_locked.clone(), key_ota.clone())
-        .with_context(|| anyhow!("Failed to write payload header"))?;
+        .context("Failed to write payload header")?;
     let mut orig_payload_reader = open_payload()?;
 
     while payload_writer
         .begin_next_operation()
-        .with_context(|| anyhow!("Failed to begin next payload blob entry"))?
+        .context("Failed to begin next payload blob entry")?
     {
         let name = payload_writer.partition().unwrap().partition_name.clone();
         let operation = payload_writer.operation().unwrap();
@@ -584,7 +584,7 @@ fn patch_ota_payload(
             reader.rewind()?;
 
             stream::copy_n(&mut reader, &mut payload_writer, data_length, cancel_signal)
-                .with_context(|| anyhow!("Failed to copy from replacement image: {name}"))?;
+                .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
         } else {
             // Copy from the original payload.
             let pi = payload_writer.partition_index().unwrap();
@@ -599,7 +599,7 @@ fn patch_ota_payload(
 
             orig_payload_reader
                 .seek(SeekFrom::Start(data_offset))
-                .with_context(|| anyhow!("Failed to seek original payload to {data_offset}"))?;
+                .with_context(|| format!("Failed to seek original payload to {data_offset}"))?;
 
             stream::copy_n(
                 &mut orig_payload_reader,
@@ -607,13 +607,13 @@ fn patch_ota_payload(
                 data_length,
                 cancel_signal,
             )
-            .with_context(|| anyhow!("Failed to copy from original payload: {name}"))?;
+            .with_context(|| format!("Failed to copy from original payload: {name}"))?;
         }
     }
 
     let (_, properties, metadata_size) = payload_writer
         .finish()
-        .with_context(|| anyhow!("Failed to finalize payload"))?;
+        .context("Failed to finalize payload")?;
 
     Ok((properties, metadata_size))
 }
@@ -663,7 +663,7 @@ fn patch_ota_zip(
     for path in &paths {
         let mut reader = zip_reader
             .by_name(path)
-            .with_context(|| anyhow!("Failed to open zip entry: {path}"))?;
+            .with_context(|| format!("Failed to open zip entry: {path}"))?;
 
         // Android's libarchive parser is broken and only reads data descriptor
         // size fields as 64-bit integers if the central directory says the file
@@ -686,7 +686,7 @@ fn patch_ota_zip(
                 let mut buf = vec![];
                 reader
                     .read_to_end(&mut buf)
-                    .with_context(|| anyhow!("Failed to read OTA metadata: {path}"))?;
+                    .with_context(|| format!("Failed to read OTA metadata: {path}"))?;
                 metadata_pb_raw = Some(buf);
                 continue;
             }
@@ -696,10 +696,10 @@ fn patch_ota_zip(
         // All remaining entries are written immediately.
         zip_writer
             .start_file_with_extra_data(path, options)
-            .with_context(|| anyhow!("Failed to begin new zip entry: {path}"))?;
+            .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
         let offset = zip_writer
             .end_extra_data()
-            .with_context(|| anyhow!("Failed to end new zip entry: {path}"))?;
+            .with_context(|| format!("Failed to end new zip entry: {path}"))?;
         let mut writer = CountingWriter::new(&mut zip_writer);
 
         match path.as_str() {
@@ -708,7 +708,7 @@ fn patch_ota_zip(
                 status!("Replacing zip entry: {path}");
 
                 crypto::write_pem_cert(&mut writer, cert_ota)
-                    .with_context(|| anyhow!("Failed to write entry: {path}"))?;
+                    .with_context(|| format!("Failed to write entry: {path}"))?;
             }
             ota::PATH_PAYLOAD => {
                 status!("Patching zip entry: {path}");
@@ -741,7 +741,7 @@ fn patch_ota_zip(
                     cert_ota,
                     cancel_signal,
                 )
-                .with_context(|| anyhow!("Failed to patch payload: {path}"))?;
+                .with_context(|| format!("Failed to patch payload: {path}"))?;
 
                 properties = Some(p);
                 payload_metadata_size = Some(m);
@@ -752,13 +752,13 @@ fn patch_ota_zip(
                 // payload.bin is guaranteed to be patched first.
                 writer
                     .write_all(properties.as_ref().unwrap().as_bytes())
-                    .with_context(|| anyhow!("Failed to write payload properties: {path}"))?;
+                    .with_context(|| format!("Failed to write payload properties: {path}"))?;
             }
             _ => {
                 status!("Copying zip entry: {path}");
 
                 stream::copy(&mut reader, &mut writer, cancel_signal)
-                    .with_context(|| anyhow!("Failed to copy zip entry: {path}"))?;
+                    .with_context(|| format!("Failed to copy zip entry: {path}"))?;
             }
         }
 
@@ -785,7 +785,7 @@ fn patch_ota_zip(
         &metadata_pb_raw.unwrap(),
         payload_metadata_size.unwrap(),
     )
-    .with_context(|| anyhow!("Failed to write new OTA metadata"))?;
+    .context("Failed to write new OTA metadata")?;
 
     Ok((metadata, payload_metadata_size.unwrap()))
 }
@@ -806,7 +806,7 @@ fn extract_ota_zip(
     }
 
     fs::create_dir_all(directory)
-        .with_context(|| anyhow!("Failed to create directory: {directory:?}"))?;
+        .with_context(|| format!("Failed to create directory: {directory:?}"))?;
 
     status!("Extracting from the payload: {}", joined(images));
 
@@ -817,7 +817,7 @@ fn extract_ota_zip(
             let path = directory.join(format!("{name}.img"));
             let file = File::create(&path)
                 .map(PSeekFile::new)
-                .with_context(|| anyhow!("Failed to open for writing: {path:?}"))?;
+                .with_context(|| format!("Failed to open for writing: {path:?}"))?;
             Ok((name.as_str(), file))
         })
         .collect::<Result<HashMap<_, _>>>()?;
@@ -838,7 +838,7 @@ fn extract_ota_zip(
         images.iter().map(|n| n.as_str()),
         cancel_signal,
     )
-    .with_context(|| anyhow!("Failed to extract images from payload"))?;
+    .context("Failed to extract images from payload")?;
 
     Ok(())
 }
@@ -869,11 +869,11 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &Arc<AtomicBool>) -> Resu
     };
 
     let key_avb = crypto::read_pem_key_file(&cli.key_avb, &passphrase_avb)
-        .with_context(|| anyhow!("Failed to load key: {:?}", cli.key_avb))?;
+        .with_context(|| format!("Failed to load key: {:?}", cli.key_avb))?;
     let key_ota = crypto::read_pem_key_file(&cli.key_ota, &passphrase_ota)
-        .with_context(|| anyhow!("Failed to load key: {:?}", cli.key_ota))?;
+        .with_context(|| format!("Failed to load key: {:?}", cli.key_ota))?;
     let cert_ota = crypto::read_pem_cert_file(&cli.cert_ota)
-        .with_context(|| anyhow!("Failed to load certificate: {:?}", cli.cert_ota))?;
+        .with_context(|| format!("Failed to load certificate: {:?}", cli.cert_ota))?;
 
     if !crypto::cert_matches_key(&cert_ota, &key_ota)? {
         bail!(
@@ -904,7 +904,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &Arc<AtomicBool>) -> Resu
             cli.ignore_magisk_warnings,
             move |s| warning!("{s}"),
         )
-        .with_context(|| anyhow!("Failed to create Magisk boot image patcher"))?;
+        .context("Failed to create Magisk boot image patcher")?;
 
         Some(Box::new(patcher))
     } else if let Some(prepatched) = &cli.root.prepatched {
@@ -922,9 +922,9 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &Arc<AtomicBool>) -> Resu
 
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
-        .with_context(|| anyhow!("Failed to open for reading: {:?}", cli.input))?;
+        .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
     let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.clone()))
-        .with_context(|| anyhow!("Failed to read zip: {:?}", cli.input))?;
+        .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
 
     // Open the output file for reading too, so we can verify offsets later.
     let temp_writer = NamedTempFile::with_prefix_in(
@@ -933,7 +933,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &Arc<AtomicBool>) -> Resu
             .unwrap_or_else(|| OsStr::new("avbroot.tmp")),
         output.parent().unwrap_or_else(|| Path::new(".")),
     )
-    .with_context(|| anyhow!("Failed to open temporary output file"))?;
+    .context("Failed to open temporary output file")?;
     let temp_path = temp_writer.path().to_owned();
     let hole_punching_writer = HolePunchingWriter::new(temp_writer);
     let buffered_writer = BufWriter::new(hole_punching_writer);
@@ -953,21 +953,19 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &Arc<AtomicBool>) -> Resu
         &cert_ota,
         cancel_signal,
     )
-    .with_context(|| anyhow!("Failed to patch OTA zip"))?;
+    .context("Failed to patch OTA zip")?;
 
-    let sign_writer = zip_writer
+    let signing_writer = zip_writer
         .finish()
-        .with_context(|| anyhow!("Failed to finalize output zip"))?;
-    let buffered_writer = sign_writer
+        .context("Failed to finalize output zip")?;
+    let buffered_writer = signing_writer
         .finish(&key_ota, &cert_ota)
-        .with_context(|| anyhow!("Failed to sign output zip"))?;
+        .context("Failed to sign output zip")?;
     let hole_punching_writer = buffered_writer
         .into_inner()
-        .with_context(|| anyhow!("Failed to flush output zip"))?;
+        .context("Failed to flush output zip")?;
     let mut temp_writer = hole_punching_writer.into_inner();
-    temp_writer
-        .flush()
-        .with_context(|| anyhow!("Failed to flush output zip"))?;
+    temp_writer.flush().context("Failed to flush output zip")?;
 
     // We do a lot of low-level hackery. Reopen and verify offsets.
     status!("Verifying metadata offsets");
@@ -977,7 +975,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &Arc<AtomicBool>) -> Resu
         &metadata,
         payload_metadata_size,
     )
-    .with_context(|| anyhow!("Failed to verify OTA metadata offsets"))?;
+    .context("Failed to verify OTA metadata offsets")?;
 
     status!("Completed after {:.1}s", start.elapsed().as_secs_f64());
 
@@ -1000,11 +998,11 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &Arc<AtomicBool>) -> Resu
         temp_writer
             .as_file()
             .set_permissions(Permissions::from_mode(mode))
-            .with_context(|| anyhow!("Failed to set permissions to {mode:o}: {temp_path:?}"))?;
+            .with_context(|| format!("Failed to set permissions to {mode:o}: {temp_path:?}"))?;
     }
 
     temp_writer.persist(output.as_ref()).with_context(|| {
-        anyhow!("Failed to move temporary file to output path: {temp_path:?} -> {output:?}")
+        format!("Failed to move temporary file to output path: {temp_path:?} -> {output:?}")
     })?;
 
     Ok(())
@@ -1013,12 +1011,12 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &Arc<AtomicBool>) -> Resu
 pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
-        .with_context(|| anyhow!("Failed to open for reading: {:?}", cli.input))?;
+        .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
     let mut zip = ZipArchive::new(BufReader::new(raw_reader.clone()))
-        .with_context(|| anyhow!("Failed to read zip: {:?}", cli.input))?;
+        .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
     let payload_entry = zip
         .by_name(ota::PATH_PAYLOAD)
-        .with_context(|| anyhow!("Failed to open zip entry: {:?}", ota::PATH_PAYLOAD))?;
+        .with_context(|| format!("Failed to open zip entry: {:?}", ota::PATH_PAYLOAD))?;
     let payload_offset = payload_entry.data_start();
     let payload_size = payload_entry.size();
 
@@ -1030,7 +1028,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &Arc<AtomicBool>) -> 
     )?;
 
     let header = PayloadHeader::from_reader(&mut payload_reader)
-        .with_context(|| anyhow!("Failed to load OTA payload header"))?;
+        .context("Failed to load OTA payload header")?;
     if !header.is_full_ota() {
         bail!("Payload is a delta OTA, not a full OTA");
     }
@@ -1072,7 +1070,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &Arc<AtomicBool>) -> 
 pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
-        .with_context(|| anyhow!("Failed to open for reading: {:?}", cli.input))?;
+        .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
     let mut reader = BufReader::new(raw_reader);
 
     status!("Verifying whole-file signature");
@@ -1087,7 +1085,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &Arc<AtomicBool>) -> Re
         );
     } else if let Some(p) = &cli.cert_ota {
         let verify_cert = crypto::read_pem_cert_file(p)
-            .with_context(|| anyhow!("Failed to load certificate: {:?}", p))?;
+            .with_context(|| format!("Failed to load certificate: {:?}", p))?;
 
         if embedded_cert != verify_cert {
             bail!("OTA has a valid signature, but was not signed with: {p:?}");
@@ -1097,7 +1095,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &Arc<AtomicBool>) -> Re
     }
 
     ota::verify_metadata(&mut reader, &metadata, header.blob_offset)
-        .with_context(|| anyhow!("Failed to verify OTA metadata offsets"))?;
+        .context("Failed to verify OTA metadata offsets")?;
 
     status!("Verifying payload");
 
@@ -1106,7 +1104,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &Arc<AtomicBool>) -> Re
         .get(ota::PF_NAME)
         .ok_or_else(|| anyhow!("Missing property files: {}", ota::PF_NAME))?;
     let pfs = ota::parse_property_files(pfs_raw)
-        .with_context(|| anyhow!("Failed to parse property files: {}", ota::PF_NAME))?;
+        .with_context(|| format!("Failed to parse property files: {}", ota::PF_NAME))?;
     let pf_payload = pfs
         .iter()
         .find(|pf| pf.name == ota::PATH_PAYLOAD)
@@ -1118,8 +1116,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &Arc<AtomicBool>) -> Re
 
     status!("Extracting partition images to temporary directory");
 
-    let temp_dir =
-        TempDir::new().with_context(|| anyhow!("Failed to create temporary directory"))?;
+    let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
     let raw_reader = reader.into_inner();
     let unique_images = header
         .manifest
@@ -1147,13 +1144,13 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &Arc<AtomicBool>) -> Re
             .path()
             .join(format!("{}.img", partitions_by_type["@otacerts"]));
         let file =
-            File::open(&path).with_context(|| anyhow!("Failed to open for reading: {path:?}"))?;
+            File::open(&path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
         BootImage::from_reader(BufReader::new(file))
-            .with_context(|| anyhow!("Failed to read boot image: {path:?}"))?
+            .with_context(|| format!("Failed to read boot image: {path:?}"))?
     };
 
     let ramdisk_certs = OtaCertPatcher::get_certificates(&boot_image)
-        .with_context(|| anyhow!("Failed to read ramdisk's otacerts.zip"))?;
+        .context("Failed to read ramdisk's otacerts.zip")?;
     if !ramdisk_certs.contains(&ota_cert) {
         bail!("Ramdisk's otacerts.zip does not contain OTA certificate");
     }
@@ -1161,9 +1158,9 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &Arc<AtomicBool>) -> Re
     status!("Verifying AVB signatures");
 
     let public_key = if let Some(p) = &cli.public_key_avb {
-        let data = fs::read(p).with_context(|| anyhow!("Failed to read file: {p:?}"))?;
+        let data = fs::read(p).with_context(|| format!("Failed to read file: {p:?}"))?;
         let key = avb::decode_public_key(&data)
-            .with_context(|| anyhow!("Failed to decode public key: {p:?}"))?;
+            .with_context(|| format!("Failed to decode public key: {p:?}"))?;
 
         Some(key)
     } else {
