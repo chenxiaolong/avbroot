@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 2.0.2
 
 * Fix `data_offset` being set for payload operations that don't need it ([PR #136 @chenxiaolong])
     * This fixes patched stock OnePlus images from being rejected when flashing.
