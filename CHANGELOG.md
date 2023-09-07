@@ -11,6 +11,8 @@
 
 * Fix `data_offset` being set for payload operations that don't need it ([PR #136 @chenxiaolong])
     * This fixes patched stock OnePlus images from being rejected when flashing.
+* Upgrade xz version in precompiled binaries ([Issue #138], [PR #139 @chenxiaolong])
+    * This fixes the `ota extract` and `ota verify` commands in some multithreaded situations.
 
 Behind-the-scenes changes:
 
@@ -26,8 +28,10 @@ Behind-the-scenes changes:
 * Initial Rust release. The old Python implementation can be found in the `python` branch. ([PR #130 @chenxiaolong])
 
 <!-- Do not manually edit the lines below. Use `cargo xtask update-changelog` to regenerate. -->
+[Issue #138]: https://github.com/chenxiaolong/avbroot/issues/138
 [PR #130 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #135 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/135
 [PR #136 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/136
 [PR #137 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/137
+[PR #139 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/139
