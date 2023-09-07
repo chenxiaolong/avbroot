@@ -107,8 +107,8 @@ sections = [
 ]
 hash.original.full = "929f892fbd70699cf7f118a119aac1ae1b86351e1ada17715666fa4401e63472"
 hash.original.stripped = "4eabaf79b6c2b5df305e3ecdc2b9570c0dd27350b4e8d6434584000c4989ff3d"
-hash.patched.full = "8e9cf3159e57d706047325a7b774dc2dc84f0d56baae100ad54c0c723b621469"
-hash.patched.stripped = "0b5dcdfdfea742bf6662b286ba260f8572a7b0081bb1129b7274c29214cdfb49"
+hash.patched.full = "3453b2eda97ca1ba7367fa9d0dd37b21a5065e2e57cc3bbe9a6f135349d42d0b"
+hash.patched.stripped = "1a41e435bdbf4302761e719e218e8682145644c0fe276739c3265f392adbd74d"
 hash.avb_images."boot.img" = "f5dc3b147c54589be8db00ca15257a3688424a9eb88bd9c2cec82ebf4f6bf859"
 hash.avb_images."recovery.img" = "a42c0bf4f023cd24394184a33ee113783a9c89a7cc4c0c582a5f72cc23b72309"
 hash.avb_images."vbmeta.img" = "c022cf79da301a8430af5c49704944c490707fa0306031fe3ea22c39ce4734f6"
