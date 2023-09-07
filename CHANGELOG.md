@@ -13,6 +13,7 @@
     * This fixes patched stock OnePlus images from being rejected when flashing.
 * Upgrade xz version in precompiled binaries ([Issue #138], [PR #139 @chenxiaolong])
     * This fixes the `ota extract` and `ota verify` commands in some multithreaded situations.
+* Add `--version` option to print out avbroot's version ([Issue #138], [PR #140 @chenxiaolong])
 
 Behind-the-scenes changes:
 
@@ -35,3 +36,4 @@ Behind-the-scenes changes:
 [PR #136 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/136
 [PR #137 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/137
 [PR #139 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/139
+[PR #140 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/140
