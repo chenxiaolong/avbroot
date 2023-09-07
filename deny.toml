@@ -35,6 +35,7 @@ deny = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
+    "https://github.com/chenxiaolong/xz2-rs",
     "https://github.com/chenxiaolong/zip",
     "https://github.com/jongiddy/bzip2-rs",
 ]

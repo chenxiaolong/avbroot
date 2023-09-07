@@ -926,8 +926,7 @@ dependencies = [
 [[package]]
 name = "lzma-sys"
 version = "0.1.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fda04ab3764e6cde78b9974eec4f779acaba7c4e84b36eca3cf77c581b85d27"
+source = "git+https://github.com/chenxiaolong/xz2-rs?rev=fe2050b9c3395db15d8610f1dabb505440c1a556#fe2050b9c3395db15d8610f1dabb505440c1a556"
 dependencies = [
  "cc",
  "libc",
@@ -2268,8 +2267,7 @@ dependencies = [
 [[package]]
 name = "xz2"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "388c44dc09d76f1536602ead6d325eb532f5c122f17782bd57fb47baeeb767e2"
+source = "git+https://github.com/chenxiaolong/xz2-rs?rev=fe2050b9c3395db15d8610f1dabb505440c1a556#fe2050b9c3395db15d8610f1dabb505440c1a556"
 dependencies = [
  "lzma-sys",
 ]
