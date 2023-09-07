@@ -294,9 +294,10 @@ impl<W: Write> PayloadWriter<W> {
         // The blob must contain all data in sequential order with no gaps.
         for p in &mut header.manifest.partitions {
             for op in &mut p.operations {
-                op.data_offset = Some(blob_size);
-
                 if let Some(length) = op.data_length {
+                    // The field must be left unset when the blob contains no
+                    // data for the operation.
+                    op.data_offset = Some(blob_size);
                     blob_size += length;
                 }
             }
@@ -402,7 +403,8 @@ impl<W: Write> PayloadWriter<W> {
     /// [`InstallOperation::data_length`].
     pub fn begin_next_operation(&mut self) -> Result<bool> {
         if let Some(operation) = self.operation() {
-            // ZERO/DISCARD operations will not have a length.
+            // Only operations that reference data in the blob will have a
+            // length set.
             if self.written < operation.data_length.unwrap_or(0) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
