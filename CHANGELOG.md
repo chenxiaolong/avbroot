@@ -15,6 +15,7 @@
 Behind-the-scenes changes:
 
 * Move full OTA check to CLI functions to allow library functions to parse delta OTAs ([PR #135 @chenxiaolong])
+* Remove unnecessary use of `anyhow` macro ([PR #137 @chenxiaolong])
 
 ### Version 2.0.1
 
@@ -29,3 +30,4 @@ Behind-the-scenes changes:
 [PR #132 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #135 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/135
 [PR #136 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/136
+[PR #137 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/137
