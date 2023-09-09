@@ -10,16 +10,14 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.75"
+attohttpc = "0.26.1"
 avbroot = { path = "../avbroot" }
 clap = { version = "4.4.1", features = ["derive"] }
 ctrlc = "3.4.0"
 hex = { version = "0.4.3", features = ["serde"] }
-reqwest = { version = "0.11.20", features = ["stream"] }
 ring = "0.16.20"
 serde = { version = "1.0.188", features = ["derive"] }
 tempfile = "3.8.0"
-tokio = { version = "1.32.0", features = ["signal", "rt-multi-thread", "macros"] }
-tokio-stream = "0.1.14"
 toml_edit = { version = "0.19.14", features = ["serde"] }
 
 # https://github.com/zip-rs/zip/pull/383

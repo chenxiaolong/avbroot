@@ -270,6 +270,7 @@ fn download_file(
             &mut display,
             DOWNLOAD_TASKS,
             DOWNLOAD_RETRIES,
+            cancel_signal,
         )?;
     }
 

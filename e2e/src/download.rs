@@ -4,28 +4,28 @@
  */
 
 use std::{
-    cmp,
     collections::{HashMap, VecDeque},
     fs::{self, OpenOptions},
-    io::{self, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     ops::Range,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Sender},
+        Arc,
+    },
+    thread::{self, ThreadId},
     time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use avbroot::stream::PSeekFile;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    runtime::Runtime,
-    signal::ctrl_c,
-    sync::{mpsc, oneshot},
-    task::{self, JoinSet},
-};
-use tokio_stream::StreamExt;
 
 /// Minimum download chunk size per task.
 const MIN_CHUNK_SIZE: u64 = 1024 * 1024;
+
+const TIMEOUT: Duration = Duration::from_secs(5);
 
 pub trait ProgressDisplay {
     fn progress(&mut self, current: u64, total: u64);
@@ -112,11 +112,21 @@ impl ProgressDisplay for BasicProgressDisplay {
 }
 
 #[derive(Debug)]
-struct ProgressMessage {
-    task_id: u64,
-    bytes: u64,
-    // Controller replies with new ending offset
-    resp: oneshot::Sender<u64>,
+enum MessageData {
+    Progress {
+        bytes: u64,
+        // Controller replies with a new ending offset.
+        resp: Sender<u64>,
+    },
+    Completion {
+        result: Result<()>,
+    },
+}
+
+#[derive(Debug)]
+struct Message {
+    id: ThreadId,
+    data: MessageData,
 }
 
 /// Download a contiguous byte range. The number of bytes downloaded per loop
@@ -125,65 +135,70 @@ struct ProgressMessage {
 /// download via the oneshot channel in the `resp` field. An appropriate error
 /// will be returned if the full range (subject to modification) cannot be fully
 /// downloaded (eg. premature EOF is an error).
-async fn download_range(
-    task_id: u64,
+fn download_range(
     url: &str,
     mut file: PSeekFile,
     initial_range: Range<u64>,
-    channel: mpsc::Sender<ProgressMessage>,
+    channel: Sender<Message>,
+    cancel_signal: &Arc<AtomicBool>,
 ) -> Result<()> {
     assert!(initial_range.start < initial_range.end);
 
-    let client = reqwest::ClientBuilder::new().build()?;
-
-    let response = client
-        .get(url)
+    let mut response = attohttpc::get(url)
+        .connect_timeout(TIMEOUT)
+        .read_timeout(TIMEOUT)
         .header(
-            reqwest::header::RANGE,
-            format!("bytes={}-{}", initial_range.start, initial_range.end - 1),
+            "Range",
+            &format!("bytes={}-{}", initial_range.start, initial_range.end - 1),
         )
         .send()
-        .await
         .and_then(|r| r.error_for_status())
         .with_context(|| format!("Failed to start download for range: {initial_range:?}"))?;
-    let mut stream = response.bytes_stream();
+
     let mut range = initial_range.clone();
+    let mut buf = [0u8; 65536];
 
     while range.start < range.end {
-        let data = if let Some(x) = stream.next().await {
-            x?
-        } else {
-            return Err(anyhow!("Unexpected EOF from server"));
-        };
+        if cancel_signal.load(Ordering::SeqCst) {
+            bail!("Received cancel signal");
+        }
+
+        let to_read = (range.end - range.start).min(buf.len() as u64) as usize;
+        let n = response.read(&mut buf[..to_read]).with_context(|| {
+            format!(
+                "Failed to download {to_read} bytes at offset {}",
+                range.start,
+            )
+        })?;
+        if n == 0 {
+            bail!("Unexpected EOF from server");
+        }
 
         // This may overlap with another task's write when a range split occurs,
         // but the same data will be written anyway, so it's not a huge deal.
-        task::block_in_place(|| {
-            file.seek(SeekFrom::Start(range.start))?;
-            file.write_all(&data)
-        })
-        .with_context(|| {
+        file.seek(SeekFrom::Start(range.start))?;
+        file.write_all(&buf[..n]).with_context(|| {
             format!(
-                "Failed to write {} bytes to output file at offset {}",
-                data.len(),
+                "Failed to write {n} bytes to output file at offset {}",
                 range.start,
             )
         })?;
 
-        let consumed = cmp::min(range.end - range.start, data.len() as u64);
-        range.start += consumed;
+        range.start += n as u64;
 
         // Report progress to the controller.
-        let (tx, rx) = oneshot::channel();
-        let msg = ProgressMessage {
-            task_id,
-            bytes: consumed,
-            resp: tx,
+        let (tx, rx) = mpsc::channel();
+        let msg = Message {
+            id: thread::current().id(),
+            data: MessageData::Progress {
+                bytes: n as u64,
+                resp: tx,
+            },
         };
-        channel.send(msg).await?;
+        channel.send(msg)?;
 
         // Get new ending offset from controller.
-        let new_end = rx.await?;
+        let new_end = rx.recv()?;
         if new_end != range.end {
             debug_assert!(new_end <= range.end);
             range.end = new_end;
@@ -193,33 +208,37 @@ async fn download_range(
     Ok(())
 }
 
-/// Create download task for a byte range. This just calls [`download_range()`]
-/// and returns a tuple containing the task ID and the result.
-async fn download_task(
-    task_id: u64,
-    url: String,
+/// This just calls [`download_range()`] and sends a completion message to the
+/// channel with the result.
+fn download_thread(
+    url: &str,
     file: PSeekFile,
     initial_range: Range<u64>,
-    channel: mpsc::Sender<ProgressMessage>,
-) -> (u64, Result<()>) {
-    (
-        task_id,
-        download_range(task_id, &url, file, initial_range, channel).await,
-    )
+    channel: mpsc::Sender<Message>,
+    cancel_signal: &Arc<AtomicBool>,
+) {
+    let result = download_range(url, file, initial_range, channel.clone(), cancel_signal);
+
+    channel
+        .send(Message {
+            id: thread::current().id(),
+            data: MessageData::Completion { result },
+        })
+        .unwrap();
 }
 
 /// Send a HEAD request to get the value of the Content-Length header.
-async fn get_content_length(url: &str) -> Result<u64> {
-    let response = reqwest::Client::new()
-        .head(url)
+fn get_content_length(url: &str) -> Result<u64> {
+    let response = attohttpc::head(url)
+        .connect_timeout(TIMEOUT)
+        .read_timeout(TIMEOUT)
         .send()
-        .await
         .and_then(|r| r.error_for_status())
         .context("Failed to send HEAD request to get Content-Length")?;
 
     response
         .headers()
-        .get("content-length")
+        .get("Content-Length")
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.parse().ok())
         .ok_or_else(|| anyhow!("HEAD request did not return a valid Content-Length"))
@@ -229,27 +248,26 @@ async fn get_content_length(url: &str) -> Result<u64> {
 /// returned as an Err. Normal/expected errors and download progress info are
 /// reported via `display`. Returns the remaining ranges that need to be
 /// downloaded.
-async fn download_ranges(
+fn download_ranges(
     url: &str,
     output: &Path,
     initial_ranges: Option<&[Range<u64>]>,
     display: &mut dyn ProgressDisplay,
-    max_tasks: usize,
+    max_threads: usize,
     max_errors: u8,
+    cancel_signal: &Arc<AtomicBool>,
 ) -> Result<Vec<Range<u64>>> {
-    let file_size = get_content_length(url).await?;
+    let file_size = get_content_length(url)?;
 
     // Open for writing, but without truncation.
-    let file = task::block_in_place(|| {
-        OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(output)
-            .map(PSeekFile::new)
-            .with_context(|| format!("Failed to open for writing: {output:?}"))
-    })?;
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(output)
+        .map(PSeekFile::new)
+        .with_context(|| format!("Failed to open for writing: {output:?}"))?;
 
-    task::block_in_place(|| file.set_len(file_size))
+    file.set_len(file_size)
         .with_context(|| format!("Failed to set file size: {output:?}"))?;
 
     // Queue of ranges that need to be downloaded.
@@ -260,114 +278,101 @@ async fn download_ranges(
     });
     // Ranges that have failed.
     let mut failed = Vec::<Range<u64>>::new();
-    // Ranges for currently running tasks.
-    let mut task_ranges = HashMap::<u64, Range<u64>>::new();
+    // Ranges for currently running threads.
+    let mut thread_ranges = HashMap::<ThreadId, Range<u64>>::new();
 
     // Overall progress.
     let mut progress = file_size - remaining.iter().map(|r| r.end - r.start).sum::<u64>();
     display.progress(progress, file_size);
 
-    let mut tasks = JoinSet::new();
-    let mut next_task_id = 0;
-    let mut error_count = 0u8;
-    // Progress messages from tasks.
-    let (tx, mut rx) = mpsc::channel(max_tasks);
+    thread::scope(|scope| {
+        let mut threads = HashMap::new();
+        let mut error_count = 0u8;
+        // Progress messages from threads.
+        let (tx, rx) = mpsc::channel();
 
-    loop {
-        // Spawn new tasks.
-        while tasks.len() < max_tasks {
-            if remaining.is_empty() && !tasks.is_empty() {
-                // No more ranges to download. Split another task's range.
-                let (_, old_range) = task_ranges
-                    .iter_mut()
-                    .max_by_key(|(_, r)| r.end - r.start)
-                    .unwrap();
-                let size = old_range.end - old_range.start;
+        loop {
+            // Spawn new threads.
+            while !cancel_signal.load(Ordering::SeqCst) && threads.len() < max_threads {
+                if remaining.is_empty() && !threads.is_empty() {
+                    // No more ranges to download. Split another thread's range.
+                    let (_, old_range) = thread_ranges
+                        .iter_mut()
+                        .max_by_key(|(_, r)| r.end - r.start)
+                        .unwrap();
+                    let size = old_range.end - old_range.start;
 
-                if size >= MIN_CHUNK_SIZE {
-                    let new_range = old_range.start + size / 2..old_range.end;
-                    old_range.end = new_range.start;
-                    remaining.push_back(new_range);
+                    if size >= MIN_CHUNK_SIZE {
+                        let new_range = old_range.start + size / 2..old_range.end;
+                        old_range.end = new_range.start;
+                        remaining.push_back(new_range);
+                    }
+                }
+
+                if let Some(thread_range) = remaining.pop_front() {
+                    let file_cloned = file.clone();
+                    let thread_range_cloned = thread_range.clone();
+                    let tx_cloned = tx.clone();
+
+                    let join_handle = scope.spawn(|| {
+                        download_thread(
+                            url,
+                            file_cloned,
+                            thread_range_cloned,
+                            tx_cloned,
+                            cancel_signal,
+                        )
+                    });
+
+                    thread_ranges.insert(join_handle.thread().id(), thread_range);
+                    threads.insert(join_handle.thread().id(), join_handle);
+                } else {
+                    // No pending ranges and no running threads can be split.
+                    break;
                 }
             }
 
-            if let Some(task_range) = remaining.pop_front() {
-                tasks.spawn(download_task(
-                    next_task_id,
-                    url.to_owned(),
-                    file.clone(),
-                    task_range.clone(),
-                    tx.clone(),
-                ));
-
-                task_ranges.insert(next_task_id, task_range);
-                next_task_id += 1;
-            } else {
-                // No pending ranges and no running tasks can be split.
-                break;
-            }
-        }
-
-        tokio::select! {
-            // Interrupted by user.
-            c = ctrl_c() => {
-                c?;
+            if threads.is_empty() {
+                // Nothing left to do.
                 break;
             }
 
-            // Received progress notification.
-            msg = rx.recv() => {
-                let msg = msg.unwrap();
+            let Message { id, data } = rx.recv().unwrap();
 
-                progress += msg.bytes;
-                display.progress(progress, file_size);
+            match data {
+                MessageData::Progress { bytes, resp } => {
+                    progress += bytes;
+                    display.progress(progress, file_size);
 
-                let task_range = task_ranges.get_mut(&msg.task_id).unwrap();
-                task_range.start += msg.bytes;
+                    let thread_range = thread_ranges.get_mut(&id).unwrap();
+                    thread_range.start += bytes;
 
-                msg.resp.send(task_range.end).unwrap();
-            }
+                    resp.send(thread_range.end).unwrap();
+                }
+                MessageData::Completion { result } => {
+                    threads.remove(&id).unwrap().join().unwrap();
 
-            // Received completion message.
-            r = tasks.join_next() => {
-                match r {
-                    // All tasks exited.
-                    None => {
-                        break;
-                    },
+                    let thread_range = thread_ranges.remove(&id).unwrap();
 
-                    // Download task panicked.
-                    Some(Err(e)) => {
-                        return Err(e).context("Unexpected panic in download task");
-                    }
-
-                    // Task completed successfully.
-                    Some(Ok((task_id, Ok(_)))) => {
-                        task_ranges.remove(&task_id).unwrap();
-                    }
-
-                    // Task failed.
-                    Some(Ok((task_id, Err(e)))) => {
-                        display.error(&format!("[Task#{task_id}] {e}"));
+                    if let Err(e) = result {
+                        display.error(&format!("[{id:?}] {e:?}"));
                         error_count += 1;
 
-                        let range = task_ranges.remove(&task_id).unwrap();
-
                         if error_count < max_errors {
-                            remaining.push_back(range);
+                            remaining.push_back(thread_range);
                         } else {
-                            failed.push(range);
+                            failed.push(thread_range);
                         }
                     }
                 }
             }
         }
-    }
+    });
 
     display.finish();
 
-    failed.extend(remaining.into_iter());
-    failed.extend(task_ranges.into_values());
+    failed.extend(remaining);
+    failed.extend(thread_ranges.into_values());
 
     Ok(failed)
 }
@@ -428,6 +433,7 @@ pub fn download(
     display: &mut dyn ProgressDisplay,
     max_tasks: usize,
     max_errors: u8,
+    cancel_signal: &Arc<AtomicBool>,
 ) -> Result<()> {
     let state_path = state_path(output);
     let ranges = match read_state(&state_path)? {
@@ -435,15 +441,15 @@ pub fn download(
         None => initial_ranges.map(|r| r.to_vec()),
     };
 
-    let runtime = Runtime::new()?;
-    let remaining = runtime.block_on(download_ranges(
+    let remaining = download_ranges(
         url,
         output,
         ranges.as_deref(),
         display,
         max_tasks,
         max_errors,
-    ))?;
+        cancel_signal,
+    )?;
 
     if remaining.is_empty() {
         delete_if_exists(&state_path)?;
