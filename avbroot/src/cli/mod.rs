@@ -7,6 +7,7 @@ pub mod args;
 pub mod avb;
 pub mod boot;
 pub mod completion;
+pub mod fec;
 pub mod key;
 pub mod ota;
 pub mod ramdisk;

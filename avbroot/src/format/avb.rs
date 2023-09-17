@@ -7,7 +7,7 @@ use std::{
     cmp, fmt,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     str,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::AtomicBool,
 };
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
@@ -342,12 +342,7 @@ impl HashtreeDescriptor {
         let mut result = vec![];
 
         while image_size > 0 {
-            if cancel_signal.load(Ordering::SeqCst) {
-                return Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "Received cancel signal",
-                ));
-            }
+            stream::check_cancel(cancel_signal)?;
 
             let n = image_size.min(buf.len() as u64) as usize;
             reader.read_exact(&mut buf[..n])?;

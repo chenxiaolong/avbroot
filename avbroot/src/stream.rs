@@ -560,6 +560,21 @@ impl Seek for SharedCursor {
     }
 }
 
+/// Returns an I/O error with the [`io::ErrorKind::Interrupted`] type if
+/// `cancel_signal` is true. This should be called frequently in I/O loops for
+/// cancellation to be responsive.
+#[inline]
+pub fn check_cancel(cancel_signal: &AtomicBool) -> io::Result<()> {
+    if cancel_signal.load(Ordering::SeqCst) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Received cancel signal",
+        ));
+    }
+
+    Ok(())
+}
+
 /// Copy exactly `size` bytes from `reader` to `writer`, invoking `inspect`
 /// after every buffer read iteration. If either `reader` or `writer` reaches
 /// EOF before `size` bytes are copied, an error is returned. The operation is
@@ -574,12 +589,7 @@ pub fn copy_n_inspect(
     let mut buf = [0u8; 16384];
 
     while size > 0 {
-        if cancel_signal.load(Ordering::SeqCst) {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "Received cancel signal",
-            ));
-        }
+        check_cancel(cancel_signal)?;
 
         let to_read = size.min(buf.len() as u64) as usize;
         reader.read_exact(&mut buf[..to_read])?;
@@ -616,12 +626,7 @@ pub fn copy(
     let mut copied = 0;
 
     loop {
-        if cancel_signal.load(Ordering::SeqCst) {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "Received cancel signal",
-            ));
-        }
+        check_cancel(cancel_signal)?;
 
         let n = reader.read(&mut buf)?;
         if n == 0 {

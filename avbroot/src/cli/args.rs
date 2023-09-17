@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::cli::{avb, boot, completion, key, ota, ramdisk};
+use crate::cli::{avb, boot, completion, fec, key, ota, ramdisk};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
@@ -16,6 +16,7 @@ pub enum Command {
     Avb(avb::AvbCli),
     Boot(boot::BootCli),
     Completion(completion::CompletionCli),
+    Fec(fec::FecCli),
     Key(key::KeyCli),
     Ota(ota::OtaCli),
     Ramdisk(ramdisk::RamdiskCli),
@@ -41,6 +42,7 @@ pub fn main(cancel_signal: &AtomicBool) -> Result<()> {
         Command::Avb(c) => avb::avb_main(&c, cancel_signal),
         Command::Boot(c) => boot::boot_main(&c),
         Command::Completion(c) => completion::completion_main(&c),
+        Command::Fec(c) => fec::fec_main(&c, cancel_signal),
         Command::Key(c) => key::key_main(&c),
         Command::Ota(c) => ota::ota_main(&c, cancel_signal),
         Command::Ramdisk(c) => ramdisk::ramdisk_main(&c),

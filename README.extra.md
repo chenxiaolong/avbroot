@@ -58,6 +58,63 @@ avbroot boot info -i <input boot image>
 
 All of the `boot` subcommands show the boot image information. This specific subcommand just does it without performing any other operation. To show avbroot's internal representation of the information, pass in `-d`.
 
+## `avbroot fec`
+
+This set of commands is for working with dm-verity FEC (forward error correction) data. The FEC data allows small errors in partition data to be corrected. This increases reliability of the system because when dm-verity encounters data that doesn't match the expected checksum, it will either trigger a kernel panic or reboot the system.
+
+The same raw FEC data can be stored in several ways:
+
+* cryptsetup's `veritysetup` does not use any file format at all. It must be told the FEC location and parameters using the `--fec-*` options.
+* AOSP's AVB 2.0 stores the FEC data inside the partition as `[Partition data][Hashtree][FEC data]`. The location and parameters are stored in the vbmeta hashtree descriptors.
+* AOSP's `fec` tool stores the FEC data in a standalone file with a header containing the FEC parameters.
+
+The `avbroot fec` commands use AOSP's standalone FEC file format.
+
+The FEC data is not generated from a sequential read of the input file, but rather from an interleaved read. If the input file's offsets are visualized as a 2D table:
+
+```
+| 0    1    2    3    ... 4095  |
+| 4096 4097 4098 4099 ... 8191  |
+| 8192 8193 8194 8195 ... 12287 |
+| .... .... .... .... ... ..... |
+```
+
+then the file access pattern can be thought of as being column-by-column instead of row-by-row.
+
+Data correction happens at the codeword level. A Reed-Solomon codeword is 255 bytes where some portion is file data and the rest is parity data. AOSP and avbroot both default to 253 bytes of data and 2 bytes of parity information. Each column in the table represents the 253-byte data portion of the codeword. Larger files have more columns.
+
+A contiguous sequence of corrupted data will span multiple columns. Since error correction happens at the column level, this interleaving increases the chances of recovery. For more details about the specifics, see the implementation in [`fec.rs`](./avbroot/src/format/fec.rs).
+
+### Generating FEC data
+
+```bash
+avbroot fec generate -i <input data file> -f <output FEC file>
+```
+
+The default behavior is to use 2 bytes of parity information per 253 bytes of input data. Within each 253-byte column described above, this is sufficient for correcting a single corrupted byte in the column (`⌊parity / 2⌋` bytes in general).
+
+The number of parity bytes (between 2 and 24, inclusive) can be configured using `--parity`.
+
+### Verifying a file
+
+```bash
+avbroot fec verify -i <input data file> -f <input FEC file>
+```
+
+This will check if the input file has any corrupted bytes. This command runs significantly faster than `avbroot fec repair` and is useful if only detection of corrupted data is needed.
+
+Note that FEC is **not** a replacement for checksums, like SHA-256. When there are too many errors, there can be false positives where the corrupted data is reported as being valid.
+
+### Repairing a file
+
+```bash
+avbroot fec repair -i <input/output data file> -f <input FEC file>
+```
+
+This will repair the file in place. As described above, in each column, up to `parity / 2` bytes can be corrected.
+
+Note that FEC is **not** a replacement for checksums, like SHA-256. When there are too many errors, the file can potentially be "successfully repaired" to some incorrect data.
+
 ## `avbroot ramdisk`
 
 ### Dumping a cpio archive
