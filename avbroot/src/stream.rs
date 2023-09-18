@@ -12,10 +12,11 @@ use std::{
     },
 };
 
+use bstr::ByteSlice;
 use num_traits::ToPrimitive;
 use ring::digest::Context;
 
-use crate::util::{self, EscapedString};
+use crate::util;
 
 /// A trait for seekable readers. This is only needed because `dyn Read + Seek`
 /// is not a valid construct in Rust yet.
@@ -118,7 +119,7 @@ impl<R: Read> ReadStringExt for R {
         String::from_utf8(buf).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Invalid UTF-8: {}: {e}", EscapedString::new(e.as_bytes())),
+                format!("Invalid UTF-8: {:?}: {e}", e.as_bytes().as_bstr()),
             )
         })
     }
@@ -138,7 +139,7 @@ impl<R: Read> ReadStringExt for R {
         String::from_utf8(buf).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Invalid UTF-8: {}: {e}", EscapedString::new(e.as_bytes())),
+                format!("Invalid UTF-8: {:?}: {e}", e.as_bytes().as_bstr()),
             )
         })
     }

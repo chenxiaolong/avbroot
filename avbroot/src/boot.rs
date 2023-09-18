@@ -14,6 +14,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+use bstr::ByteSlice;
 use regex::bytes::Regex;
 use ring::digest::Context;
 use rsa::RsaPrivateKey;
@@ -34,7 +35,6 @@ use crate::{
         cpio::{self, CpioEntryNew},
     },
     stream::{self, FromReader, HashingWriter, SectionReader, ToWriter},
-    util::EscapedString,
 };
 
 #[derive(Debug, Error)]
@@ -488,8 +488,8 @@ impl BootImagePatcher for OtaCertPatcher {
         // out of future updates if the OTA certificate mechanism has changed.
         if !patched_any {
             return Err(Error::Validation(format!(
-                "No ramdisk contains {}",
-                EscapedString::new(Self::OTACERTS_PATH),
+                "No ramdisk contains {:?}",
+                Self::OTACERTS_PATH.as_bstr(),
             )));
         }
 
