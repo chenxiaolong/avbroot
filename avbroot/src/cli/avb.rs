@@ -209,6 +209,9 @@ struct DumpCli {
 }
 
 /// Verify vbmeta signatures.
+///
+/// For hash tree descriptors, the FEC (forward error correction) data will also
+/// be verified.
 #[derive(Debug, Parser)]
 struct VerifyCli {
     /// Path to input image.
