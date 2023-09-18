@@ -382,7 +382,7 @@ fn update_vbmeta_descriptors(
                     (Descriptor::Hash(pd), Descriptor::Hash(d)) => {
                         *pd = d.clone();
                     }
-                    (Descriptor::Hashtree(pd), Descriptor::Hashtree(d)) => {
+                    (Descriptor::HashTree(pd), Descriptor::HashTree(d)) => {
                         *pd = d.clone();
                     }
                     _ => {

@@ -7,6 +7,8 @@ pub mod avb;
 pub mod bootimage;
 pub mod compression;
 pub mod cpio;
+pub mod fec;
 pub mod ota;
 pub mod padding;
 pub mod payload;
+pub mod verityrs;

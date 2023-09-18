@@ -7,7 +7,7 @@ use std::{
     cmp, fmt,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     str,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::AtomicBool,
 };
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
@@ -20,7 +20,10 @@ use sha2::{Digest, Sha256, Sha512};
 use thiserror::Error;
 
 use crate::{
-    format::padding,
+    format::{
+        fec::{self, Fec},
+        padding,
+    },
     stream::{
         self, CountingReader, FromReader, ReadDiscardExt, ReadSeek, ReadStringExt, ToWriter,
         WriteStringExt, WriteZerosExt,
@@ -54,8 +57,6 @@ pub enum Error {
     PaddingTooLong,
     #[error("{0:?} field padding contains non-zero bytes")]
     PaddingNotZero(&'static str),
-    #[error("{0:?} field + {1:?} field is out of bounds")]
-    OutOfBounds(&'static str, &'static str),
     #[error("{0:?} field size does not equal size of contained items")]
     IncorrectCombinedSize(&'static str),
     #[error("Invalid VBMeta header magic: {0:?}")]
@@ -68,20 +69,31 @@ pub enum Error {
     UnsupportedAlgorithm(AlgorithmType),
     #[error("Hashing algorithm not supported: {0:?}")]
     UnsupportedHashAlgorithm(String),
-    #[error("Incorrect key size ({0} bytes) for algorithm {1:?} ({2} bytes)")]
-    IncorrectKeySize(usize, AlgorithmType, usize),
-    #[error("Expected root digest {0}, but have {1}")]
-    InvalidRootDigest(String, String),
-    #[error("Expected hash tree {0}, but have {1}")]
-    InvalidHashtree(String, String),
+    #[error("Incorrect key size ({key_size} bytes) for algorithm {algo:?} ({} bytes)", algo.public_key_len())]
+    IncorrectKeySize {
+        key_size: usize,
+        algo: AlgorithmType,
+    },
+    #[error("Expected root digest {expected}, but have {actual}")]
+    InvalidRootDigest { expected: String, actual: String },
+    #[error("Expected hash tree {expected}, but have {actual}")]
+    InvalidHashTree { expected: String, actual: String },
+    #[error("Hash tree does not immediately follow image data")]
+    HashTreeGap,
+    #[error("FEC data does not immediately follow hash tree")]
+    FecDataGap,
+    #[error("FEC requires data block size ({data}) and hash block size ({hash}) to match")]
+    MismatchedFecBlockSizes { data: u32, hash: u32 },
     #[error("Failed to RSA sign digest")]
-    RsaSignError(rsa::Error),
+    RsaSign(rsa::Error),
     #[error("Failed to RSA verify signature")]
-    RsaVerifyError(rsa::Error),
+    RsaVerify(rsa::Error),
     #[error("{0} byte image size is too small to fit header or footer")]
     ImageSizeTooSmall(u64),
+    #[error("FEC error")]
+    Fec(#[from] fec::Error),
     #[error("I/O error")]
-    IoError(#[from] io::Error),
+    Io(#[from] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -172,11 +184,11 @@ impl AlgorithmType {
             Self::None | Self::Unknown(_) => vec![],
             Self::Sha256Rsa2048 | Self::Sha256Rsa4096 | Self::Sha256Rsa8192 => {
                 let scheme = Pkcs1v15Sign::new::<Sha256>();
-                key.sign(scheme, digest).map_err(Error::RsaSignError)?
+                key.sign(scheme, digest).map_err(Error::RsaSign)?
             }
             Self::Sha512Rsa2048 | Self::Sha512Rsa4096 | Self::Sha512Rsa8192 => {
                 let scheme = Pkcs1v15Sign::new::<Sha512>();
-                key.sign(scheme, digest).map_err(Error::RsaSignError)?
+                key.sign(scheme, digest).map_err(Error::RsaSign)?
             }
         };
 
@@ -189,12 +201,12 @@ impl AlgorithmType {
             Self::Sha256Rsa2048 | Self::Sha256Rsa4096 | Self::Sha256Rsa8192 => {
                 let scheme = Pkcs1v15Sign::new::<Sha256>();
                 key.verify(scheme, digest, signature)
-                    .map_err(Error::RsaVerifyError)?;
+                    .map_err(Error::RsaVerify)?;
             }
             Self::Sha512Rsa2048 | Self::Sha512Rsa4096 | Self::Sha512Rsa8192 => {
                 let scheme = Pkcs1v15Sign::new::<Sha512>();
                 key.verify(scheme, digest, signature)
-                    .map_err(Error::RsaVerifyError)?;
+                    .map_err(Error::RsaVerify)?;
             }
         }
 
@@ -281,7 +293,7 @@ impl<W: Write> ToWriter<W> for PropertyDescriptor {
 }
 
 #[derive(Clone, Eq, PartialEq)]
-pub struct HashtreeDescriptor {
+pub struct HashTreeDescriptor {
     pub dm_verity_version: u32,
     pub image_size: u64,
     pub tree_offset: u64,
@@ -299,9 +311,9 @@ pub struct HashtreeDescriptor {
     pub reserved: [u8; 60],
 }
 
-impl fmt::Debug for HashtreeDescriptor {
+impl fmt::Debug for HashTreeDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("HashtreeDescriptor")
+        f.debug_struct("HashTreeDescriptor")
             .field("dm_verity_version", &self.dm_verity_version)
             .field("image_size", &self.image_size)
             .field("tree_offset", &self.tree_offset)
@@ -321,7 +333,7 @@ impl fmt::Debug for HashtreeDescriptor {
     }
 }
 
-impl HashtreeDescriptor {
+impl HashTreeDescriptor {
     /// Calculate the hash tree digests for a single level of the tree. If the
     /// reader's position is block-aligned and `image_size` is a multiple of the
     /// block size, then this function can also be used to calculate the digests
@@ -342,12 +354,7 @@ impl HashtreeDescriptor {
         let mut result = vec![];
 
         while image_size > 0 {
-            if cancel_signal.load(Ordering::SeqCst) {
-                return Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "Received cancel signal",
-                ));
-            }
+            stream::check_cancel(cancel_signal)?;
 
             let n = image_size.min(buf.len() as u64) as usize;
             reader.read_exact(&mut buf[..n])?;
@@ -505,10 +512,14 @@ impl HashtreeDescriptor {
         )?;
 
         if self.root_digest != actual_root_digest {
-            return Err(Error::InvalidRootDigest(
-                hex::encode(&self.root_digest),
-                hex::encode(actual_root_digest),
-            ));
+            return Err(Error::InvalidRootDigest {
+                expected: hex::encode(&self.root_digest),
+                actual: hex::encode(actual_root_digest),
+            });
+        }
+
+        if self.tree_offset != self.image_size {
+            return Err(Error::HashTreeGap);
         }
 
         let mut reader = open_input()?;
@@ -522,21 +533,55 @@ impl HashtreeDescriptor {
             let expected = ring::digest::digest(algorithm, &hash_tree);
             let actual = ring::digest::digest(algorithm, &actual_hash_tree);
 
-            return Err(Error::InvalidRootDigest(
-                hex::encode(expected),
-                hex::encode(actual),
-            ));
+            return Err(Error::InvalidHashTree {
+                expected: hex::encode(expected),
+                actual: hex::encode(actual),
+            });
+        }
+
+        // The FEC data section is optional.
+        if self.fec_size != 0 {
+            if self.fec_offset != self.tree_offset + self.tree_size {
+                return Err(Error::FecDataGap);
+            } else if self.data_block_size != self.hash_block_size {
+                return Err(Error::MismatchedFecBlockSizes {
+                    data: self.data_block_size,
+                    hash: self.hash_block_size,
+                });
+            }
+
+            let fec_size = self
+                .fec_size
+                .to_usize()
+                .ok_or_else(|| Error::IntegerTooLarge("fec_size"))?;
+            let parity = self
+                .fec_num_roots
+                .to_u8()
+                .ok_or_else(|| Error::IntegerTooLarge("fec_num_roots"))?;
+
+            // The FEC covers the hash tree as well.
+            let fec = Fec::new(
+                self.tree_offset + self.tree_size,
+                self.data_block_size,
+                parity,
+            )?;
+
+            let mut fec_data = vec![0u8; fec_size];
+            // Already seeked to FEC.
+            reader.read_exact(&mut fec_data)?;
+
+            fec.verify(open_input, &fec_data, cancel_signal)?;
         }
 
         Ok(())
     }
 }
 
-impl DescriptorTag for HashtreeDescriptor {
+impl DescriptorTag for HashTreeDescriptor {
     const TAG: u64 = 1;
 }
 
-impl<R: Read> FromReader<R> for HashtreeDescriptor {
+impl<R: Read> FromReader<R> for HashTreeDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
@@ -598,7 +643,7 @@ impl<R: Read> FromReader<R> for HashtreeDescriptor {
     }
 }
 
-impl<W: Write> ToWriter<W> for HashtreeDescriptor {
+impl<W: Write> ToWriter<W> for HashTreeDescriptor {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
@@ -701,10 +746,10 @@ impl HashDescriptor {
         let digest = context.finish();
 
         if self.root_digest != digest.as_ref() {
-            return Err(Error::InvalidRootDigest(
-                hex::encode(&self.root_digest),
-                hex::encode(digest),
-            ));
+            return Err(Error::InvalidRootDigest {
+                expected: hex::encode(&self.root_digest),
+                actual: hex::encode(digest),
+            });
         }
 
         Ok(())
@@ -939,7 +984,7 @@ impl<W: Write> ToWriter<W> for ChainPartitionDescriptor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Descriptor {
     Property(PropertyDescriptor),
-    Hashtree(HashtreeDescriptor),
+    HashTree(HashTreeDescriptor),
     Hash(HashDescriptor),
     KernelCmdline(KernelCmdlineDescriptor),
     ChainPartition(ChainPartitionDescriptor),
@@ -949,7 +994,7 @@ pub enum Descriptor {
 impl Descriptor {
     pub fn partition_name(&self) -> Option<&str> {
         match self {
-            Self::Hashtree(d) => Some(&d.partition_name),
+            Self::HashTree(d) => Some(&d.partition_name),
             Self::Hash(d) => Some(&d.partition_name),
             Self::ChainPartition(d) => Some(&d.partition_name),
             _ => None,
@@ -971,9 +1016,9 @@ impl<R: Read> FromReader<R> for Descriptor {
                 let d = PropertyDescriptor::from_reader(&mut inner_reader)?;
                 Self::Property(d)
             }
-            HashtreeDescriptor::TAG => {
-                let d = HashtreeDescriptor::from_reader(&mut inner_reader)?;
-                Self::Hashtree(d)
+            HashTreeDescriptor::TAG => {
+                let d = HashTreeDescriptor::from_reader(&mut inner_reader)?;
+                Self::HashTree(d)
             }
             HashDescriptor::TAG => {
                 let d = HashDescriptor::from_reader(&mut inner_reader)?;
@@ -1019,7 +1064,7 @@ impl<W: Write> ToWriter<W> for Descriptor {
                 d.to_writer(&mut inner_writer)?;
                 d.get_tag()
             }
-            Self::Hashtree(d) => {
+            Self::HashTree(d) => {
                 d.to_writer(&mut inner_writer)?;
                 d.get_tag()
             }
@@ -1210,11 +1255,10 @@ impl Header {
         }
 
         if key_raw.len() != self.algorithm_type.public_key_len() {
-            return Err(Error::IncorrectKeySize(
-                key_raw.len(),
-                self.algorithm_type,
-                self.algorithm_type.public_key_len(),
-            ));
+            return Err(Error::IncorrectKeySize {
+                key_size: key_raw.len(),
+                algo: self.algorithm_type,
+            });
         }
 
         // The public key and the sizes of the hash and signature are included
@@ -1381,7 +1425,7 @@ impl<R: Read> FromReader<R> for Header {
             .checked_add(hash_size)
             .map_or(false, |s| s > auth_block.len())
         {
-            return Err(Error::OutOfBounds("hash_offset", "hash_size"));
+            return Err(Error::IntegerTooLarge("hash_offset + hash_size"));
         }
         let hash = &auth_block[hash_offset..hash_offset + hash_size];
 
@@ -1389,7 +1433,7 @@ impl<R: Read> FromReader<R> for Header {
             .checked_add(signature_size)
             .map_or(false, |s| s > auth_block.len())
         {
-            return Err(Error::OutOfBounds("signature_offset", "signature_size"));
+            return Err(Error::IntegerTooLarge("signature_offset + signature_size"));
         }
         let signature = &auth_block[signature_offset..signature_offset + signature_size];
 
@@ -1399,7 +1443,9 @@ impl<R: Read> FromReader<R> for Header {
             .checked_add(public_key_size)
             .map_or(false, |s| s > aux_block.len())
         {
-            return Err(Error::OutOfBounds("public_key_offset", "public_key_size"));
+            return Err(Error::IntegerTooLarge(
+                "public_key_offset + public_key_size",
+            ));
         }
         let public_key = &aux_block[public_key_offset..public_key_offset + public_key_size];
 
@@ -1407,9 +1453,8 @@ impl<R: Read> FromReader<R> for Header {
             .checked_add(public_key_metadata_size)
             .map_or(false, |s| s > aux_block.len())
         {
-            return Err(Error::OutOfBounds(
-                "public_key_metadata_offset",
-                "public_key_metadata_size",
+            return Err(Error::IntegerTooLarge(
+                "public_key_metadata_offset + public_key_metadata_size",
             ));
         }
         let public_key_metadata = &aux_block
@@ -1582,7 +1627,7 @@ pub fn decode_public_key(data: &[u8]) -> Result<RsaPublicKey> {
 
     let modulus = BigUint::from_bytes_be(&modulus_raw);
     let public_key =
-        RsaPublicKey::new(modulus, BigUint::from(65537u32)).map_err(Error::RsaVerifyError)?;
+        RsaPublicKey::new(modulus, BigUint::from(65537u32)).map_err(Error::RsaVerify)?;
 
     Ok(public_key)
 }
@@ -1597,7 +1642,7 @@ pub fn load_image(mut reader: impl Read + Seek) -> Result<(Header, Option<Footer
 
     let footer = match Footer::from_reader(&mut reader) {
         Ok(f) => Some(f),
-        Err(e @ Error::IoError(_)) => return Err(e),
+        Err(e @ Error::Io(_)) => return Err(e),
         Err(_) => None,
     };
 
