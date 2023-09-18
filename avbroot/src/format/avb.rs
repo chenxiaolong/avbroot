@@ -77,9 +77,9 @@ pub enum Error {
     #[error("Expected root digest {expected}, but have {actual}")]
     InvalidRootDigest { expected: String, actual: String },
     #[error("Expected hash tree {expected}, but have {actual}")]
-    InvalidHashtree { expected: String, actual: String },
+    InvalidHashTree { expected: String, actual: String },
     #[error("Hash tree does not immediately follow image data")]
-    HashtreeGap,
+    HashTreeGap,
     #[error("FEC data does not immediately follow hash tree")]
     FecDataGap,
     #[error("FEC requires data block size ({data}) and hash block size ({hash}) to match")]
@@ -293,7 +293,7 @@ impl<W: Write> ToWriter<W> for PropertyDescriptor {
 }
 
 #[derive(Clone, Eq, PartialEq)]
-pub struct HashtreeDescriptor {
+pub struct HashTreeDescriptor {
     pub dm_verity_version: u32,
     pub image_size: u64,
     pub tree_offset: u64,
@@ -311,9 +311,9 @@ pub struct HashtreeDescriptor {
     pub reserved: [u8; 60],
 }
 
-impl fmt::Debug for HashtreeDescriptor {
+impl fmt::Debug for HashTreeDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("HashtreeDescriptor")
+        f.debug_struct("HashTreeDescriptor")
             .field("dm_verity_version", &self.dm_verity_version)
             .field("image_size", &self.image_size)
             .field("tree_offset", &self.tree_offset)
@@ -333,7 +333,7 @@ impl fmt::Debug for HashtreeDescriptor {
     }
 }
 
-impl HashtreeDescriptor {
+impl HashTreeDescriptor {
     /// Calculate the hash tree digests for a single level of the tree. If the
     /// reader's position is block-aligned and `image_size` is a multiple of the
     /// block size, then this function can also be used to calculate the digests
@@ -519,7 +519,7 @@ impl HashtreeDescriptor {
         }
 
         if self.tree_offset != self.image_size {
-            return Err(Error::HashtreeGap);
+            return Err(Error::HashTreeGap);
         }
 
         let mut reader = open_input()?;
@@ -533,7 +533,7 @@ impl HashtreeDescriptor {
             let expected = ring::digest::digest(algorithm, &hash_tree);
             let actual = ring::digest::digest(algorithm, &actual_hash_tree);
 
-            return Err(Error::InvalidHashtree {
+            return Err(Error::InvalidHashTree {
                 expected: hex::encode(expected),
                 actual: hex::encode(actual),
             });
@@ -577,11 +577,11 @@ impl HashtreeDescriptor {
     }
 }
 
-impl DescriptorTag for HashtreeDescriptor {
+impl DescriptorTag for HashTreeDescriptor {
     const TAG: u64 = 1;
 }
 
-impl<R: Read> FromReader<R> for HashtreeDescriptor {
+impl<R: Read> FromReader<R> for HashTreeDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
@@ -643,7 +643,7 @@ impl<R: Read> FromReader<R> for HashtreeDescriptor {
     }
 }
 
-impl<W: Write> ToWriter<W> for HashtreeDescriptor {
+impl<W: Write> ToWriter<W> for HashTreeDescriptor {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
@@ -984,7 +984,7 @@ impl<W: Write> ToWriter<W> for ChainPartitionDescriptor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Descriptor {
     Property(PropertyDescriptor),
-    Hashtree(HashtreeDescriptor),
+    HashTree(HashTreeDescriptor),
     Hash(HashDescriptor),
     KernelCmdline(KernelCmdlineDescriptor),
     ChainPartition(ChainPartitionDescriptor),
@@ -994,7 +994,7 @@ pub enum Descriptor {
 impl Descriptor {
     pub fn partition_name(&self) -> Option<&str> {
         match self {
-            Self::Hashtree(d) => Some(&d.partition_name),
+            Self::HashTree(d) => Some(&d.partition_name),
             Self::Hash(d) => Some(&d.partition_name),
             Self::ChainPartition(d) => Some(&d.partition_name),
             _ => None,
@@ -1016,9 +1016,9 @@ impl<R: Read> FromReader<R> for Descriptor {
                 let d = PropertyDescriptor::from_reader(&mut inner_reader)?;
                 Self::Property(d)
             }
-            HashtreeDescriptor::TAG => {
-                let d = HashtreeDescriptor::from_reader(&mut inner_reader)?;
-                Self::Hashtree(d)
+            HashTreeDescriptor::TAG => {
+                let d = HashTreeDescriptor::from_reader(&mut inner_reader)?;
+                Self::HashTree(d)
             }
             HashDescriptor::TAG => {
                 let d = HashDescriptor::from_reader(&mut inner_reader)?;
@@ -1064,7 +1064,7 @@ impl<W: Write> ToWriter<W> for Descriptor {
                 d.to_writer(&mut inner_writer)?;
                 d.get_tag()
             }
-            Self::Hashtree(d) => {
+            Self::HashTree(d) => {
                 d.to_writer(&mut inner_writer)?;
                 d.get_tag()
             }

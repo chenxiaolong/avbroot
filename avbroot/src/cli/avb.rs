@@ -34,7 +34,7 @@ fn ensure_name_is_safe(name: &str) -> Result<()> {
 
 /// Recursively verify an image's vbmeta header and all of the chained images.
 /// `seen` is used to prevent cycles. `descriptors` will contain all of the hash
-/// and hashtree descriptors that need to be verified.
+/// and hash tree descriptors that need to be verified.
 pub fn verify_headers(
     directory: &Path,
     name: &str,
@@ -81,7 +81,7 @@ pub fn verify_headers(
         };
 
         match descriptor {
-            avb::Descriptor::Hashtree(_) | avb::Descriptor::Hash(_) => {
+            avb::Descriptor::HashTree(_) | avb::Descriptor::Hash(_) => {
                 if let Some(prev) = descriptors.get(target_name) {
                     if prev != descriptor {
                         bail!("{name} descriptor does not match previous encounter");
@@ -128,13 +128,15 @@ pub fn verify_descriptors(
             };
 
             match descriptor {
-                Descriptor::Hashtree(d) => {
-                    status!("Verifying hashtree descriptor for: {name}");
+                Descriptor::HashTree(d) => {
+                    status!("Verifying hash tree descriptor for: {name}");
                     d.verify(
                         || Ok(Box::new(BufReader::new(reader.clone()))),
                         cancel_signal,
                     )
-                    .with_context(|| format!("Failed to verify hashtree descriptor for: {name}"))?;
+                    .with_context(|| {
+                        format!("Failed to verify hash tree descriptor for: {name}")
+                    })?;
                 }
                 Descriptor::Hash(d) => {
                     status!("Verifying hash descriptor for: {name}");

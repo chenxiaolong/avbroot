@@ -20,7 +20,7 @@ This subcommand shows all of the vbmeta header and footer fields. `vbmeta` parti
 avbroot avb verify -i <root vbmeta image> -p <public key>
 ```
 
-This subcommand verifies the vbmeta header signature and the hashes for all vbmeta descriptors (including hashtree descriptors). If the vbmeta image has a chain descriptor for another partition, that partition image will be verified as well (recursively). All partitions are expected to be in the same directory as the vbmeta image being verified.
+This subcommand verifies the vbmeta header signature and the hashes for all vbmeta descriptors (including hash tree descriptors). If the vbmeta image has a chain descriptor for another partition, that partition image will be verified as well (recursively). All partitions are expected to be in the same directory as the vbmeta image being verified.
 
 If `-p` is omitted, the signatures and hashes are checked only for validity, not that they are trusted.
 
@@ -65,7 +65,7 @@ This set of commands is for working with dm-verity FEC (forward error correction
 The same raw FEC data can be stored in several ways:
 
 * cryptsetup's `veritysetup` does not use any file format at all. It must be told the FEC location and parameters using the `--fec-*` options.
-* AOSP's AVB 2.0 stores the FEC data inside the partition as `[Partition data][Hashtree][FEC data]`. The location and parameters are stored in the vbmeta hashtree descriptors.
+* AOSP's AVB 2.0 stores the FEC data inside the partition as `[Partition data][Hash tree][FEC data]`. The location and parameters are stored in the vbmeta hash tree descriptors.
 * AOSP's `fec` tool stores the FEC data in a standalone file with a header containing the FEC parameters.
 
 The `avbroot fec` commands use AOSP's standalone FEC file format.
