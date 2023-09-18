@@ -11,7 +11,7 @@ use std::{
     num::ParseIntError,
     ops::Range,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc},
+    sync::atomic::AtomicBool,
 };
 
 use regex::bytes::Regex;
@@ -89,7 +89,7 @@ fn save_ramdisk(entries: &[CpioEntryNew], format: CompressedFormat) -> Result<Ve
 }
 
 pub trait BootImagePatcher {
-    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &Arc<AtomicBool>) -> Result<()>;
+    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()>;
 }
 
 /// Root a boot image with Magisk.
@@ -254,7 +254,7 @@ impl MagiskRootPatcher {
 }
 
 impl BootImagePatcher for MagiskRootPatcher {
-    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
         let zip_reader = File::open(&self.apk_path)?;
         let mut zip = ZipArchive::new(BufReader::new(zip_reader))?;
 
@@ -466,7 +466,7 @@ impl OtaCertPatcher {
 }
 
 impl BootImagePatcher for OtaCertPatcher {
-    fn patch(&self, boot_image: &mut BootImage, _cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+    fn patch(&self, boot_image: &mut BootImage, _cancel_signal: &AtomicBool) -> Result<()> {
         let patched_any = match boot_image {
             BootImage::V0Through2(b) => self.patch_ramdisk(&mut b.ramdisk)?,
             BootImage::V3Through4(b) => self.patch_ramdisk(&mut b.ramdisk)?,
@@ -557,7 +557,7 @@ impl PrepatchedImagePatcher {
 }
 
 impl BootImagePatcher for PrepatchedImagePatcher {
-    fn patch(&self, boot_image: &mut BootImage, _cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+    fn patch(&self, boot_image: &mut BootImage, _cancel_signal: &AtomicBool) -> Result<()> {
         let prepatched_image = {
             let raw_reader = File::open(&self.prepatched)?;
             BootImage::from_reader(BufReader::new(raw_reader))?
@@ -735,7 +735,7 @@ pub fn patch_boot(
     writer: impl Write + Seek,
     key: &RsaPrivateKey,
     patchers: &[Box<dyn BootImagePatcher + Send>],
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let (mut header, footer, image_size) = avb::load_image(&mut reader)?;
     let Some(footer) = footer else {

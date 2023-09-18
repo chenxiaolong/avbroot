@@ -7,10 +7,7 @@ use std::{
     cmp, fmt,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     str,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
@@ -337,7 +334,7 @@ impl HashtreeDescriptor {
         block_size: u32,
         algorithm: &'static Algorithm,
         salt: &[u8],
-        cancel_signal: &Arc<AtomicBool>,
+        cancel_signal: &AtomicBool,
     ) -> io::Result<Vec<u8>> {
         // Each digest must be a power of 2.
         let digest_padding = algorithm.output_len.next_power_of_two() - algorithm.output_len;
@@ -384,7 +381,7 @@ impl HashtreeDescriptor {
         block_size: u32,
         algorithm: &'static Algorithm,
         salt: &[u8],
-        cancel_signal: &Arc<AtomicBool>,
+        cancel_signal: &AtomicBool,
     ) -> io::Result<Vec<u8>> {
         assert!(
             image_size > block_size as u64,
@@ -418,7 +415,7 @@ impl HashtreeDescriptor {
         block_size: u32,
         algorithm: &'static Algorithm,
         salt: &[u8],
-        cancel_signal: &Arc<AtomicBool>,
+        cancel_signal: &AtomicBool,
     ) -> io::Result<(Vec<u8>, Vec<u8>)> {
         // Small files are hashed directly, exactly like a hash descriptor.
         if image_size <= u64::from(block_size) {
@@ -486,7 +483,7 @@ impl HashtreeDescriptor {
     pub fn verify(
         &self,
         open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
-        cancel_signal: &Arc<AtomicBool>,
+        cancel_signal: &AtomicBool,
     ) -> Result<()> {
         let algorithm = match self.hash_algorithm.as_str() {
             "sha256" => &ring::digest::SHA256,
@@ -683,7 +680,7 @@ impl fmt::Debug for HashDescriptor {
 
 impl HashDescriptor {
     /// Verify the root hash against the input reader.
-    pub fn verify(&self, reader: impl Read, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+    pub fn verify(&self, reader: impl Read, cancel_signal: &AtomicBool) -> Result<()> {
         let algorithm = match self.hash_algorithm.as_str() {
             "sha256" => &ring::digest::SHA256,
             "sha512" => &ring::digest::SHA512,

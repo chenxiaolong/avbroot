@@ -12,7 +12,6 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Sender},
-        Arc,
     },
     thread::{self, ThreadId},
     time::{Duration, Instant},
@@ -140,7 +139,7 @@ fn download_range(
     mut file: PSeekFile,
     initial_range: Range<u64>,
     channel: Sender<Message>,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     assert!(initial_range.start < initial_range.end);
 
@@ -215,7 +214,7 @@ fn download_thread(
     file: PSeekFile,
     initial_range: Range<u64>,
     channel: mpsc::Sender<Message>,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) {
     let result = download_range(url, file, initial_range, channel.clone(), cancel_signal);
 
@@ -255,7 +254,7 @@ fn download_ranges(
     display: &mut dyn ProgressDisplay,
     max_threads: usize,
     max_errors: u8,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<Vec<Range<u64>>> {
     let file_size = get_content_length(url)?;
 
@@ -433,7 +432,7 @@ pub fn download(
     display: &mut dyn ProgressDisplay,
     max_tasks: usize,
     max_errors: u8,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let state_path = state_path(output);
     let ranges = match read_state(&state_path)? {

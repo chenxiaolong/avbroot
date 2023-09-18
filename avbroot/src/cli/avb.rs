@@ -10,7 +10,7 @@ use std::{
     io::{self, BufReader},
     path::{Path, PathBuf},
     str,
-    sync::{atomic::AtomicBool, Arc},
+    sync::atomic::AtomicBool,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -107,7 +107,7 @@ pub fn verify_headers(
 pub fn verify_descriptors(
     directory: &Path,
     descriptors: &HashMap<String, Descriptor>,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     descriptors
         .par_iter()
@@ -149,7 +149,7 @@ pub fn verify_descriptors(
         .collect()
 }
 
-pub fn avb_main(cli: &AvbCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+pub fn avb_main(cli: &AvbCli, cancel_signal: &AtomicBool) -> Result<()> {
     match &cli.command {
         AvbCommand::Dump(c) => {
             let raw_reader = File::open(&c.input)
