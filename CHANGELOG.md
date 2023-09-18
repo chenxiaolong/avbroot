@@ -14,6 +14,7 @@
 * Add `--version` option to print out avbroot's version ([Issue #138], [PR #140 @chenxiaolong])
 * Add support for dm-verify FEC (forward error correction) ([Issue #145], [PR #146 @chenxiaolong])
     * `ota verify` and `avb verify` will now check the FEC data.
+* Print status and warning messages to stderr ([PR #149 @chenxiaolong])
 
 Behind-the-scenes changes:
 
@@ -49,3 +50,4 @@ Behind-the-scenes changes:
 [PR #140 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/140
 [PR #146 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/146
 [PR #147 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/147
+[PR #149 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/149
