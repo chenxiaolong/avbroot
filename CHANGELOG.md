@@ -12,6 +12,8 @@
 * Upgrade xz version in precompiled binaries ([Issue #138], [PR #139 @chenxiaolong])
     * This fixes the `ota extract` and `ota verify` commands in some multithreaded situations.
 * Add `--version` option to print out avbroot's version ([Issue #138], [PR #140 @chenxiaolong])
+* Add support for dm-verify FEC (forward error correction) ([Issue #145], [PR #146 @chenxiaolong])
+    * `ota verify` and `avb verify` will now check the FEC data.
 
 Behind-the-scenes changes:
 
@@ -37,6 +39,7 @@ Behind-the-scenes changes:
 
 <!-- Do not manually edit the lines below. Use `cargo xtask update-changelog` to regenerate. -->
 [Issue #138]: https://github.com/chenxiaolong/avbroot/issues/138
+[Issue #145]: https://github.com/chenxiaolong/avbroot/issues/145
 [PR #130 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #135 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/135
@@ -44,4 +47,5 @@ Behind-the-scenes changes:
 [PR #137 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/137
 [PR #139 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/139
 [PR #140 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/140
+[PR #146 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/146
 [PR #147 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/147
