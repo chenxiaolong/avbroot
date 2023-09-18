@@ -13,6 +13,10 @@
     * This fixes the `ota extract` and `ota verify` commands in some multithreaded situations.
 * Add `--version` option to print out avbroot's version ([Issue #138], [PR #140 @chenxiaolong])
 
+Behind-the-scenes changes:
+
+* Remove unnecessary use of `Arc` ([PR #147 @chenxiaolong])
+
 ### Version 2.0.2
 
 * Fix `data_offset` being set for payload operations that don't need it ([PR #136 @chenxiaolong])
@@ -40,3 +44,4 @@ Behind-the-scenes changes:
 [PR #137 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/137
 [PR #139 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/139
 [PR #140 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/140
+[PR #147 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/147
