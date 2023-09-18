@@ -7,7 +7,7 @@ use std::{
     collections::BTreeMap,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     iter,
-    sync::{atomic::AtomicBool, Arc},
+    sync::atomic::AtomicBool,
 };
 
 use cms::signed_data::SignedData;
@@ -452,10 +452,7 @@ fn parse_ota_sig(mut reader: impl Read + Seek) -> Result<(SignedData, u64)> {
 /// CMS signed attributes are intentionally not supported because AOSP recovery
 /// does not support them either. It expects the CMS [`SignedData`] structure to
 /// be used for nothing more than a raw signature transport mechanism.
-pub fn verify_ota(
-    mut reader: impl Read + Seek,
-    cancel_signal: &Arc<AtomicBool>,
-) -> Result<Certificate> {
+pub fn verify_ota(mut reader: impl Read + Seek, cancel_signal: &AtomicBool) -> Result<Certificate> {
     let (sd, hashed_size) = parse_ota_sig(&mut reader)?;
 
     // Make sure the certificate in the CMS structure matches the otacert zip

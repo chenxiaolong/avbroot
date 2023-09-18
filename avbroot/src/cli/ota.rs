@@ -11,7 +11,7 @@ use std::{
     fs::{self, File},
     io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::{atomic::AtomicBool, Mutex},
     time::Instant,
 };
 
@@ -143,7 +143,7 @@ fn open_input_streams(
     required_images: &HashMap<String, String>,
     external_images: &HashMap<String, PathBuf>,
     header: &PayloadHeader,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<HashMap<String, Box<dyn ReadSeek + Send>>> {
     let mut input_streams = HashMap::<String, Box<dyn ReadSeek + Send>>::new();
 
@@ -185,7 +185,7 @@ fn patch_boot_images(
     root_patcher: Option<Box<dyn BootImagePatcher + Send>>,
     key_avb: &RsaPrivateKey,
     cert_ota: &Certificate,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let mut boot_patchers = HashMap::<&str, Vec<Box<dyn BootImagePatcher + Send>>>::new();
     boot_patchers
@@ -426,7 +426,7 @@ fn compress_image(
     mut stream: &mut Box<dyn ReadSeek + Send>,
     header: &Mutex<PayloadHeader>,
     block_size: u32,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     stream.rewind()?;
 
@@ -460,7 +460,7 @@ fn patch_ota_payload(
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
     cert_ota: &Certificate,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
     let header =
         PayloadHeader::from_reader(open_payload()?).context("Failed to load OTA payload header")?;
@@ -630,7 +630,7 @@ fn patch_ota_zip(
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
     cert_ota: &Certificate,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<(OtaMetadata, u64)> {
     let mut missing = BTreeSet::from([
         ota::PATH_METADATA_PB,
@@ -797,7 +797,7 @@ fn extract_ota_zip(
     payload_size: u64,
     header: &PayloadHeader,
     images: &BTreeSet<String>,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     for name in images {
         if Path::new(name).file_name() != Some(OsStr::new(name)) {
@@ -843,7 +843,7 @@ fn extract_ota_zip(
     Ok(())
 }
 
-pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()> {
     let output = cli.output.as_ref().map_or_else(
         || {
             let mut s = cli.input.clone().into_os_string();
@@ -1008,7 +1008,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &Arc<AtomicBool>) -> Resu
     Ok(())
 }
 
-pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Result<()> {
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
@@ -1067,7 +1067,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &Arc<AtomicBool>) -> 
     Ok(())
 }
 
-pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> {
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
@@ -1184,7 +1184,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &Arc<AtomicBool>) -> Re
     Ok(())
 }
 
-pub fn ota_main(cli: &OtaCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+pub fn ota_main(cli: &OtaCli, cancel_signal: &AtomicBool) -> Result<()> {
     match &cli.command {
         OtaCommand::Patch(c) => patch_subcommand(c, cancel_signal),
         OtaCommand::Extract(c) => extract_subcommand(c, cancel_signal),

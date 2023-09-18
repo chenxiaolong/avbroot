@@ -6,7 +6,7 @@
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
-    sync::{atomic::AtomicBool, Arc},
+    sync::atomic::AtomicBool,
 };
 
 use base64::engine::general_purpose::STANDARD;
@@ -619,7 +619,7 @@ pub fn verify_payload(
     mut reader: impl Read + Seek,
     cert: &Certificate,
     properties_raw: &str,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let header = PayloadHeader::from_reader(&mut reader)?;
     reader.rewind()?;
@@ -753,7 +753,7 @@ pub fn apply_operation(
     block_size: u32,
     blob_offset: u64,
     op: &InstallOperation,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     for extent in &op.dst_extents {
         let start_block = extent
@@ -859,7 +859,7 @@ pub fn extract_image_to_memory(
     open_payload: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
     header: &PayloadHeader,
     partition_name: &str,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<SharedCursor> {
     let partition = header
         .manifest
@@ -900,7 +900,7 @@ pub fn extract_images<'a>(
     open_output: impl Fn(&str) -> io::Result<Box<dyn WriteSeek>> + Sync,
     header: &PayloadHeader,
     partition_names: impl IntoIterator<Item = &'a str>,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let mut remaining = partition_names.into_iter().collect::<HashSet<_>>();
     // We parallelize at the operation level or else one thread might get stuck

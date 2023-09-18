@@ -90,7 +90,7 @@ fn exclusion_to_inclusion(holes: &[Range<u64>], file_range: Range<u64>) -> Resul
 fn strip_image(
     input: &Path,
     output: &Path,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<(Vec<Range<u64>>, [u8; 32])> {
     println!("Stripping {input:?} to {output:?}");
 
@@ -194,7 +194,7 @@ fn url_filename(url: &str) -> Result<&str> {
         .ok_or_else(|| anyhow!("Failed to determine filename from URL: {url}"))
 }
 
-fn hash_file(path: &Path, cancel_signal: &Arc<AtomicBool>) -> Result<[u8; 32]> {
+fn hash_file(path: &Path, cancel_signal: &AtomicBool) -> Result<[u8; 32]> {
     println!("Calculating hash of {path:?}");
 
     let raw_reader =
@@ -211,7 +211,7 @@ fn hash_file(path: &Path, cancel_signal: &Arc<AtomicBool>) -> Result<[u8; 32]> {
     Ok(digest.as_ref().try_into().unwrap())
 }
 
-fn verify_hash(path: &Path, sha256: &[u8; 32], cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+fn verify_hash(path: &Path, sha256: &[u8; 32], cancel_signal: &AtomicBool) -> Result<()> {
     let digest = hash_file(path, cancel_signal)?;
 
     if sha256 != digest.as_ref() {
@@ -239,7 +239,7 @@ fn download_file(
     sections: Option<&[Range<u64>]>,
     path_is_dir: bool,
     validate: Validate,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<PathBuf> {
     let path = if path_is_dir {
         path.join(url_filename(url)?)
@@ -285,7 +285,7 @@ fn download_magisk(
     config: &Config,
     work_dir: &Path,
     revalidate: bool,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<PathBuf> {
     download_file(
         &work_dir.join("magisk"),
@@ -308,7 +308,7 @@ fn download_image(
     work_dir: &Path,
     stripped: bool,
     revalidate: bool,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<PathBuf> {
     let info = &config.device[device];
     let mut path = work_dir.join(device);
@@ -396,7 +396,7 @@ fn patch_image(
     input_file: &Path,
     output_file: &Path,
     extra_args: &[OsString],
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> Result<()> {
     println!("Patching {input_file:?}");
 
@@ -426,11 +426,7 @@ fn patch_image(
     Ok(())
 }
 
-fn extract_image(
-    input_file: &Path,
-    output_dir: &Path,
-    cancel_signal: &Arc<AtomicBool>,
-) -> Result<()> {
+fn extract_image(input_file: &Path, output_dir: &Path, cancel_signal: &AtomicBool) -> Result<()> {
     println!("Extracting AVB partitions from {input_file:?}");
 
     let cli = ExtractCli::try_parse_from([
@@ -445,7 +441,7 @@ fn extract_image(
     Ok(())
 }
 
-fn verify_image(input_file: &Path, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+fn verify_image(input_file: &Path, cancel_signal: &AtomicBool) -> Result<()> {
     println!("Verifying signatures in {input_file:?}");
 
     let (_temp_key_dir, _, key_args) = test_keys()?;
@@ -510,7 +506,7 @@ fn filter_devices<'a>(config: &'a Config, cli: &'a DeviceGroup) -> Result<BTreeS
     Ok(devices)
 }
 
-fn strip_subcommand(cli: &StripCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+fn strip_subcommand(cli: &StripCli, cancel_signal: &AtomicBool) -> Result<()> {
     let (sections, sha256) = strip_image(&cli.input, &cli.output, cancel_signal)?;
 
     println!("Preserved sections:");
@@ -523,7 +519,7 @@ fn strip_subcommand(cli: &StripCli, cancel_signal: &Arc<AtomicBool>) -> Result<(
     Ok(())
 }
 
-fn add_subcommand(cli: &AddCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+fn add_subcommand(cli: &AddCli, cancel_signal: &AtomicBool) -> Result<()> {
     let (config, mut document) = config::load_config(&cli.config.config)?;
 
     let image_dir = cli.config.work_dir.join(&cli.device);
@@ -637,7 +633,7 @@ fn add_subcommand(cli: &AddCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
     Ok(())
 }
 
-fn download_subcommand(cli: &DownloadCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+fn download_subcommand(cli: &DownloadCli, cancel_signal: &AtomicBool) -> Result<()> {
     let (config, _) = config::load_config(&cli.config.config)?;
     let devices = filter_devices(&config, &cli.device)?;
 
@@ -668,7 +664,7 @@ fn download_subcommand(cli: &DownloadCli, cancel_signal: &Arc<AtomicBool>) -> Re
     Ok(())
 }
 
-fn test_subcommand(cli: &TestCli, cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
     let (config, _) = config::load_config(&cli.config.config)?;
     let devices = filter_devices(&config, &cli.device)?;
 

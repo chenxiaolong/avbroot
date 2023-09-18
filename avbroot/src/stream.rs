@@ -569,7 +569,7 @@ pub fn copy_n_inspect(
     mut writer: impl Write,
     mut size: u64,
     mut inspect: impl FnMut(&[u8]),
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> io::Result<()> {
     let mut buf = [0u8; 16384];
 
@@ -599,7 +599,7 @@ pub fn copy_n(
     reader: impl Read,
     writer: impl Write,
     size: u64,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> io::Result<()> {
     copy_n_inspect(reader, writer, size, |_| {}, cancel_signal)
 }
@@ -610,7 +610,7 @@ pub fn copy_n(
 pub fn copy(
     mut reader: impl Read,
     mut writer: impl Write,
-    cancel_signal: &Arc<AtomicBool>,
+    cancel_signal: &AtomicBool,
 ) -> io::Result<u64> {
     let mut buf = [0u8; 16384];
     let mut copied = 0;
@@ -640,10 +640,7 @@ pub fn copy(
 mod tests {
     use std::{
         io::{self, Cursor, Read, Seek, SeekFrom, Write},
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
+        sync::atomic::{AtomicBool, Ordering},
     };
 
     use ring::digest::Context;
@@ -869,7 +866,7 @@ mod tests {
 
     #[test]
     fn copy() {
-        let cancel_signal = Arc::new(AtomicBool::new(false));
+        let cancel_signal = AtomicBool::new(false);
         let mut reader = Cursor::new(b"foobar");
         let mut writer = Cursor::new([0u8; 6]);
 

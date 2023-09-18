@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::atomic::AtomicBool;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -34,7 +34,7 @@ pub struct Cli {
     pub command: Command,
 }
 
-pub fn main(cancel_signal: &Arc<AtomicBool>) -> Result<()> {
+pub fn main(cancel_signal: &AtomicBool) -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
