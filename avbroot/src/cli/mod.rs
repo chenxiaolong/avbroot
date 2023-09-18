@@ -14,13 +14,13 @@ pub mod ramdisk;
 
 macro_rules! status {
     ($($arg:tt)*) => {
-        println!("\x1b[1m[*] {}\x1b[0m", format!($($arg)*))
+        eprintln!("\x1b[1m[*] {}\x1b[0m", format!($($arg)*))
     }
 }
 
 macro_rules! warning {
     ($($arg:tt)*) => {
-        println!("\x1b[1;31m[WARNING] {}\x1b[0m", format!($($arg)+))
+        eprintln!("\x1b[1;31m[WARNING] {}\x1b[0m", format!($($arg)*))
     }
 }
 
