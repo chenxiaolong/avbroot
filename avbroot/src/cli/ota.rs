@@ -31,7 +31,7 @@ use crate::{
     crypto::{self, PassphraseSource},
     format::{
         avb::Header,
-        avb::{self, AlgorithmType, Descriptor},
+        avb::{self, Descriptor},
         bootimage::BootImage,
         ota::{self, SigningWriter, ZipEntry},
         padding,
@@ -344,16 +344,7 @@ fn update_vbmeta_descriptors(
             }
         }
 
-        // avbroot doesn't support any other types.
-        if parent_header.algorithm_type != AlgorithmType::Sha256Rsa4096 {
-            parent_header.algorithm_type = AlgorithmType::Sha256Rsa4096;
-
-            status!(
-                "{} signature algorithm type changed to {:?}",
-                name,
-                parent_header.algorithm_type
-            );
-        }
+        parent_header.set_algo_for_key(key)?;
 
         for dep in deps.iter() {
             // This can't fail since the descriptor must have existed for the
@@ -725,7 +716,7 @@ fn patch_ota_zip(
                         // The zip library doesn't provide us with a seekable
                         // reader, so we make our own from the underlying file.
                         Ok(Box::new(SectionReader::new(
-                            BufReader::new(raw_reader.clone()),
+                            BufReader::new(raw_reader.reopen()),
                             payload_offset,
                             payload_size,
                         )?))
@@ -828,12 +819,12 @@ fn extract_ota_zip(
     payload::extract_images(
         || {
             Ok(Box::new(SectionReader::new(
-                BufReader::new(raw_reader.clone()),
+                BufReader::new(raw_reader.reopen()),
                 payload_offset,
                 payload_size,
             )?))
         },
-        |name| Ok(Box::new(BufWriter::new(output_files[name].clone()))),
+        |name| Ok(Box::new(BufWriter::new(output_files[name].reopen()))),
         header,
         images.iter().map(|n| n.as_str()),
         cancel_signal,
@@ -923,7 +914,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
-    let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.clone()))
+    let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.reopen()))
         .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
 
     // Open the output file for reading too, so we can verify offsets later.
@@ -1012,7 +1003,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
-    let mut zip = ZipArchive::new(BufReader::new(raw_reader.clone()))
+    let mut zip = ZipArchive::new(BufReader::new(raw_reader.reopen()))
         .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
     let payload_entry = zip
         .by_name(ota::PATH_PAYLOAD)
@@ -1022,7 +1013,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
 
     // Open the payload data directly.
     let mut payload_reader = SectionReader::new(
-        BufReader::new(raw_reader.clone()),
+        BufReader::new(raw_reader.reopen()),
         payload_offset,
         payload_size,
     )?;
@@ -1177,7 +1168,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         &mut seen,
         &mut descriptors,
     )?;
-    cli::avb::verify_descriptors(temp_dir.path(), &descriptors, cancel_signal)?;
+    cli::avb::verify_descriptors(temp_dir.path(), &descriptors, false, cancel_signal)?;
 
     status!("Signatures are all valid!");
 

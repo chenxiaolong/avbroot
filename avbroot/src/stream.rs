@@ -399,9 +399,10 @@ impl<W: Write + Seek> Write for HolePunchingWriter<W> {
     }
 }
 
-/// A file wrapper that uses a userspace file offset. A cloned instances uses
-/// the same underlying kernel file descriptor, but a new userspace file offset.
-#[derive(Clone)]
+/// A file wrapper that uses a userspace file offset. A reopened instance uses
+/// the same underlying kernel file descriptor, but a new userspace file offset,
+/// initially set to 0.
+#[derive(Debug)]
 pub struct PSeekFile {
     // The lock is needed because flush() takes a `&mut self`.
     file: Arc<RwLock<File>>,
@@ -412,6 +413,13 @@ impl PSeekFile {
     pub fn new(file: File) -> Self {
         Self {
             file: Arc::new(RwLock::new(file)),
+            offset: 0,
+        }
+    }
+
+    pub fn reopen(&self) -> Self {
+        Self {
+            file: self.file.clone(),
             offset: 0,
         }
     }
@@ -510,17 +518,24 @@ impl Seek for PSeekFile {
 /// readers into different parts of the same [`SharedCursor`] writer and the
 /// read operation is significantly more expensive than the write operation (eg.
 /// due to decompression).
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct SharedCursor {
     inner: Arc<Mutex<Cursor<Vec<u8>>>>,
     offset: u64,
 }
 
 impl SharedCursor {
-    pub fn clone_rewind(&self) -> Self {
-        let mut new = self.clone();
-        new.offset = 0;
-        new
+    pub fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+
+    pub fn reopen(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            offset: 0,
+        }
     }
 }
 
@@ -833,8 +848,8 @@ mod tests {
     fn pseek_file() {
         let raw_file = tempfile::tempfile().unwrap();
         let mut a = PSeekFile::new(raw_file);
-        let mut b = a.clone();
-        let mut c = b.clone();
+        let mut b = a.reopen();
+        let mut c = b.reopen();
 
         b.write_all(b"foobar").unwrap();
         c.write_all(b"hello").unwrap();
@@ -853,8 +868,8 @@ mod tests {
     #[test]
     fn shared_cursor() {
         let mut a = SharedCursor::default();
-        let mut b = a.clone();
-        let mut c = b.clone();
+        let mut b = a.reopen();
+        let mut c = b.reopen();
 
         b.write_all(b"foobar").unwrap();
         c.write_all(b"hello").unwrap();

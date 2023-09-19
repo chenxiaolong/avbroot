@@ -20,7 +20,7 @@ const-oid = "0.9.5"
 ctrlc = "3.4.0"
 flate2 = "1.0.27"
 gf256 = { version = "0.3.0", features = ["rs"] }
-hex = "0.4.3"
+hex = { version = "0.4.3", features = ["serde"] }
 lz4_flex = "0.11.1"
 memchr = "2.6.0"
 num-bigint-dig = "0.8.4"

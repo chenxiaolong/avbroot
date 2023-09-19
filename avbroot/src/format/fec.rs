@@ -750,17 +750,17 @@ mod tests {
 
         // Generate FEC data.
         let fec_data = fec
-            .generate(|| Ok(Box::new(file.clone())), &cancel_signal)
+            .generate(|| Ok(Box::new(file.reopen())), &cancel_signal)
             .unwrap();
 
         // Verify that there are no errors.
-        fec.verify(|| Ok(Box::new(file.clone())), &fec_data, &cancel_signal)
+        fec.verify(|| Ok(Box::new(file.reopen())), &fec_data, &cancel_signal)
             .unwrap();
 
         // Verify that errors are detected.
         corrupt_byte(&mut file, 0);
         assert_matches!(
-            fec.verify(|| Ok(Box::new(file.clone())), &fec_data, &cancel_signal,),
+            fec.verify(|| Ok(Box::new(file.reopen())), &fec_data, &cancel_signal,),
             Err(Error::HasErrors)
         );
 
@@ -771,8 +771,8 @@ mod tests {
 
         // Verify that all the single-byte errors can be fixed.
         fec.repair(
-            || Ok(Box::new(file.clone())),
-            || Ok(Box::new(file.clone())),
+            || Ok(Box::new(file.reopen())),
+            || Ok(Box::new(file.reopen())),
             &fec_data,
             &cancel_signal,
         )
@@ -811,7 +811,7 @@ mod tests {
             file.write_all(&buf).unwrap();
         }
 
-        let image = FecImage::generate(|| Ok(Box::new(file.clone())), 2, &cancel_signal).unwrap();
+        let image = FecImage::generate(|| Ok(Box::new(file.reopen())), 2, &cancel_signal).unwrap();
 
         let mut fec_file = Cursor::new(Vec::new());
         image.to_writer(&mut fec_file).unwrap();

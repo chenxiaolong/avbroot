@@ -17,17 +17,19 @@ use num_traits::{Pow, ToPrimitive};
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use ring::digest::{Algorithm, Context};
 use rsa::{traits::PublicKeyParts, BigUint, Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use thiserror::Error;
 
 use crate::{
+    escape,
     format::{
         fec::{self, Fec},
         padding,
     },
     stream::{
         self, CountingReader, FromReader, ReadDiscardExt, ReadSeek, ReadStringExt, ToWriter,
-        WriteStringExt, WriteZerosExt,
+        WriteSeek, WriteStringExt, WriteZerosExt,
     },
     util,
 };
@@ -75,6 +77,8 @@ pub enum Error {
         key_size: usize,
         algo: AlgorithmType,
     },
+    #[error("RSA key size (0) is not compatible with any AVB signing algorithm")]
+    UnsupportedKey(usize),
     #[error("Expected root digest {expected}, but have {actual}")]
     InvalidRootDigest { expected: String, actual: String },
     #[error("Expected hash tree {expected}, but have {actual}")]
@@ -83,8 +87,12 @@ pub enum Error {
     HashTreeGap,
     #[error("FEC data does not immediately follow hash tree")]
     FecDataGap,
+    #[error("Cannot repair image because there is no FEC data")]
+    FecMissing,
     #[error("FEC requires data block size ({data}) and hash block size ({hash}) to match")]
     MismatchedFecBlockSizes { data: u32, hash: u32 },
+    #[error("Must have exactly one hash or hash tree descriptor")]
+    NoAppendedDescriptor,
     #[error("Failed to RSA sign digest")]
     RsaSign(rsa::Error),
     #[error("Failed to RSA verify signature")]
@@ -99,7 +107,15 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+fn ring_algorithm(name: &str) -> Result<&'static Algorithm> {
+    match name {
+        "sha256" => Ok(&ring::digest::SHA256),
+        "sha512" => Ok(&ring::digest::SHA512),
+        a => Err(Error::UnsupportedHashAlgorithm(a.to_owned())),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum AlgorithmType {
     None,
     Sha256Rsa2048,
@@ -223,9 +239,10 @@ trait DescriptorTag {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PropertyDescriptor {
     pub key: String,
+    #[serde(with = "escape")]
     pub value: Vec<u8>,
 }
 
@@ -293,7 +310,7 @@ impl<W: Write> ToWriter<W> for PropertyDescriptor {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct HashTreeDescriptor {
     pub dm_verity_version: u32,
     pub image_size: u64,
@@ -306,9 +323,12 @@ pub struct HashTreeDescriptor {
     pub fec_size: u64,
     pub hash_algorithm: String,
     pub partition_name: String,
+    #[serde(with = "hex")]
     pub salt: Vec<u8>,
+    #[serde(with = "hex")]
     pub root_digest: Vec<u8>,
     pub flags: u32,
+    #[serde(with = "hex")]
     pub reserved: [u8; 60],
 }
 
@@ -485,19 +505,140 @@ impl HashTreeDescriptor {
         Ok((root_hash, hash_tree))
     }
 
-    /// Verify the root hash and hash tree against the input reader in parallel.
-    /// `open_input` will be called from multiple threads and must return
-    /// independently seekable handles the the same file.
+    /// Ensure that the image data is immediately followed by the hash tree and
+    /// then the FEC data.
+    fn check_offsets(&self) -> Result<()> {
+        if self.tree_offset != self.image_size {
+            return Err(Error::HashTreeGap);
+        }
+
+        // The FEC data section is optional.
+        if self.fec_num_roots != 0 {
+            if self.fec_offset != self.tree_offset + self.tree_size {
+                return Err(Error::FecDataGap);
+            } else if self.data_block_size != self.hash_block_size {
+                return Err(Error::MismatchedFecBlockSizes {
+                    data: self.data_block_size,
+                    hash: self.hash_block_size,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get [`Fec`] instance with the parameters from this descriptor.
+    fn get_fec(&self) -> Result<(Fec, usize)> {
+        if self.fec_num_roots == 0 {
+            return Err(Error::FecMissing);
+        }
+
+        let fec_size = self
+            .fec_size
+            .to_usize()
+            .ok_or_else(|| Error::IntegerTooLarge("fec_size"))?;
+        let parity = self
+            .fec_num_roots
+            .to_u8()
+            .ok_or_else(|| Error::IntegerTooLarge("fec_num_roots"))?;
+
+        // The FEC covers the hash tree as well.
+        let fec = Fec::new(
+            self.image_size + self.tree_size,
+            self.data_block_size,
+            parity,
+        )?;
+
+        Ok((fec, fec_size))
+    }
+
+    /// Update the root hash, hash tree, and FEC data. The hash tree and FEC
+    /// data will be written immediately following the image data at offset
+    /// [`Self::image_size`]. Both `open_input` and `open_output` may be called
+    /// from multiple threads and must return independently seekable handles to
+    /// the same file. It is guaranteed that every thread will read and write
+    /// disjoint file offsets.
+    ///
+    /// Due to the nature of the file access patterns needed to generate the
+    /// hash tree and FEC data, the entire file will be read twice. However, if
+    /// [`Self::fec_num_roots`] is 0, no FEC data will be computed nor written.
+    ///
+    /// The fields in this instance are updated atomically. No fields are
+    /// updated if an error occurs. The input file can be restored back to its
+    /// original state by truncating it to [`Self::image_size`].
+    pub fn update(
+        &mut self,
+        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+        open_output: impl Fn() -> io::Result<Box<dyn WriteSeek>> + Sync,
+        cancel_signal: &AtomicBool,
+    ) -> Result<()> {
+        let algorithm = ring_algorithm(&self.hash_algorithm)?;
+        let (root_digest, hash_tree) = Self::calculate_hash_tree(
+            &open_input,
+            self.image_size,
+            self.data_block_size,
+            algorithm,
+            &self.salt,
+            cancel_signal,
+        )?;
+
+        let tree_size = hash_tree
+            .len()
+            .to_u64()
+            .ok_or_else(|| Error::IntegerTooLarge("tree_size"))?;
+
+        let mut writer = open_output()?;
+        writer.seek(SeekFrom::Start(self.image_size))?;
+        writer.write_all(&hash_tree)?;
+
+        // The FEC data section is optional.
+        if self.fec_num_roots != 0 {
+            if self.data_block_size != self.hash_block_size {
+                return Err(Error::MismatchedFecBlockSizes {
+                    data: self.data_block_size,
+                    hash: self.hash_block_size,
+                });
+            }
+
+            let parity = self
+                .fec_num_roots
+                .to_u8()
+                .ok_or_else(|| Error::IntegerTooLarge("fec_num_roots"))?;
+
+            // The FEC covers the hash tree as well.
+            let fec = Fec::new(self.image_size + tree_size, self.data_block_size, parity)?;
+
+            let fec_data = fec.generate(open_input, cancel_signal)?;
+            let fec_size = fec_data
+                .len()
+                .to_u64()
+                .ok_or_else(|| Error::IntegerTooLarge("fec_size"))?;
+
+            // Already seeked to FEC.
+            writer.write_all(&fec_data)?;
+
+            self.fec_offset = self.image_size + tree_size;
+            self.fec_size = fec_size;
+        }
+
+        self.tree_offset = self.image_size;
+        self.tree_size = tree_size;
+        self.root_digest = root_digest;
+
+        Ok(())
+    }
+
+    /// Verify the root hash, hash tree, and FEC data. `open_input` will be
+    /// called from multiple threads and must return independently seekable
+    /// handles to the same file.
     pub fn verify(
         &self,
         open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
-        let algorithm = match self.hash_algorithm.as_str() {
-            "sha256" => &ring::digest::SHA256,
-            "sha512" => &ring::digest::SHA512,
-            a => return Err(Error::UnsupportedHashAlgorithm(a.to_owned())),
-        };
+        self.check_offsets()?;
+
+        let algorithm = ring_algorithm(&self.hash_algorithm)?;
         let tree_size = self
             .tree_size
             .to_usize()
@@ -519,10 +660,6 @@ impl HashTreeDescriptor {
             });
         }
 
-        if self.tree_offset != self.image_size {
-            return Err(Error::HashTreeGap);
-        }
-
         let mut reader = open_input()?;
         reader.seek(SeekFrom::Start(self.tree_offset))?;
 
@@ -541,31 +678,8 @@ impl HashTreeDescriptor {
         }
 
         // The FEC data section is optional.
-        if self.fec_size != 0 {
-            if self.fec_offset != self.tree_offset + self.tree_size {
-                return Err(Error::FecDataGap);
-            } else if self.data_block_size != self.hash_block_size {
-                return Err(Error::MismatchedFecBlockSizes {
-                    data: self.data_block_size,
-                    hash: self.hash_block_size,
-                });
-            }
-
-            let fec_size = self
-                .fec_size
-                .to_usize()
-                .ok_or_else(|| Error::IntegerTooLarge("fec_size"))?;
-            let parity = self
-                .fec_num_roots
-                .to_u8()
-                .ok_or_else(|| Error::IntegerTooLarge("fec_num_roots"))?;
-
-            // The FEC covers the hash tree as well.
-            let fec = Fec::new(
-                self.tree_offset + self.tree_size,
-                self.data_block_size,
-                parity,
-            )?;
+        if self.fec_num_roots != 0 {
+            let (fec, fec_size) = self.get_fec()?;
 
             let mut fec_data = vec![0u8; fec_size];
             // Already seeked to FEC.
@@ -573,6 +687,41 @@ impl HashTreeDescriptor {
 
             fec.verify(open_input, &fec_data, cancel_signal)?;
         }
+
+        Ok(())
+    }
+
+    /// Try to repair errors in the input file using the FEC data. Both
+    /// `open_input` and `open_output` may be called from multiple threads and
+    /// must return independently seekable handles to the same file.
+    ///
+    /// Due to the nature of FEC, when there are too many errors, it's possible
+    /// for the data to be miscorrected to a "valid" state. [`Self::verify()`]
+    /// should be called after the repair is complete to ensure that the data is
+    /// actually valid.
+    pub fn repair(
+        &self,
+        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+        open_output: impl Fn() -> io::Result<Box<dyn WriteSeek>> + Sync,
+        cancel_signal: &AtomicBool,
+    ) -> Result<()> {
+        self.check_offsets()?;
+
+        // The FEC data section is optional.
+        if self.fec_size == 0 {
+            return Err(Error::FecMissing);
+        }
+
+        let mut reader = open_input()?;
+        reader.seek(SeekFrom::Start(self.fec_offset))?;
+
+        let (fec, fec_size) = self.get_fec()?;
+
+        let mut fec_data = vec![0u8; fec_size];
+        // Already seeked to FEC.
+        reader.read_exact(&mut fec_data)?;
+
+        fec.repair(open_input, open_output, &fec_data, cancel_signal)?;
 
         Ok(())
     }
@@ -699,14 +848,17 @@ impl<W: Write> ToWriter<W> for HashTreeDescriptor {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct HashDescriptor {
     pub image_size: u64,
     pub hash_algorithm: String,
     pub partition_name: String,
+    #[serde(with = "hex")]
     pub salt: Vec<u8>,
+    #[serde(with = "hex")]
     pub root_digest: Vec<u8>,
     pub flags: u32,
+    #[serde(with = "hex")]
     pub reserved: [u8; 60],
 }
 
@@ -725,14 +877,12 @@ impl fmt::Debug for HashDescriptor {
 }
 
 impl HashDescriptor {
-    /// Verify the root hash against the input reader.
-    pub fn verify(&self, reader: impl Read, cancel_signal: &AtomicBool) -> Result<()> {
-        let algorithm = match self.hash_algorithm.as_str() {
-            "sha256" => &ring::digest::SHA256,
-            "sha512" => &ring::digest::SHA512,
-            a => return Err(Error::UnsupportedHashAlgorithm(a.to_owned())),
-        };
-
+    fn calculate(
+        &self,
+        reader: impl Read,
+        cancel_signal: &AtomicBool,
+    ) -> Result<ring::digest::Digest> {
+        let algorithm = ring_algorithm(&self.hash_algorithm)?;
         let mut context = Context::new(algorithm);
         context.update(&self.salt);
 
@@ -744,7 +894,19 @@ impl HashDescriptor {
             cancel_signal,
         )?;
 
-        let digest = context.finish();
+        Ok(context.finish())
+    }
+
+    /// Update the root hash from the input reader's contents.
+    pub fn update(&mut self, reader: impl Read, cancel_signal: &AtomicBool) -> Result<()> {
+        let digest = self.calculate(reader, cancel_signal)?;
+        self.root_digest = digest.as_ref().to_vec();
+        Ok(())
+    }
+
+    /// Verify the root hash against the input reader.
+    pub fn verify(&self, reader: impl Read, cancel_signal: &AtomicBool) -> Result<()> {
+        let digest = self.calculate(reader, cancel_signal)?;
 
         if self.root_digest != digest.as_ref() {
             return Err(Error::InvalidRootDigest {
@@ -854,7 +1016,7 @@ impl<W: Write> ToWriter<W> for HashDescriptor {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct KernelCmdlineDescriptor {
     pub flags: u32,
     pub cmdline: String,
@@ -901,11 +1063,13 @@ impl<W: Write> ToWriter<W> for KernelCmdlineDescriptor {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ChainPartitionDescriptor {
     pub rollback_index_location: u32,
     pub partition_name: String,
+    #[serde(with = "hex")]
     pub public_key: Vec<u8>,
+    #[serde(with = "hex")]
     pub reserved: [u8; 64],
 }
 
@@ -982,14 +1146,19 @@ impl<W: Write> ToWriter<W> for ChainPartitionDescriptor {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "type")]
 pub enum Descriptor {
     Property(PropertyDescriptor),
     HashTree(HashTreeDescriptor),
     Hash(HashDescriptor),
     KernelCmdline(KernelCmdlineDescriptor),
     ChainPartition(ChainPartitionDescriptor),
-    Unknown(u64, Vec<u8>),
+    Unknown {
+        tag: u64,
+        #[serde(with = "hex")]
+        data: Vec<u8>,
+    },
 }
 
 impl Descriptor {
@@ -1040,7 +1209,7 @@ impl<R: Read> FromReader<R> for Descriptor {
                 let mut data = vec![0u8; nbf];
                 inner_reader.read_exact(&mut data)?;
 
-                Self::Unknown(tag, data)
+                Self::Unknown { tag, data }
             }
         };
 
@@ -1081,7 +1250,7 @@ impl<W: Write> ToWriter<W> for Descriptor {
                 d.to_writer(&mut inner_writer)?;
                 d.get_tag()
             }
-            Self::Unknown(tag, data) => {
+            Self::Unknown { tag, data } => {
                 inner_writer.write_all(data)?;
                 *tag
             }
@@ -1103,20 +1272,61 @@ impl<W: Write> ToWriter<W> for Descriptor {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppendedDescriptorRef<'a> {
+    HashTree(&'a HashTreeDescriptor),
+    Hash(&'a HashDescriptor),
+}
+
+impl<'a> TryFrom<&'a Descriptor> for AppendedDescriptorRef<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a Descriptor) -> Result<Self> {
+        match value {
+            Descriptor::HashTree(d) => Ok(Self::HashTree(d)),
+            Descriptor::Hash(d) => Ok(Self::Hash(d)),
+            _ => Err(Error::NoAppendedDescriptor),
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum AppendedDescriptorMut<'a> {
+    HashTree(&'a mut HashTreeDescriptor),
+    Hash(&'a mut HashDescriptor),
+}
+
+impl<'a> TryFrom<&'a mut Descriptor> for AppendedDescriptorMut<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a mut Descriptor) -> Result<Self> {
+        match value {
+            Descriptor::HashTree(d) => Ok(Self::HashTree(d)),
+            Descriptor::Hash(d) => Ok(Self::Hash(d)),
+            _ => Err(Error::NoAppendedDescriptor),
+        }
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Header {
     pub required_libavb_version_major: u32,
     pub required_libavb_version_minor: u32,
     pub algorithm_type: AlgorithmType,
+    #[serde(with = "hex")]
     pub hash: Vec<u8>,
+    #[serde(with = "hex")]
     pub signature: Vec<u8>,
+    #[serde(with = "hex")]
     pub public_key: Vec<u8>,
+    #[serde(with = "hex")]
     pub public_key_metadata: Vec<u8>,
     pub descriptors: Vec<Descriptor>,
     pub rollback_index: u64,
     pub flags: u32,
     pub rollback_index_location: u32,
     pub release_string: String,
+    #[serde(with = "hex")]
     pub reserved: [u8; 80],
 }
 
@@ -1240,6 +1450,78 @@ impl Header {
         writer.write_zeros_exact(aux_block_padding_size)?;
 
         Ok(())
+    }
+
+    /// Get the first hash or hash tree descriptor if there is only one. This is
+    /// the case for appended AVB images.
+    pub fn appended_descriptor(&self) -> Result<AppendedDescriptorRef> {
+        let mut result = None;
+
+        for descriptor in &self.descriptors {
+            match descriptor {
+                Descriptor::HashTree(d) => {
+                    if result.is_some() {
+                        return Err(Error::NoAppendedDescriptor);
+                    }
+                    result = Some(AppendedDescriptorRef::HashTree(d));
+                }
+                Descriptor::Hash(d) => {
+                    if result.is_some() {
+                        return Err(Error::NoAppendedDescriptor);
+                    }
+                    result = Some(AppendedDescriptorRef::Hash(d));
+                }
+                _ => {}
+            }
+        }
+
+        result.ok_or(Error::NoAppendedDescriptor)
+    }
+
+    /// Get the first hash or hash tree descriptor if there is only one. This is
+    /// the case for appended AVB images.
+    pub fn appended_descriptor_mut(&mut self) -> Result<AppendedDescriptorMut> {
+        let mut result = None;
+
+        for descriptor in &mut self.descriptors {
+            match descriptor {
+                Descriptor::HashTree(d) => {
+                    if result.is_some() {
+                        return Err(Error::NoAppendedDescriptor);
+                    }
+                    result = Some(AppendedDescriptorMut::HashTree(d));
+                }
+                Descriptor::Hash(d) => {
+                    if result.is_some() {
+                        return Err(Error::NoAppendedDescriptor);
+                    }
+                    result = Some(AppendedDescriptorMut::Hash(d));
+                }
+                _ => {}
+            }
+        }
+
+        result.ok_or(Error::NoAppendedDescriptor)
+    }
+
+    pub fn set_algo_for_key(&mut self, key: &RsaPrivateKey) -> Result<()> {
+        let key_raw = encode_public_key(&key.to_public_key())?;
+
+        for algo in [AlgorithmType::Sha256Rsa2048, AlgorithmType::Sha256Rsa4096] {
+            if key_raw.len() == algo.public_key_len() {
+                self.algorithm_type = algo;
+                return Ok(());
+            }
+        }
+
+        Err(Error::UnsupportedKey(key.size()))
+    }
+
+    pub fn clear_sig(&mut self) {
+        self.hash.clear();
+        self.signature.clear();
+        self.public_key.clear();
+        self.public_key_metadata.clear();
     }
 
     pub fn sign(&mut self, key: &RsaPrivateKey) -> Result<()> {
@@ -1499,13 +1781,14 @@ impl<W: Write> ToWriter<W> for Header {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Footer {
     pub version_major: u32,
     pub version_minor: u32,
     pub original_image_size: u64,
     pub vbmeta_offset: u64,
     pub vbmeta_size: u64,
+    #[serde(with = "hex")]
     pub reserved: [u8; 28],
 }
 
@@ -1664,20 +1947,20 @@ pub fn load_image(mut reader: impl Read + Seek) -> Result<(Header, Option<Footer
 fn write_image_internal(
     mut writer: impl Write + Seek,
     header: &Header,
-    footer: Option<&Footer>,
+    footer: Option<&mut Footer>,
     image_size: Option<u64>,
     block_size: u64,
 ) -> Result<()> {
-    let original_image_size = writer.seek(SeekFrom::End(0))?;
+    let eof_image_size = writer.seek(SeekFrom::End(0))?;
 
     // The header must be block-aligned.
     let vbmeta_offset = if block_size > 0 {
         let padding_size = padding::write_zeros(&mut writer, block_size)?;
-        original_image_size
+        eof_image_size
             .checked_add(padding_size)
             .ok_or_else(|| Error::IntegerTooLarge("vbmeta_offset"))?
     } else {
-        original_image_size
+        eof_image_size
     };
 
     header.to_writer(&mut writer)?;
@@ -1703,12 +1986,16 @@ fn write_image_internal(
         let footer_offset = image_size.unwrap() - Footer::SIZE as u64;
         writer.seek(SeekFrom::Start(footer_offset))?;
 
-        let mut new_footer = f.clone();
-        new_footer.original_image_size = original_image_size;
-        new_footer.vbmeta_offset = vbmeta_offset;
-        new_footer.vbmeta_size = vbmeta_end - vbmeta_offset;
+        let original_image_size = match header.appended_descriptor()? {
+            AppendedDescriptorRef::HashTree(d) => d.image_size,
+            AppendedDescriptorRef::Hash(d) => d.image_size,
+        };
 
-        new_footer.to_writer(&mut writer)?;
+        f.original_image_size = original_image_size;
+        f.vbmeta_offset = vbmeta_offset;
+        f.vbmeta_size = vbmeta_end - vbmeta_offset;
+
+        f.to_writer(&mut writer)?;
     }
 
     Ok(())
@@ -1726,7 +2013,7 @@ pub fn write_root_image(writer: impl Write + Seek, header: &Header, block_size: 
 pub fn write_appended_image(
     writer: impl Write + Seek,
     header: &Header,
-    footer: &Footer,
+    footer: &mut Footer,
     image_size: u64,
 ) -> Result<()> {
     // avbtool hardcodes a 4096 block size for appended non-sparse images.

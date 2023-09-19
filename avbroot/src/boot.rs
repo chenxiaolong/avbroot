@@ -29,7 +29,7 @@ use zip::{result::ZipError, write::FileOptions, CompressionMethod, ZipArchive, Z
 use crate::{
     crypto,
     format::{
-        avb::{self, AlgorithmType, Descriptor},
+        avb::{self, Descriptor},
         bootimage::{self, BootImage, BootImageExt, RamdiskMeta},
         compression::{self, CompressedFormat, CompressedReader, CompressedWriter},
         cpio::{self, CpioEntryNew},
@@ -738,7 +738,7 @@ pub fn patch_boot(
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let (mut header, footer, image_size) = avb::load_image(&mut reader)?;
-    let Some(footer) = footer else {
+    let Some(mut footer) = footer else {
         return Err(Error::NoFooter);
     };
 
@@ -748,6 +748,8 @@ pub fn patch_boot(
     for patcher in patchers {
         patcher.patch(&mut boot_image, cancel_signal)?;
     }
+
+    header.set_algo_for_key(key)?;
 
     let mut descriptor_iter = header.descriptors.iter_mut().filter_map(|d| {
         if let Descriptor::Hash(h) = d {
@@ -768,8 +770,6 @@ pub fn patch_boot(
     boot_image.to_writer(&mut hashing_writer)?;
     let (mut writer, context) = hashing_writer.finish();
 
-    header.algorithm_type = AlgorithmType::Sha256Rsa4096;
-
     descriptor.image_size = writer.stream_position()?;
     descriptor.hash_algorithm = "sha256".to_owned();
     descriptor.root_digest = context.finish().as_ref().to_vec();
@@ -782,7 +782,7 @@ pub fn patch_boot(
         header.sign(key)?;
     }
 
-    avb::write_appended_image(writer, &header, &footer, image_size)?;
+    avb::write_appended_image(writer, &header, &mut footer, image_size)?;
 
     Ok(())
 }
