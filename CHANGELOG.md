@@ -19,6 +19,7 @@
 Behind-the-scenes changes:
 
 * Remove unnecessary use of `Arc` ([PR #147 @chenxiaolong])
+* Use bstr crate to escape mostly UTF-8 binary data ([PR #150 @chenxiaolong])
 
 ### Version 2.0.2
 
@@ -51,3 +52,4 @@ Behind-the-scenes changes:
 [PR #146 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/146
 [PR #147 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/147
 [PR #149 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/149
+[PR #150 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/150
