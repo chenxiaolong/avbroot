@@ -10,6 +10,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+use bstr::ByteSlice;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use num_bigint_dig::{ModInverse, ToBigInt};
 use num_traits::{Pow, ToPrimitive};
@@ -28,7 +29,7 @@ use crate::{
         self, CountingReader, FromReader, ReadDiscardExt, ReadSeek, ReadStringExt, ToWriter,
         WriteStringExt, WriteZerosExt,
     },
-    util::{self, EscapedString},
+    util,
 };
 
 pub const VERSION_MAJOR: u32 = 1;
@@ -232,7 +233,7 @@ impl fmt::Debug for PropertyDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PropertyDescriptor")
             .field("key", &self.key)
-            .field("value", &EscapedString::new(&self.value))
+            .field("value", &self.value.as_bstr())
             .finish()
     }
 }

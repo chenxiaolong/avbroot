@@ -16,6 +16,7 @@ extern crate alloc;
 pub mod boot;
 pub mod cli;
 pub mod crypto;
+pub mod escape;
 pub mod format;
 pub mod protobuf;
 pub mod stream;

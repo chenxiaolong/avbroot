@@ -9,13 +9,14 @@ use std::{
     io::{self, Read, Write},
 };
 
+use bstr::ByteSlice;
 use num_traits::ToPrimitive;
 use thiserror::Error;
 
 use crate::{
     format::padding,
     stream::{CountingReader, CountingWriter, FromReader, ToWriter, WriteZerosExt},
-    util::{EscapedString, NumBytes},
+    util::NumBytes,
 };
 
 const MAGIC_NEW: &[u8; 6] = b"070701";
@@ -38,8 +39,8 @@ const IO_BLOCK_SIZE: u64 = 512;
 pub enum Error {
     #[error("Unknown magic: {0:?}")]
     UnknownMagic([u8; 6]),
-    #[error("Hard links are not supported: {0}")]
-    HardLinksNotSupported(EscapedString<Vec<u8>>),
+    #[error("Hard links are not supported: {:?}", .0.as_bstr())]
+    HardLinksNotSupported(Vec<u8>),
     #[error("{0:?} field exceeds integer bounds")]
     IntegerTooLarge(&'static str),
     #[error("I/O error")]
@@ -60,7 +61,7 @@ fn read_int(mut reader: impl Read) -> io::Result<u32> {
         let digit = c.to_digit(16).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("{0}: Invalid hex char: {1}", EscapedString::new(&buf), c),
+                format!("{:?}: Invalid hex char: {c}", buf.as_bstr()),
             )
         })?;
 
@@ -120,7 +121,7 @@ impl fmt::Debug for CpioEntryNew {
             .field("rdev_maj", &self.rdev_maj)
             .field("rdev_min", &self.rdev_min)
             .field("chksum", &self.chksum)
-            .field("name", &EscapedString::new(&self.name))
+            .field("name", &self.name.as_bstr())
             .field("content", &NumBytes(self.content.len()))
             .finish()
     }
@@ -140,7 +141,7 @@ impl fmt::Display for CpioEntryNew {
             m => Cow::Owned(format!("unknown ({m:o})")),
         };
 
-        writeln!(f, "Filename:  {}", EscapedString::new(&self.name))?;
+        writeln!(f, "Filename:  {:?}", self.name.as_bstr())?;
         writeln!(f, "Filetype:  {file_type_str}")?;
         writeln!(f, "Inode:     {}", self.ino)?;
         writeln!(f, "Mode:      {:o}", self.mode)?;
@@ -312,7 +313,7 @@ pub fn load(mut reader: impl Read, include_trailer: bool) -> Result<Vec<CpioEntr
     loop {
         let entry = CpioEntryNew::from_reader(&mut reader)?;
         if file_type(entry.mode) != S_IFDIR && entry.nlink > 1 {
-            return Err(Error::HardLinksNotSupported(EscapedString::new(entry.name)));
+            return Err(Error::HardLinksNotSupported(entry.name));
         }
 
         if entry.name == CPIO_TRAILER {

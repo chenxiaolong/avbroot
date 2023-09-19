@@ -12,12 +12,9 @@ use std::{
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use crate::{
-    format::{
-        compression::{CompressedFormat, CompressedReader, CompressedWriter},
-        cpio::{self, CpioEntryNew},
-    },
-    util::EscapedString,
+use crate::format::{
+    compression::{CompressedFormat, CompressedReader, CompressedWriter},
+    cpio::{self, CpioEntryNew},
 };
 
 static CONTENT_BEGIN: &str = "----- BEGIN UTF-8 CONTENT -----";
@@ -59,10 +56,10 @@ fn print_content(data: &[u8], truncate: bool) {
     println!("{BINARY_BEGIN}");
 
     if data.len() > 512 && truncate {
-        println!("{}", EscapedString::new_unquoted(&data[..512]));
+        println!("{}", data[..512].escape_ascii());
         println!("{BINARY_END_TRUNCATED}");
     } else {
-        println!("{}", EscapedString::new_unquoted(&data));
+        println!("{}", data.escape_ascii());
         println!("{BINARY_END}");
     }
 }
