@@ -51,22 +51,33 @@ pub enum Error {
     UnsupportedVersion(u64),
     #[error("Payload contains no signatures")]
     NoSignatures,
-    #[error("Blob offset should be {0}, but is {1}")]
-    InvalidBlobOffset(u64, u64),
-    #[error("Payload signatures offset should be {0}, but is {1}")]
-    InvalidPayloadSignaturesOffset(u64, u64),
+    #[error("Blob offset should be {expected}, but is {actual}")]
+    InvalidBlobOffset { expected: u64, actual: u64 },
+    #[error("Payload signatures offset should be {expected}, but is {actual}")]
+    InvalidPayloadSignaturesOffset { expected: u64, actual: u64 },
     #[error("Invalid payload properties line: {0:?}")]
     InvalidPropertiesLine(String),
     #[error("Duplicate payload property: {0:?}")]
     DuplicateProperty(String),
-    #[error("Payload property {0:?} ({1:?}) does not match expected value {2:?}")]
-    InvalidProperty(String, String, Option<String>),
+    #[error("Payload property {key:?} ({actual:?}) does not match expected value {expected:?}")]
+    InvalidProperty {
+        key: String,
+        expected: Option<String>,
+        actual: String,
+    },
     #[error("Unsupported partition operation: {0:?}")]
     UnsupportedOperation(mod_InstallOperation::Type),
-    #[error("Expected sha256 {0:?}, but have {1:?}")]
-    MismatchedDigest(Option<String>, String),
-    #[error("Size of {0} ({1}) is not aligned to the block size ({2})")]
-    InvalidPartitionSize(String, u64, u32),
+    #[error("Expected sha256 {expected:?}, but have {actual:?}")]
+    MismatchedDigest {
+        expected: Option<String>,
+        actual: String,
+    },
+    #[error("Size of {name} ({size}) is not aligned to the block size ({block_size})")]
+    InvalidPartitionSize {
+        name: String,
+        size: u64,
+        block_size: u32,
+    },
     #[error("Partition not found in payload: {0}")]
     MissingPartition(String),
     #[error("Partitions not found in payload: {0:?}")]
@@ -553,11 +564,11 @@ impl<W: Write> CompressedPartitionWriter<W> {
     /// size, hash, and install operation metadata.
     pub fn finish(mut self, partition: &mut PartitionUpdate) -> Result<W> {
         if self.written % u64::from(self.block_size) != 0 {
-            return Err(Error::InvalidPartitionSize(
-                partition.partition_name.clone(),
-                self.written,
-                self.block_size,
-            ));
+            return Err(Error::InvalidPartitionSize {
+                name: partition.partition_name.clone(),
+                size: self.written,
+                block_size: self.block_size,
+            });
         }
 
         self.inner.flush()?;
@@ -675,7 +686,10 @@ pub fn verify_payload(
     {
         let actual = reader.stream_position()?;
         if header.blob_offset != actual {
-            return Err(Error::InvalidBlobOffset(header.blob_offset, actual));
+            return Err(Error::InvalidBlobOffset {
+                expected: header.blob_offset,
+                actual,
+            });
         }
     }
 
@@ -697,7 +711,7 @@ pub fn verify_payload(
         let expected = header.blob_offset + payload_signatures_offset;
         let actual = reader.stream_position()?;
         if expected != actual {
-            return Err(Error::InvalidPayloadSignaturesOffset(expected, actual));
+            return Err(Error::InvalidPayloadSignaturesOffset { expected, actual });
         }
     }
 
@@ -735,11 +749,11 @@ pub fn verify_payload(
         let expected_value = expected_properties.get(&key);
 
         if expected_value != Some(&actual_value) {
-            return Err(Error::InvalidProperty(
+            return Err(Error::InvalidProperty {
                 key,
-                actual_value,
-                expected_value.cloned(),
-            ));
+                expected: expected_value.cloned(),
+                actual: actual_value,
+            });
         }
     }
 
@@ -842,10 +856,10 @@ pub fn apply_operation(
         if expected_digest != Some(digest.as_ref())
             && op.type_pb != mod_InstallOperation::Type::ZERO
         {
-            return Err(Error::MismatchedDigest(
-                expected_digest.map(hex::encode),
-                hex::encode(digest.as_ref()),
-            ));
+            return Err(Error::MismatchedDigest {
+                expected: expected_digest.map(hex::encode),
+                actual: hex::encode(digest.as_ref()),
+            });
         }
     }
 

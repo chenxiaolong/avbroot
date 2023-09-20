@@ -43,7 +43,9 @@ fn write_fec(path: &Path, fec: &FecImage) -> Result<()> {
         .with_context(|| format!("Failed to open for writing: {path:?}"))?;
     fec.to_writer(&mut writer)
         .with_context(|| format!("Failed to write FEC data: {path:?}"))?;
-    writer.flush()?;
+    writer
+        .flush()
+        .with_context(|| format!("Failed to flush FEC data: {path:?}"))?;
 
     Ok(())
 }

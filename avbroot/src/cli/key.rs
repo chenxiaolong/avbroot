@@ -61,7 +61,8 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
                 let certificate = crypto::read_pem_cert_file(p)
                     .with_context(|| format!("Failed to load certificate: {p:?}"))?;
 
-                crypto::get_public_key(&certificate)?
+                crypto::get_public_key(&certificate)
+                    .with_context(|| format!("Failed to extract public key: {p:?}"))?
             } else {
                 unreachable!()
             };

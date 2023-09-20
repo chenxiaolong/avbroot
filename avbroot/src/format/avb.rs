@@ -94,9 +94,9 @@ pub enum Error {
     #[error("Must have exactly one hash or hash tree descriptor")]
     NoAppendedDescriptor,
     #[error("Failed to RSA sign digest")]
-    RsaSign(rsa::Error),
+    RsaSign(#[source] rsa::Error),
     #[error("Failed to RSA verify signature")]
-    RsaVerify(rsa::Error),
+    RsaVerify(#[source] rsa::Error),
     #[error("{0} byte image size is too small to fit header or footer")]
     ImageSizeTooSmall(u64),
     #[error("FEC error")]

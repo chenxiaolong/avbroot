@@ -61,7 +61,7 @@ pub enum Error {
     #[error("DER error")]
     Der(#[from] x509_cert::der::Error),
     #[error("RSA error")]
-    RsaSign(#[from] rsa::Error),
+    Rsa(#[from] rsa::Error),
     #[error("I/O error")]
     Io(#[from] io::Error),
 }
