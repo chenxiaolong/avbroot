@@ -7,11 +7,8 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Version 2.0.3
+### Version 2.1.0
 
-* Upgrade xz version in precompiled binaries ([Issue #138], [PR #139])
-    * This fixes the `ota extract` and `ota verify` commands in some multithreaded situations.
-* Add `--version` option to print out avbroot's version ([Issue #138], [PR #140])
 * Add support for dm-verify FEC (forward error correction) ([Issue #145], [PR #146])
     * `ota verify` and `avb verify` will now check the FEC data.
 * Print status and warning messages to stderr ([PR #149])
@@ -23,6 +20,12 @@ Behind-the-scenes changes:
 * Remove unnecessary use of `Arc` ([PR #147])
 * Use bstr crate to escape mostly UTF-8 binary data ([PR #150])
 * Improve error fields and error contest ([PR #153])
+
+### Version 2.0.3
+
+* Upgrade xz version in precompiled binaries ([Issue #138], [PR #139])
+    * This fixes the `ota extract` and `ota verify` commands in some multithreaded situations.
+* Add `--version` option to print out avbroot's version ([Issue #138], [PR #140])
 
 ### Version 2.0.2
 

@@ -109,7 +109,7 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
 name = "avbroot"
-version = "2.0.3"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "e2e"
-version = "2.0.3"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "attohttpc",
@@ -1866,7 +1866,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "2.0.3"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "clap",
