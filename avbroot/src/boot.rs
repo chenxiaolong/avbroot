@@ -41,9 +41,9 @@ use crate::{
 pub enum Error {
     #[error("Boot image has no vbmeta footer")]
     NoFooter,
-    #[error("No hash descriptor found in vbmeta footer")]
+    #[error("No hash descriptor found in vbmeta header")]
     NoHashDescriptor,
-    #[error("Found multiple hash descriptors in vbmeta footer")]
+    #[error("Found multiple hash descriptors in vbmeta header")]
     MultipleHashDescriptors,
     #[error("Validation error: {0}")]
     Validation(String),
@@ -66,7 +66,9 @@ pub enum Error {
     #[error("Zip error")]
     Zip(#[from] ZipError),
     #[error("I/O error")]
-    IoError(#[from] io::Error),
+    Io(#[from] io::Error),
+    #[error("File I/O error")]
+    File(PathBuf, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -161,7 +163,7 @@ impl MagiskRootPatcher {
     }
 
     fn get_version(path: &Path) -> Result<u32> {
-        let reader = File::open(path)?;
+        let reader = File::open(path).map_err(|e| Error::File(path.to_owned(), e))?;
         let reader = BufReader::new(reader);
         let mut zip = ZipArchive::new(reader)?;
         let entry = zip.by_name("assets/util_functions.sh")?;
@@ -255,7 +257,8 @@ impl MagiskRootPatcher {
 
 impl BootImagePatcher for MagiskRootPatcher {
     fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
-        let zip_reader = File::open(&self.apk_path)?;
+        let zip_reader =
+            File::open(&self.apk_path).map_err(|e| Error::File(self.apk_path.clone(), e))?;
         let mut zip = ZipArchive::new(BufReader::new(zip_reader))?;
 
         // Load the first ramdisk. If it doesn't exist, we have to generate one
@@ -559,7 +562,8 @@ impl PrepatchedImagePatcher {
 impl BootImagePatcher for PrepatchedImagePatcher {
     fn patch(&self, boot_image: &mut BootImage, _cancel_signal: &AtomicBool) -> Result<()> {
         let prepatched_image = {
-            let raw_reader = File::open(&self.prepatched)?;
+            let raw_reader = File::open(&self.prepatched)
+                .map_err(|e| Error::File(self.prepatched.clone(), e))?;
             BootImage::from_reader(BufReader::new(raw_reader))?
         };
 

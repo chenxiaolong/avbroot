@@ -64,8 +64,8 @@ pub enum Error {
     UnsupportedDigestAlgorithm(ObjectIdentifier),
     #[error("Unsupported signature algorithm: {0}")]
     UnsupportedSignatureAlgorithm(ObjectIdentifier),
-    #[error("Expected entry offsets {0:?}, but have {1:?}")]
-    MismatchedPropertyFiles(String, String),
+    #[error("Expected entry offsets {expected:?}, but have {actual:?}")]
+    MismatchedPropertyFiles { expected: String, actual: String },
     #[error("Property files {0:?} exceed {1} byte reserved space")]
     InsufficientReservedSpace(String, usize),
     #[error("Invalid property file entry: {0:?}")]
@@ -389,7 +389,10 @@ pub fn verify_metadata(
     for (key, value) in &metadata.property_files {
         let new_value = compute_property_files(key, &zip_entries, Some(value.len()))?;
         if *value != new_value {
-            return Err(Error::MismatchedPropertyFiles(value.clone(), new_value));
+            return Err(Error::MismatchedPropertyFiles {
+                expected: value.clone(),
+                actual: new_value,
+            });
         }
     }
 

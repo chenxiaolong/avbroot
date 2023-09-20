@@ -18,7 +18,7 @@ pub enum Error {
     #[error("Unknown compression format")]
     UnknownFormat,
     #[error("I/O error")]
-    IoError(#[from] io::Error),
+    Io(#[from] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;

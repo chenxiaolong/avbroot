@@ -33,7 +33,9 @@ fn write_image(path: &Path, image: &BootImage) -> Result<()> {
     image
         .to_writer(&mut writer)
         .with_context(|| format!("Failed to write boot image: {path:?}"))?;
-    writer.flush()?;
+    writer
+        .flush()
+        .with_context(|| format!("Failed to flush boot image: {path:?}"))?;
 
     Ok(())
 }

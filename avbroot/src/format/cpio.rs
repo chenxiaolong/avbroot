@@ -44,7 +44,7 @@ pub enum Error {
     #[error("{0:?} field exceeds integer bounds")]
     IntegerTooLarge(&'static str),
     #[error("I/O error")]
-    IoError(#[from] io::Error),
+    Io(#[from] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;

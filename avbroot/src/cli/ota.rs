@@ -556,7 +556,7 @@ fn patch_ota_payload(
     let header_locked = header.lock().unwrap();
     let mut payload_writer = PayloadWriter::new(writer, header_locked.clone(), key_ota.clone())
         .context("Failed to write payload header")?;
-    let mut orig_payload_reader = open_payload()?;
+    let mut orig_payload_reader = open_payload().context("Failed to open payload")?;
 
     while payload_writer
         .begin_next_operation()
@@ -572,7 +572,9 @@ fn patch_ota_payload(
 
         if let Some(mut reader) = input_streams.remove(&name) {
             // Copy from our replacement image.
-            reader.rewind()?;
+            reader
+                .rewind()
+                .with_context(|| format!("Failed to seek image: {name}"))?;
 
             stream::copy_n(&mut reader, &mut payload_writer, data_length, cancel_signal)
                 .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
@@ -960,7 +962,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
 
     // We do a lot of low-level hackery. Reopen and verify offsets.
     status!("Verifying metadata offsets");
-    temp_writer.rewind()?;
+    temp_writer.rewind().context("Failed to seek output zip")?;
     ota::verify_metadata(
         BufReader::new(&mut temp_writer),
         &metadata,
@@ -1016,7 +1018,8 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         BufReader::new(raw_reader.reopen()),
         payload_offset,
         payload_size,
-    )?;
+    )
+    .context("Failed to directly open payload section")?;
 
     let header = PayloadHeader::from_reader(&mut payload_reader)
         .context("Failed to load OTA payload header")?;
@@ -1101,7 +1104,8 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         .find(|pf| pf.name == ota::PATH_PAYLOAD)
         .ok_or_else(|| anyhow!("Missing property files entry: {}", ota::PATH_PAYLOAD))?;
 
-    let section_reader = SectionReader::new(&mut reader, pf_payload.offset, pf_payload.size)?;
+    let section_reader = SectionReader::new(&mut reader, pf_payload.offset, pf_payload.size)
+        .context("Failed to directly open payload section")?;
 
     payload::verify_payload(section_reader, &ota_cert, &properties, cancel_signal)?;
 
