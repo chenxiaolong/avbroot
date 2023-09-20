@@ -97,7 +97,7 @@ fn strip_image(
     let mut raw_reader = File::open(input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {input:?}"))?;
-    let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.clone()))
+    let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.reopen()))
         .with_context(|| format!("Failed to read zip: {input:?}"))?;
     let payload_entry = zip_reader
         .by_name(ota::PATH_PAYLOAD)
@@ -107,7 +107,7 @@ fn strip_image(
 
     // Open the payload data directly.
     let mut payload_reader = SectionReader::new(
-        BufReader::new(raw_reader.clone()),
+        BufReader::new(raw_reader.reopen()),
         payload_offset,
         payload_size,
     )?;

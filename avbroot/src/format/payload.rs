@@ -874,7 +874,7 @@ pub fn extract_image_to_memory(
         .par_iter()
         .map(|op| -> Result<()> {
             let reader = open_payload()?;
-            let writer = stream.clone();
+            let writer = stream.reopen();
 
             apply_operation(
                 reader,

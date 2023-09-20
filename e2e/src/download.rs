@@ -309,7 +309,7 @@ fn download_ranges(
                 }
 
                 if let Some(thread_range) = remaining.pop_front() {
-                    let file_cloned = file.clone();
+                    let file_cloned = file.reopen();
                     let thread_range_cloned = thread_range.clone();
                     let tx_cloned = tx.clone();
 

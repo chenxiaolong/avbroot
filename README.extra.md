@@ -6,10 +6,44 @@ Note that while avbroot maintains a stable command line interface for the patchi
 
 ## `avbroot avb`
 
+### Unpacking an AVB image
+
+```bash
+avbroot avb unpack -i <input AVB image>
+```
+
+This subcommand unpacks the vbmeta header and footer into `avb.toml`. If a footer is present, then the corresponding raw partition image is extracted into `raw.img`. Root vbmeta images (eg. `vbmeta` and `vbmeta_vendor`) do not have footers, while appended vbmeta images (eg. `boot` and `system`) do.
+
+The vbmeta descriptor digests are validated during unpacking. For dm-verity images, if the image is corrupt, avbroot will attempt to use the FEC data to repair the file. If there is unrepairable data corruption, the command will fail, though the corrupted `raw.img` will still be fully written. If, for whatever reason, a successful exit status of 0 is needed even for corrupted files, use `--ignore-invalid`.
+
+### Packing an AVB image
+
+```bash
+avbroot avb pack -o <output AVB image> [--key <AVB private key>]
+```
+
+This subcommand packs a new AVB image from the `avb.toml` file and, for appended vbmeta images, the `raw.img` file.
+
+* If the original image was signed and the new data is unmodified, then the original signature is used as-is. (This means just unpacking and packing an image will always result in a byte-for-byte identical file.)
+* If the original image was signed and the new data is modified, then the newly packed image will be signed with the `--key`.
+* If the original image was not signed, then the newly packed image is not signed.
+* To force an image to be signed, use `--key <path> --force`.
+* To force an image to be unsigned, use `--force` without specifying `--key`.
+
+### Repacking an AVB image
+
+```bash
+avbroot avb repack -i <input AVB image> -o <output AVB image>
+```
+
+This subcommand is equivalent to `avbroot avb unpack` followed by `avbroot avb pack`, except it doesn't need to write any intermediate files to disk.
+
+This is useful for repairing a dm-verify image or for re-signing any image with a specific key.
+
 ### Showing vbmeta header and footer information
 
 ```bash
-avbroot avb dump -i <image>
+avbroot avb info -i <image>
 ```
 
 This subcommand shows all of the vbmeta header and footer fields. `vbmeta` partition images will only have a header, while partitions with actual data (eg. boot images) will have both a header and a footer.
@@ -23,6 +57,8 @@ avbroot avb verify -i <root vbmeta image> -p <public key>
 This subcommand verifies the vbmeta header signature and the hashes for all vbmeta descriptors (including hash tree descriptors). If the vbmeta image has a chain descriptor for another partition, that partition image will be verified as well (recursively). All partitions are expected to be in the same directory as the vbmeta image being verified.
 
 If `-p` is omitted, the signatures and hashes are checked only for validity, not that they are trusted.
+
+By default, this command will not write to any file and fails if an image is corrupt or invalid. To attempt to repair corrupted dm-verity images, pass in `--repair`.
 
 ## `avbroot boot`
 

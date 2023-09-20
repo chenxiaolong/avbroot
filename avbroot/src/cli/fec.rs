@@ -51,7 +51,7 @@ fn write_fec(path: &Path, fec: &FecImage) -> Result<()> {
 fn generate_subcommand(cli: &GenerateCli, cancel_signal: &AtomicBool) -> Result<()> {
     let input = open_input(&cli.input, false)?;
 
-    let fec = FecImage::generate(|| Ok(Box::new(input.clone())), cli.parity, cancel_signal)
+    let fec = FecImage::generate(|| Ok(Box::new(input.reopen())), cli.parity, cancel_signal)
         .context("Failed to generate FEC data")?;
 
     write_fec(&cli.fec, &fec)?;
@@ -63,7 +63,7 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
     let input = open_input(&cli.input, false)?;
     let fec = read_fec(&cli.fec)?;
 
-    fec.verify(|| Ok(Box::new(input.clone())), cancel_signal)
+    fec.verify(|| Ok(Box::new(input.reopen())), cancel_signal)
         .context("Failed to verify data")?;
 
     Ok(())
@@ -77,8 +77,8 @@ fn repair_subcommand(cli: &RepairCli, cancel_signal: &AtomicBool) -> Result<()> 
     // guarantees that every thread touches disjoint offsets and every offset is
     // read and written at most once.
     fec.repair(
-        || Ok(Box::new(input.clone())),
-        || Ok(Box::new(input.clone())),
+        || Ok(Box::new(input.reopen())),
+        || Ok(Box::new(input.reopen())),
         cancel_signal,
     )
     .context("Failed to repair file")?;
