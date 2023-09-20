@@ -20,16 +20,11 @@ use crate::WORKSPACE_DIR;
 struct LinkRef {
     link_type: String,
     number: u32,
-    user: Option<String>,
 }
 
 impl fmt::Display for LinkRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{} #{}", self.link_type, self.number)?;
-        if let Some(u) = &self.user {
-            write!(f, " @{}", u)?;
-        }
-        write!(f, "]")
+        write!(f, "[{} #{}]", self.link_type, self.number)
     }
 }
 
@@ -55,7 +50,7 @@ fn check_brackets(line: &str) -> Result<()> {
 
 fn update_changelog_links(path: &Path, base_url: &str) -> Result<()> {
     let re_standalone_link = Regex::new(r"\[([^\]]+)\]($|[^\(\[])")?;
-    let re_auto_link = Regex::new(r"^(Issue|PR) #([0-9]+)(?: @([a-zA-Z0-9\-]+))?$")?;
+    let re_auto_link = Regex::new(r"^(Issue|PR) #([0-9]+)?$")?;
     let mut links = BTreeMap::<LinkRef, String>::new();
 
     let raw_reader = File::open(path)?;
@@ -85,22 +80,11 @@ fn update_changelog_links(path: &Path, base_url: &str) -> Result<()> {
                 let link_ref = captures.get(0).unwrap().as_str();
                 let link_type = captures.get(1).unwrap().as_str();
                 let number: u32 = captures.get(2).unwrap().as_str().parse()?;
-                let user = captures.get(3).map(|c| c.as_str());
 
                 let link = match link_type {
-                    "Issue" => {
-                        if user.is_some() {
-                            bail!("{link_ref} should not have a username");
-                        }
-                        format!("{base_url}/issues/{number}")
-                    }
-                    "PR" => {
-                        if user.is_none() {
-                            bail!("{link_ref} should have a username");
-                        }
-                        format!("{base_url}/pull/{number}")
-                    }
-                    t => bail!("Unknown link type: {t:?}"),
+                    "Issue" => format!("{base_url}/issues/{number}"),
+                    "PR" => format!("{base_url}/pull/{number}"),
+                    t => bail!("Unknown link type in {link_ref:?}: {t:?}"),
                 };
 
                 // #0 is used for examples only.
@@ -109,7 +93,6 @@ fn update_changelog_links(path: &Path, base_url: &str) -> Result<()> {
                         LinkRef {
                             link_type: link_type.to_owned(),
                             number,
-                            user: user.map(|u| u.to_owned()),
                         },
                         link,
                     );
