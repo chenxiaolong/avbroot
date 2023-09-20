@@ -15,6 +15,8 @@
 * Add support for dm-verify FEC (forward error correction) ([Issue #145], [PR #146 @chenxiaolong])
     * `ota verify` and `avb verify` will now check the FEC data.
 * Print status and warning messages to stderr ([PR #149 @chenxiaolong])
+* Add new `avb unpack`, `avb pack`, and `avb repack` commands for AVB images ([Issue #144], [Issue #148], [PR #152 @chenxiaolong])
+    * `avb verify` now optionally accepts `--repair` to fix corrupted dm-verity images.
 
 Behind-the-scenes changes:
 
@@ -41,7 +43,9 @@ Behind-the-scenes changes:
 
 <!-- Do not manually edit the lines below. Use `cargo xtask update-changelog` to regenerate. -->
 [Issue #138]: https://github.com/chenxiaolong/avbroot/issues/138
+[Issue #144]: https://github.com/chenxiaolong/avbroot/issues/144
 [Issue #145]: https://github.com/chenxiaolong/avbroot/issues/145
+[Issue #148]: https://github.com/chenxiaolong/avbroot/issues/148
 [PR #130 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #135 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/135
@@ -53,3 +57,4 @@ Behind-the-scenes changes:
 [PR #147 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/147
 [PR #149 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/149
 [PR #150 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/150
+[PR #152 @chenxiaolong]: https://github.com/chenxiaolong/avbroot/pull/152
