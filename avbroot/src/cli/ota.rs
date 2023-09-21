@@ -846,24 +846,20 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         Cow::Borrowed,
     );
 
-    let passphrase_avb = if let Some(v) = &cli.pass_avb_env_var {
-        PassphraseSource::EnvVar(v.clone())
-    } else if let Some(p) = &cli.pass_avb_file {
-        PassphraseSource::File(p.clone())
-    } else {
-        PassphraseSource::Prompt(format!("Enter passphrase for {:?}: ", cli.key_avb))
-    };
-    let passphrase_ota = if let Some(v) = &cli.pass_ota_env_var {
-        PassphraseSource::EnvVar(v.clone())
-    } else if let Some(p) = &cli.pass_ota_file {
-        PassphraseSource::File(p.clone())
-    } else {
-        PassphraseSource::Prompt(format!("Enter passphrase for {:?}: ", cli.key_ota))
-    };
+    let source_avb = PassphraseSource::new(
+        &cli.key_avb,
+        cli.pass_avb_file.as_deref(),
+        cli.pass_avb_env_var.as_deref(),
+    );
+    let source_ota = PassphraseSource::new(
+        &cli.key_ota,
+        cli.pass_ota_file.as_deref(),
+        cli.pass_ota_env_var.as_deref(),
+    );
 
-    let key_avb = crypto::read_pem_key_file(&cli.key_avb, &passphrase_avb)
+    let key_avb = crypto::read_pem_key_file(&cli.key_avb, &source_avb)
         .with_context(|| format!("Failed to load key: {:?}", cli.key_avb))?;
-    let key_ota = crypto::read_pem_key_file(&cli.key_ota, &passphrase_ota)
+    let key_ota = crypto::read_pem_key_file(&cli.key_ota, &source_ota)
         .with_context(|| format!("Failed to load key: {:?}", cli.key_ota))?;
     let cert_ota = crypto::read_pem_cert_file(&cli.cert_ota)
         .with_context(|| format!("Failed to load certificate: {:?}", cli.cert_ota))?;
