@@ -7,6 +7,12 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+Behind-the-scenes changes:
+
+* Consolidate logic for handling `--pass-file` and `--pass-env-var` ([PR #156])
+
 ### Version 2.1.0
 
 * Add support for dm-verify FEC (forward error correction) ([Issue #145], [PR #146])
@@ -63,3 +69,4 @@ Behind-the-scenes changes:
 [PR #150]: https://github.com/chenxiaolong/avbroot/pull/150
 [PR #152]: https://github.com/chenxiaolong/avbroot/pull/152
 [PR #153]: https://github.com/chenxiaolong/avbroot/pull/153
+[PR #156]: https://github.com/chenxiaolong/avbroot/pull/156
