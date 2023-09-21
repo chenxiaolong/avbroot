@@ -18,29 +18,27 @@ use crate::{
     format::avb,
 };
 
-fn get_passphrase(group: &PassphraseGroup, key_path: &Path) -> PassphraseSource {
-    if let Some(v) = &group.pass_env_var {
-        PassphraseSource::EnvVar(v.clone())
-    } else if let Some(p) = &group.pass_file {
-        PassphraseSource::File(p.clone())
-    } else {
-        PassphraseSource::Prompt(format!("Enter passphrase for {key_path:?}: "))
-    }
+fn get_passphrase_source(group: &PassphraseGroup, key_path: &Path) -> PassphraseSource {
+    PassphraseSource::new(
+        key_path,
+        group.pass_file.as_deref(),
+        group.pass_env_var.as_deref(),
+    )
 }
 
 pub fn key_main(cli: &KeyCli) -> Result<()> {
     match &cli.command {
         KeyCommand::GenerateKey(c) => {
-            let passphrase = get_passphrase(&c.passphrase, &c.output);
+            let source = get_passphrase_source(&c.passphrase, &c.output);
             let private_key =
                 crypto::generate_rsa_key_pair().context("Failed to generate RSA keypair")?;
 
-            crypto::write_pem_key_file(&c.output, &private_key, &passphrase)
+            crypto::write_pem_key_file(&c.output, &private_key, &source)
                 .with_context(|| format!("Failed to write private key: {:?}", c.output))?;
         }
         KeyCommand::GenerateCert(c) => {
-            let passphrase = get_passphrase(&c.passphrase, &c.key);
-            let private_key = crypto::read_pem_key_file(&c.key, &passphrase)
+            let source = get_passphrase_source(&c.passphrase, &c.key);
+            let private_key = crypto::read_pem_key_file(&c.key, &source)
                 .with_context(|| format!("Failed to load key: {:?}", c.key))?;
 
             let validity = Duration::from_secs(c.validity * 24 * 60 * 60);
@@ -52,7 +50,7 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
         }
         KeyCommand::ExtractAvb(c) => {
             let public_key = if let Some(p) = &c.input.key {
-                let passphrase = get_passphrase(&c.passphrase, p);
+                let passphrase = get_passphrase_source(&c.passphrase, p);
                 let private_key = crypto::read_pem_key_file(p, &passphrase)
                     .with_context(|| format!("Failed to load key: {p:?}"))?;
 

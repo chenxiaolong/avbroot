@@ -242,14 +242,12 @@ fn sign_or_clear(info: &mut AvbInfo, orig_header: &Header, key_group: &KeyGroup)
                 bail!("Need to sign new AVB header, but no private key was specified");
             };
 
-            let passphrase = if let Some(v) = &key_group.pass_env_var {
-                PassphraseSource::EnvVar(v.clone())
-            } else if let Some(p) = &key_group.pass_file {
-                PassphraseSource::File(p.clone())
-            } else {
-                PassphraseSource::Prompt(format!("Enter passphrase for {key_path:?}: "))
-            };
-            let private_key = crypto::read_pem_key_file(key_path, &passphrase)
+            let source = PassphraseSource::new(
+                key_path,
+                key_group.pass_file.as_deref(),
+                key_group.pass_env_var.as_deref(),
+            );
+            let private_key = crypto::read_pem_key_file(key_path, &source)
                 .with_context(|| format!("Failed to load key: {key_path:?}"))?;
 
             info.header.set_algo_for_key(&private_key)?;

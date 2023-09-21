@@ -5,7 +5,7 @@
 
 use std::{
     env::{self, VarError},
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs::{self, File, OpenOptions},
     io::{self, BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
@@ -75,6 +75,16 @@ pub enum PassphraseSource {
 }
 
 impl PassphraseSource {
+    pub fn new(key_file: &Path, pass_file: Option<&Path>, env_var: Option<&OsStr>) -> Self {
+        if let Some(v) = env_var {
+            Self::EnvVar(v.to_owned())
+        } else if let Some(p) = pass_file {
+            Self::File(p.to_owned())
+        } else {
+            Self::Prompt(format!("Enter passphrase for {key_file:?}: "))
+        }
+    }
+
     pub fn acquire(&self, confirm: bool) -> Result<String> {
         let passphrase = match self {
             Self::Prompt(p) => {
