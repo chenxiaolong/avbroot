@@ -44,6 +44,19 @@ pub const FOOTER_VERSION_MINOR: u32 = 0;
 pub const HEADER_MAGIC: [u8; 4] = *b"AVB0";
 pub const FOOTER_MAGIC: [u8; 4] = *b"AVBf";
 
+/// Maximum header size. This is the same limit as what avbtool enforces. This
+/// value is also used as the limit for individual descriptor fields to allow
+/// for early fail. No individual field can actually be this size.
+pub const HEADER_MAX_SIZE: u64 = 64 * 1024;
+
+/// Maximum hash tree size. The current limit equals the hash tree size for a
+/// 4GiB image using SHA512 digests and a block size of 4096.
+pub const HASH_TREE_MAX_SIZE: u64 = 68_177_920;
+
+/// Maximum FEC data size. The current limit equals the FEC data size for a 4GiB
+/// image using 2 parity bytes per codeword.
+pub const FEC_DATA_MAX_SIZE: u64 = 33_959_936;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Failed to read {0:?} field: {1}")]
@@ -54,14 +67,14 @@ pub enum Error {
     StringNotNullTerminated(&'static str),
     #[error("{0:?} field is not ASCII encoded: {1:?}")]
     StringNotAscii(&'static str, String),
-    #[error("{0:?} field exceeds integer bounds")]
-    IntegerTooLarge(&'static str),
+    #[error("Header exceeds maximum size of {HEADER_MAX_SIZE}")]
+    HeaderTooLarge,
     #[error("Descriptor padding is too long or data was not consumed")]
     PaddingTooLong,
     #[error("{0:?} field padding contains non-zero bytes")]
     PaddingNotZero(&'static str),
-    #[error("{0:?} field size does not equal size of contained items")]
-    IncorrectCombinedSize(&'static str),
+    #[error("{0:?} field is out of bounds")]
+    FieldOutOfBounds(&'static str),
     #[error("Invalid VBMeta header magic: {0:?}")]
     InvalidHeaderMagic([u8; 4]),
     #[error("Invalid VBMeta footer magic: {0:?}")]
@@ -263,30 +276,34 @@ impl<R: Read> FromReader<R> for PropertyDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let key_size = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("key_size"))?;
-        let value_size = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("value_size"))?;
+        let key_size = reader.read_u64::<BigEndian>()?;
+        let value_size = reader.read_u64::<BigEndian>()?;
+
+        if key_size > HEADER_MAX_SIZE {
+            return Err(Error::FieldOutOfBounds("key_size"));
+        } else if value_size > HEADER_MAX_SIZE {
+            return Err(Error::FieldOutOfBounds("value_size"));
+        }
 
         let key = reader
-            .read_string_exact(key_size)
+            .read_string_exact(key_size as usize)
             .map_err(|e| Error::ReadFieldError("key", e))?;
 
         let mut null = [0u8; 1];
-        reader.read_exact(&mut null)?;
+        reader
+            .read_exact(&mut null)
+            .map_err(|e| Error::ReadFieldError("key_null", e))?;
         if null[0] != b'\0' {
             return Err(Error::StringNotNullTerminated("key"));
         }
 
-        let mut value = vec![0u8; value_size];
+        let mut value = vec![0u8; value_size as usize];
         reader.read_exact(&mut value)?;
 
         // The non-string value is also null terminated.
-        reader.read_exact(&mut null)?;
+        reader
+            .read_exact(&mut null)
+            .map_err(|e| Error::ReadFieldError("value_null", e))?;
         if null[0] != b'\0' {
             return Err(Error::StringNotNullTerminated("value"));
         }
@@ -299,8 +316,14 @@ impl<W: Write> ToWriter<W> for PropertyDescriptor {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
-        writer.write_u64::<BigEndian>(self.key.len().to_u64().unwrap())?;
-        writer.write_u64::<BigEndian>(self.value.len().to_u64().unwrap())?;
+        if self.key.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("key_size"));
+        } else if self.value.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("value_size"));
+        }
+
+        writer.write_u64::<BigEndian>(self.key.len() as u64)?;
+        writer.write_u64::<BigEndian>(self.value.len() as u64)?;
         writer.write_all(self.key.as_bytes())?;
         writer.write_all(b"\0")?;
         writer.write_all(&self.value)?;
@@ -531,16 +554,15 @@ impl HashTreeDescriptor {
     fn get_fec(&self) -> Result<(Fec, usize)> {
         if self.fec_num_roots == 0 {
             return Err(Error::FecMissing);
+        } else if self.fec_size > FEC_DATA_MAX_SIZE {
+            return Err(Error::FieldOutOfBounds("fec_size"));
         }
 
-        let fec_size = self
-            .fec_size
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("fec_size"))?;
+        // Fec will check the validity of this field.
         let parity = self
             .fec_num_roots
             .to_u8()
-            .ok_or_else(|| Error::IntegerTooLarge("fec_num_roots"))?;
+            .ok_or_else(|| Error::FieldOutOfBounds("fec_num_roots"))?;
 
         // The FEC covers the hash tree as well.
         let fec = Fec::new(
@@ -549,7 +571,7 @@ impl HashTreeDescriptor {
             parity,
         )?;
 
-        Ok((fec, fec_size))
+        Ok((fec, self.fec_size as usize))
     }
 
     /// Update the root hash, hash tree, and FEC data. The hash tree and FEC
@@ -582,14 +604,17 @@ impl HashTreeDescriptor {
             cancel_signal,
         )?;
 
-        let tree_size = hash_tree
-            .len()
-            .to_u64()
-            .ok_or_else(|| Error::IntegerTooLarge("tree_size"))?;
+        if hash_tree.len() > HASH_TREE_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("tree_size"));
+        }
+
+        let tree_size = hash_tree.len() as u64;
 
         let mut writer = open_output()?;
         writer.seek(SeekFrom::Start(self.image_size))?;
-        writer.write_all(&hash_tree)?;
+        writer
+            .write_all(&hash_tree)
+            .map_err(|e| Error::WriteFieldError("hash_tree", e))?;
 
         // The FEC data section is optional.
         if self.fec_num_roots != 0 {
@@ -603,7 +628,7 @@ impl HashTreeDescriptor {
             let parity = self
                 .fec_num_roots
                 .to_u8()
-                .ok_or_else(|| Error::IntegerTooLarge("fec_num_roots"))?;
+                .ok_or_else(|| Error::FieldOutOfBounds("fec_num_roots"))?;
 
             // The FEC covers the hash tree as well.
             let fec = Fec::new(self.image_size + tree_size, self.data_block_size, parity)?;
@@ -612,10 +637,12 @@ impl HashTreeDescriptor {
             let fec_size = fec_data
                 .len()
                 .to_u64()
-                .ok_or_else(|| Error::IntegerTooLarge("fec_size"))?;
+                .ok_or_else(|| Error::FieldOutOfBounds("fec_size"))?;
 
             // Already seeked to FEC.
-            writer.write_all(&fec_data)?;
+            writer
+                .write_all(&fec_data)
+                .map_err(|e| Error::WriteFieldError("fec_data", e))?;
 
             self.fec_offset = self.image_size + tree_size;
             self.fec_size = fec_size;
@@ -639,10 +666,10 @@ impl HashTreeDescriptor {
         self.check_offsets()?;
 
         let algorithm = ring_algorithm(&self.hash_algorithm)?;
-        let tree_size = self
-            .tree_size
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("tree_size"))?;
+
+        if self.tree_size > HASH_TREE_MAX_SIZE {
+            return Err(Error::FieldOutOfBounds("tree_size"));
+        }
 
         let (actual_root_digest, actual_hash_tree) = Self::calculate_hash_tree(
             &open_input,
@@ -663,8 +690,10 @@ impl HashTreeDescriptor {
         let mut reader = open_input()?;
         reader.seek(SeekFrom::Start(self.tree_offset))?;
 
-        let mut hash_tree = vec![0u8; tree_size];
-        reader.read_exact(&mut hash_tree)?;
+        let mut hash_tree = vec![0u8; self.tree_size as usize];
+        reader
+            .read_exact(&mut hash_tree)
+            .map_err(|e| Error::ReadFieldError("hash_tree", e))?;
 
         if hash_tree != actual_hash_tree {
             // These are multiple megabytes, so only report the hashes.
@@ -683,7 +712,9 @@ impl HashTreeDescriptor {
 
             let mut fec_data = vec![0u8; fec_size];
             // Already seeked to FEC.
-            reader.read_exact(&mut fec_data)?;
+            reader
+                .read_exact(&mut fec_data)
+                .map_err(|e| Error::ReadFieldError("fec_data", e))?;
 
             fec.verify(open_input, &fec_data, cancel_signal)?;
         }
@@ -719,7 +750,9 @@ impl HashTreeDescriptor {
 
         let mut fec_data = vec![0u8; fec_size];
         // Already seeked to FEC.
-        reader.read_exact(&mut fec_data)?;
+        reader
+            .read_exact(&mut fec_data)
+            .map_err(|e| Error::ReadFieldError("fec_data", e))?;
 
         fec.repair(open_input, open_output, &fec_data, cancel_signal)?;
 
@@ -757,18 +790,26 @@ impl<R: Read> FromReader<R> for HashTreeDescriptor {
         let root_digest_len = reader.read_u32::<BigEndian>()?;
         let flags = reader.read_u32::<BigEndian>()?;
 
+        if partition_name_len > HEADER_MAX_SIZE as u32 {
+            return Err(Error::FieldOutOfBounds("partition_name_len"));
+        } else if salt_len > HEADER_MAX_SIZE as u32 {
+            return Err(Error::FieldOutOfBounds("salt_len"));
+        } else if root_digest_len > HEADER_MAX_SIZE as u32 {
+            return Err(Error::FieldOutOfBounds("root_digest_len"));
+        }
+
         let mut reserved = [0u8; 60];
         reader.read_exact(&mut reserved)?;
 
         // Not NULL-terminated.
         let partition_name = reader
-            .read_string_exact(partition_name_len.to_usize().unwrap())
+            .read_string_exact(partition_name_len as usize)
             .map_err(|e| Error::ReadFieldError("partition_name", e))?;
 
-        let mut salt = vec![0u8; salt_len.to_usize().unwrap()];
+        let mut salt = vec![0u8; salt_len as usize];
         reader.read_exact(&mut salt)?;
 
-        let mut root_digest = vec![0u8; root_digest_len.to_usize().unwrap()];
+        let mut root_digest = vec![0u8; root_digest_len as usize];
         reader.read_exact(&mut root_digest)?;
 
         let descriptor = Self {
@@ -797,6 +838,14 @@ impl<W: Write> ToWriter<W> for HashTreeDescriptor {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
+        if self.partition_name.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("partition_name_len"));
+        } else if self.salt.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("salt_len"));
+        } else if self.root_digest.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("root_digest_len"));
+        }
+
         writer.write_u32::<BigEndian>(self.dm_verity_version)?;
         writer.write_u64::<BigEndian>(self.image_size)?;
         writer.write_u64::<BigEndian>(self.tree_offset)?;
@@ -817,27 +866,9 @@ impl<W: Write> ToWriter<W> for HashTreeDescriptor {
             .write_string_padded(&self.hash_algorithm, 32)
             .map_err(|e| Error::WriteFieldError("hash_algorithm", e))?;
 
-        let partition_name_len = self
-            .partition_name
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::IntegerTooLarge("partition_name_len"))?;
-        writer.write_u32::<BigEndian>(partition_name_len)?;
-
-        let salt_len = self
-            .salt
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::IntegerTooLarge("salt_len"))?;
-        writer.write_u32::<BigEndian>(salt_len)?;
-
-        let root_digest_len = self
-            .root_digest
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::IntegerTooLarge("root_digest_len"))?;
-        writer.write_u32::<BigEndian>(root_digest_len)?;
-
+        writer.write_u32::<BigEndian>(self.partition_name.len() as u32)?;
+        writer.write_u32::<BigEndian>(self.salt.len() as u32)?;
+        writer.write_u32::<BigEndian>(self.root_digest.len() as u32)?;
         writer.write_u32::<BigEndian>(self.flags)?;
         writer.write_all(&self.reserved)?;
         writer.write_all(self.partition_name.as_bytes())?;
@@ -941,18 +972,26 @@ impl<R: Read> FromReader<R> for HashDescriptor {
         let root_digest_len = reader.read_u32::<BigEndian>()?;
         let flags = reader.read_u32::<BigEndian>()?;
 
+        if partition_name_len > HEADER_MAX_SIZE as u32 {
+            return Err(Error::FieldOutOfBounds("partition_name_len"));
+        } else if salt_len > HEADER_MAX_SIZE as u32 {
+            return Err(Error::FieldOutOfBounds("salt_len"));
+        } else if root_digest_len > HEADER_MAX_SIZE as u32 {
+            return Err(Error::FieldOutOfBounds("root_digest_len"));
+        }
+
         let mut reserved = [0u8; 60];
         reader.read_exact(&mut reserved)?;
 
         // Not NULL-terminated.
         let partition_name = reader
-            .read_string_exact(partition_name_len.to_usize().unwrap())
+            .read_string_exact(partition_name_len as usize)
             .map_err(|e| Error::ReadFieldError("partition_name", e))?;
 
-        let mut salt = vec![0u8; salt_len.to_usize().unwrap()];
+        let mut salt = vec![0u8; salt_len as usize];
         reader.read_exact(&mut salt)?;
 
-        let mut root_digest = vec![0u8; root_digest_len.to_usize().unwrap()];
+        let mut root_digest = vec![0u8; root_digest_len as usize];
         reader.read_exact(&mut root_digest)?;
 
         let descriptor = Self {
@@ -973,6 +1012,14 @@ impl<W: Write> ToWriter<W> for HashDescriptor {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
+        if self.partition_name.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("partition_name_len"));
+        } else if self.salt.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("salt_len"));
+        } else if self.root_digest.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("root_digest_len"));
+        }
+
         writer.write_u64::<BigEndian>(self.image_size)?;
 
         if !self.hash_algorithm.is_ascii() {
@@ -985,27 +1032,9 @@ impl<W: Write> ToWriter<W> for HashDescriptor {
             .write_string_padded(&self.hash_algorithm, 32)
             .map_err(|e| Error::WriteFieldError("hash_algorithm", e))?;
 
-        let partition_name_len = self
-            .partition_name
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::IntegerTooLarge("partition_name_len"))?;
-        writer.write_u32::<BigEndian>(partition_name_len)?;
-
-        let salt_len = self
-            .salt
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::IntegerTooLarge("salt_len"))?;
-        writer.write_u32::<BigEndian>(salt_len)?;
-
-        let root_digest_len = self
-            .root_digest
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::IntegerTooLarge("root_digest_len"))?;
-        writer.write_u32::<BigEndian>(root_digest_len)?;
-
+        writer.write_u32::<BigEndian>(self.partition_name.len() as u32)?;
+        writer.write_u32::<BigEndian>(self.salt.len() as u32)?;
+        writer.write_u32::<BigEndian>(self.root_digest.len() as u32)?;
         writer.write_u32::<BigEndian>(self.flags)?;
         writer.write_all(&self.reserved)?;
         writer.write_all(self.partition_name.as_bytes())?;
@@ -1033,9 +1062,13 @@ impl<R: Read> FromReader<R> for KernelCmdlineDescriptor {
         let flags = reader.read_u32::<BigEndian>()?;
         let cmdline_len = reader.read_u32::<BigEndian>()?;
 
+        if cmdline_len > HEADER_MAX_SIZE as u32 {
+            return Err(Error::FieldOutOfBounds("cmdline_len"));
+        }
+
         // Not NULL-terminated.
         let cmdline = reader
-            .read_string_exact(cmdline_len.to_usize().unwrap())
+            .read_string_exact(cmdline_len as usize)
             .map_err(|e| Error::ReadFieldError("cmdline", e))?;
 
         let descriptor = Self { flags, cmdline };
@@ -1048,15 +1081,12 @@ impl<W: Write> ToWriter<W> for KernelCmdlineDescriptor {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
+        if self.cmdline.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("cmdline_len"));
+        }
+
         writer.write_u32::<BigEndian>(self.flags)?;
-
-        let cmdline_len = self
-            .cmdline
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::IntegerTooLarge("cmdline_len"))?;
-        writer.write_u32::<BigEndian>(cmdline_len)?;
-
+        writer.write_u32::<BigEndian>(self.cmdline.len() as u32)?;
         writer.write_all(self.cmdline.as_bytes())?;
 
         Ok(())
@@ -1096,15 +1126,21 @@ impl<R: Read> FromReader<R> for ChainPartitionDescriptor {
         let partition_name_len = reader.read_u32::<BigEndian>()?;
         let public_key_len = reader.read_u32::<BigEndian>()?;
 
+        if partition_name_len > HEADER_MAX_SIZE as u32 {
+            return Err(Error::FieldOutOfBounds("partition_name_len"));
+        } else if public_key_len > HEADER_MAX_SIZE as u32 {
+            return Err(Error::FieldOutOfBounds("public_key_len"));
+        }
+
         let mut reserved = [0u8; 64];
         reader.read_exact(&mut reserved)?;
 
         // Not NULL-terminated.
         let partition_name = reader
-            .read_string_padded(partition_name_len.to_usize().unwrap())
+            .read_string_padded(partition_name_len as usize)
             .map_err(|e| Error::ReadFieldError("partition_name", e))?;
 
-        let mut public_key = vec![0u8; public_key_len.to_usize().unwrap()];
+        let mut public_key = vec![0u8; public_key_len as usize];
         reader.read_exact(&mut public_key)?;
 
         let descriptor = Self {
@@ -1122,22 +1158,15 @@ impl<W: Write> ToWriter<W> for ChainPartitionDescriptor {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
+        if self.partition_name.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("partition_name_len"));
+        } else if self.public_key.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("public_key_len"));
+        }
+
         writer.write_u32::<BigEndian>(self.rollback_index_location)?;
-
-        let partition_name_len = self
-            .partition_name
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::IntegerTooLarge("partition_name_len"))?;
-        writer.write_u32::<BigEndian>(partition_name_len)?;
-
-        let public_key_len = self
-            .public_key
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::IntegerTooLarge("public_key_len"))?;
-        writer.write_u32::<BigEndian>(public_key_len)?;
-
+        writer.write_u32::<BigEndian>(self.partition_name.len() as u32)?;
+        writer.write_u32::<BigEndian>(self.public_key.len() as u32)?;
         writer.write_all(&self.reserved)?;
         writer.write_all(self.partition_name.as_bytes())?;
         writer.write_all(&self.public_key)?;
@@ -1177,9 +1206,13 @@ impl<R: Read> FromReader<R> for Descriptor {
 
     fn from_reader(mut reader: R) -> Result<Self> {
         let tag = reader.read_u64::<BigEndian>()?;
-        let nbf_len = reader.read_u64::<BigEndian>()?;
+        let nbf = reader.read_u64::<BigEndian>()?;
 
-        let mut inner_reader = CountingReader::new(reader.take(nbf_len));
+        if nbf > HEADER_MAX_SIZE {
+            return Err(Error::FieldOutOfBounds("num_bytes_following"));
+        }
+
+        let mut inner_reader = CountingReader::new(reader.take(nbf));
 
         let descriptor = match tag {
             PropertyDescriptor::TAG => {
@@ -1203,10 +1236,7 @@ impl<R: Read> FromReader<R> for Descriptor {
                 Self::ChainPartition(d)
             }
             _ => {
-                let nbf = nbf_len
-                    .to_usize()
-                    .ok_or_else(|| Error::IntegerTooLarge("num_bytes_following"))?;
-                let mut data = vec![0u8; nbf];
+                let mut data = vec![0u8; nbf as usize];
                 inner_reader.read_exact(&mut data)?;
 
                 Self::Unknown { tag, data }
@@ -1215,7 +1245,7 @@ impl<R: Read> FromReader<R> for Descriptor {
 
         // The descriptor data is always aligned to 8 bytes.
         padding::read_discard(&mut inner_reader, 8)?;
-        if inner_reader.stream_position()? != nbf_len {
+        if inner_reader.stream_position()? != nbf {
             return Err(Error::PaddingTooLong);
         }
 
@@ -1257,16 +1287,18 @@ impl<W: Write> ToWriter<W> for Descriptor {
         };
 
         let inner_data = inner_writer.into_inner();
-        let inner_len = inner_data.len().to_u64().unwrap();
-        let padding_len = padding::calc(inner_len, 8);
-        let nbf = inner_len
-            .checked_add(padding_len)
-            .ok_or_else(|| Error::IntegerTooLarge("num_bytes_following"))?;
+
+        if inner_data.len() > HEADER_MAX_SIZE as usize {
+            return Err(Error::FieldOutOfBounds("num_bytes_following"));
+        }
+
+        let padding_len = padding::calc(inner_data.len(), 8);
+        let nbf = inner_data.len() + padding_len;
 
         writer.write_u64::<BigEndian>(tag)?;
-        writer.write_u64::<BigEndian>(nbf)?;
+        writer.write_u64::<BigEndian>(nbf as u64)?;
         writer.write_all(&inner_data)?;
-        writer.write_zeros_exact(padding_len)?;
+        writer.write_zeros_exact(padding_len as u64)?;
 
         Ok(())
     }
@@ -1371,61 +1403,61 @@ impl Header {
 
         // Auth block.
 
-        let hash_offset = 0u64;
-        let hash_size = self.hash.len().to_u64().unwrap();
-
-        let signature_offset = hash_offset
-            .checked_add(hash_size)
-            .ok_or_else(|| Error::IntegerTooLarge("signature_offset"))?;
-        let signature_size = self.signature.len().to_u64().unwrap();
-
-        let auth_block_data_size = signature_offset
-            .checked_add(signature_size)
-            .ok_or_else(|| Error::IntegerTooLarge("authentication_data_block_size"))?;
+        let auth_block_data_size = self
+            .hash
+            .len()
+            .checked_add(self.signature.len())
+            .ok_or_else(|| Error::FieldOutOfBounds("auth_block_data_size"))?;
         let auth_block_padding_size = padding::calc(auth_block_data_size, 64);
         let auth_block_size = auth_block_data_size
             .checked_add(auth_block_padding_size)
-            .ok_or_else(|| Error::IntegerTooLarge("authentication_data_block_size"))?;
+            .ok_or_else(|| Error::FieldOutOfBounds("auth_block_size"))?;
+
+        let hash_offset = 0usize;
+        let signature_offset = hash_offset + self.hash.len();
 
         // Aux block.
 
-        let descriptors_offset = 0u64;
-        let descriptors_size = descriptors_raw.len().to_u64().unwrap();
-
-        let public_key_offset = descriptors_offset
-            .checked_add(descriptors_size)
-            .ok_or_else(|| Error::IntegerTooLarge("public_key_offset"))?;
-        let public_key_size = self.public_key.len().to_u64().unwrap();
-
-        let public_key_metadata_offset = public_key_offset
-            .checked_add(public_key_size)
-            .ok_or_else(|| Error::IntegerTooLarge("public_key_metadata_offset"))?;
-        let public_key_metadata_size = self.public_key_metadata.len().to_u64().unwrap();
-
-        let aux_block_data_size = public_key_metadata_offset
-            .checked_add(public_key_metadata_size)
-            .ok_or_else(|| Error::IntegerTooLarge("auxiliary_data_block_size"))?;
+        let aux_block_data_size = descriptors_raw
+            .len()
+            .checked_add(self.public_key.len())
+            .and_then(|s| s.checked_add(self.public_key_metadata.len()))
+            .ok_or_else(|| Error::FieldOutOfBounds("aux_block_data_size"))?;
         let aux_block_padding_size = padding::calc(aux_block_data_size, 64);
         let aux_block_size = aux_block_data_size
             .checked_add(aux_block_padding_size)
-            .ok_or_else(|| Error::IntegerTooLarge("auxiliary_data_block_size"))?;
+            .ok_or_else(|| Error::FieldOutOfBounds("aux_block_size"))?;
+
+        let descriptors_offset = 0usize;
+        let public_key_offset = descriptors_offset + descriptors_raw.len();
+        let public_key_metadata_offset = public_key_offset + self.public_key.len();
+
+        let total_size = Self::SIZE
+            .checked_add(auth_block_data_size)
+            .and_then(|s| s.checked_add(aux_block_data_size))
+            .ok_or_else(|| Error::FieldOutOfBounds("total_size"))?;
+        if total_size > HEADER_MAX_SIZE as usize {
+            return Err(Error::HeaderTooLarge);
+        }
+
+        // All sizes and offsets are now guaranteed to fit in a u64.
 
         writer.write_all(&HEADER_MAGIC)?;
         writer.write_u32::<BigEndian>(self.required_libavb_version_major)?;
         writer.write_u32::<BigEndian>(self.required_libavb_version_minor)?;
-        writer.write_u64::<BigEndian>(auth_block_size)?;
-        writer.write_u64::<BigEndian>(aux_block_size)?;
+        writer.write_u64::<BigEndian>(auth_block_size as u64)?;
+        writer.write_u64::<BigEndian>(aux_block_size as u64)?;
         writer.write_u32::<BigEndian>(self.algorithm_type.to_raw())?;
-        writer.write_u64::<BigEndian>(hash_offset)?;
-        writer.write_u64::<BigEndian>(hash_size)?;
-        writer.write_u64::<BigEndian>(signature_offset)?;
-        writer.write_u64::<BigEndian>(signature_size)?;
-        writer.write_u64::<BigEndian>(public_key_offset)?;
-        writer.write_u64::<BigEndian>(public_key_size)?;
-        writer.write_u64::<BigEndian>(public_key_metadata_offset)?;
-        writer.write_u64::<BigEndian>(public_key_metadata_size)?;
-        writer.write_u64::<BigEndian>(descriptors_offset)?;
-        writer.write_u64::<BigEndian>(descriptors_size)?;
+        writer.write_u64::<BigEndian>(hash_offset as u64)?;
+        writer.write_u64::<BigEndian>(self.hash.len() as u64)?;
+        writer.write_u64::<BigEndian>(signature_offset as u64)?;
+        writer.write_u64::<BigEndian>(self.signature.len() as u64)?;
+        writer.write_u64::<BigEndian>(public_key_offset as u64)?;
+        writer.write_u64::<BigEndian>(self.public_key.len() as u64)?;
+        writer.write_u64::<BigEndian>(public_key_metadata_offset as u64)?;
+        writer.write_u64::<BigEndian>(self.public_key_metadata.len() as u64)?;
+        writer.write_u64::<BigEndian>(descriptors_offset as u64)?;
+        writer.write_u64::<BigEndian>(descriptors_raw.len() as u64)?;
         writer.write_u64::<BigEndian>(self.rollback_index)?;
         writer.write_u32::<BigEndian>(self.flags)?;
         writer.write_u32::<BigEndian>(self.rollback_index_location)?;
@@ -1440,14 +1472,14 @@ impl Header {
         if !skip_auth_block {
             writer.write_all(&self.hash)?;
             writer.write_all(&self.signature)?;
-            writer.write_zeros_exact(auth_block_padding_size)?;
+            writer.write_zeros_exact(auth_block_padding_size as u64)?;
         }
 
         // Aux block.
         writer.write_all(&descriptors_raw)?;
         writer.write_all(&self.public_key)?;
         writer.write_all(&self.public_key_metadata)?;
-        writer.write_zeros_exact(aux_block_padding_size)?;
+        writer.write_zeros_exact(aux_block_padding_size as u64)?;
 
         Ok(())
     }
@@ -1595,7 +1627,9 @@ impl Header {
 impl<R: Read> FromReader<R> for Header {
     type Error = Error;
 
-    fn from_reader(mut reader: R) -> Result<Self> {
+    fn from_reader(reader: R) -> Result<Self> {
+        let mut reader = CountingReader::new(reader);
+
         let mut magic = [0u8; 4];
         reader.read_exact(&mut magic)?;
 
@@ -1605,72 +1639,44 @@ impl<R: Read> FromReader<R> for Header {
 
         let required_libavb_version_major = reader.read_u32::<BigEndian>()?;
         let required_libavb_version_minor = reader.read_u32::<BigEndian>()?;
-        let authentication_data_block_size = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("authentication_data_block_size"))?;
-        let auxiliary_data_block_size = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("auxiliary_data_block_size"))?;
+        let auth_block_size = reader.read_u64::<BigEndian>()?;
+        let aux_block_size = reader.read_u64::<BigEndian>()?;
 
         let algorithm_type_raw = reader.read_u32::<BigEndian>()?;
         let algorithm_type = AlgorithmType::from_raw(algorithm_type_raw);
 
-        let hash_offset = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("hash_offset"))?;
-        let hash_size = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("hash_size"))?;
-        let signature_offset = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("signature_offset"))?;
-        let signature_size = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("signature_size"))?;
+        let hash_offset = reader.read_u64::<BigEndian>()?;
+        let hash_size = reader.read_u64::<BigEndian>()?;
+        let signature_offset = reader.read_u64::<BigEndian>()?;
+        let signature_size = reader.read_u64::<BigEndian>()?;
 
         let auth_block_combined = hash_size + signature_size;
         let auth_block_padding = padding::calc(auth_block_combined, 64);
-        if authentication_data_block_size != auth_block_combined + auth_block_padding {
-            return Err(Error::IncorrectCombinedSize(
-                "authentication_data_block_size",
-            ));
+        if auth_block_size != auth_block_combined + auth_block_padding {
+            return Err(Error::FieldOutOfBounds("auth_block_size"));
+        } else if hash_offset > auth_block_combined - hash_size {
+            return Err(Error::FieldOutOfBounds("hash_offset"));
+        } else if signature_offset > auth_block_combined - signature_size {
+            return Err(Error::FieldOutOfBounds("signature_offset"));
         }
 
-        let public_key_offset = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("public_key_offset"))?;
-        let public_key_size = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("public_key_size"))?;
-        let public_key_metadata_offset = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("public_key_metadata_offset"))?;
-        let public_key_metadata_size = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("public_key_metadata_size"))?;
-        let descriptors_offset = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("descriptors_offset"))?;
-        let descriptors_size = reader
-            .read_u64::<BigEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("descriptors_size"))?;
+        let public_key_offset = reader.read_u64::<BigEndian>()?;
+        let public_key_size = reader.read_u64::<BigEndian>()?;
+        let public_key_metadata_offset = reader.read_u64::<BigEndian>()?;
+        let public_key_metadata_size = reader.read_u64::<BigEndian>()?;
+        let descriptors_offset = reader.read_u64::<BigEndian>()?;
+        let descriptors_size = reader.read_u64::<BigEndian>()?;
 
         let aux_block_combined = public_key_size + public_key_metadata_size + descriptors_size;
         let aux_block_padding = padding::calc(aux_block_combined, 64);
-        if auxiliary_data_block_size != aux_block_combined + aux_block_padding {
-            return Err(Error::IncorrectCombinedSize("auxiliary_data_block_size"));
+        if aux_block_size != aux_block_combined + aux_block_padding {
+            return Err(Error::FieldOutOfBounds("aux_block_size"));
+        } else if public_key_offset > aux_block_combined - public_key_size {
+            return Err(Error::FieldOutOfBounds("public_key_offset"));
+        } else if public_key_metadata_offset > aux_block_combined - public_key_metadata_size {
+            return Err(Error::FieldOutOfBounds("public_key_metadata_size"));
+        } else if descriptors_offset > aux_block_combined - descriptors_size {
+            return Err(Error::FieldOutOfBounds("descriptors_offset"));
         }
 
         let rollback_index = reader.read_u64::<BigEndian>()?;
@@ -1684,70 +1690,49 @@ impl<R: Read> FromReader<R> for Header {
         let mut reserved = [0u8; 80];
         reader.read_exact(&mut reserved)?;
 
-        let mut auth_block = vec![0u8; authentication_data_block_size];
+        let header_size = reader.stream_position()?;
+        let total_size = header_size
+            .checked_add(auth_block_size)
+            .and_then(|v| v.checked_add(aux_block_size))
+            .ok_or_else(|| Error::FieldOutOfBounds("total_size"))?;
+        if total_size > HEADER_MAX_SIZE {
+            return Err(Error::HeaderTooLarge);
+        }
+
+        // All of the size fields above are now guaranteed to fit in usize.
+
+        let mut auth_block = vec![0u8; auth_block_size as usize];
         reader.read_exact(&mut auth_block)?;
 
-        let mut aux_block = vec![0u8; auxiliary_data_block_size];
+        let mut aux_block = vec![0u8; aux_block_size as usize];
         reader.read_exact(&mut aux_block)?;
 
         // When we verify() the signatures, we're doing so on re-serialized
         // fields. The padding is the only thing that can escape this, so make
         // sure they don't contain any data.
         if !util::is_zero(
-            &auth_block[auth_block_combined..auth_block_combined + auth_block_padding],
+            &auth_block[auth_block_combined as usize..][..auth_block_padding as usize],
         ) {
-            return Err(Error::PaddingNotZero("authentication_data_block"));
+            return Err(Error::PaddingNotZero("auth_block"));
         }
-        if !util::is_zero(&aux_block[aux_block_combined..aux_block_combined + aux_block_padding]) {
-            return Err(Error::PaddingNotZero("auxiliary_data_block"));
+        if !util::is_zero(&aux_block[aux_block_combined as usize..][..aux_block_padding as usize]) {
+            return Err(Error::PaddingNotZero("aux_block"));
         }
 
         // Auth block data.
-
-        if hash_offset
-            .checked_add(hash_size)
-            .map_or(false, |s| s > auth_block.len())
-        {
-            return Err(Error::IntegerTooLarge("hash_offset + hash_size"));
-        }
-        let hash = &auth_block[hash_offset..hash_offset + hash_size];
-
-        if signature_offset
-            .checked_add(signature_size)
-            .map_or(false, |s| s > auth_block.len())
-        {
-            return Err(Error::IntegerTooLarge("signature_offset + signature_size"));
-        }
-        let signature = &auth_block[signature_offset..signature_offset + signature_size];
+        let hash = &auth_block[hash_offset as usize..][..hash_size as usize];
+        let signature = &auth_block[signature_offset as usize..][..signature_size as usize];
 
         // Aux block data.
-
-        if public_key_offset
-            .checked_add(public_key_size)
-            .map_or(false, |s| s > aux_block.len())
-        {
-            return Err(Error::IntegerTooLarge(
-                "public_key_offset + public_key_size",
-            ));
-        }
-        let public_key = &aux_block[public_key_offset..public_key_offset + public_key_size];
-
-        if public_key_metadata_offset
-            .checked_add(public_key_metadata_size)
-            .map_or(false, |s| s > aux_block.len())
-        {
-            return Err(Error::IntegerTooLarge(
-                "public_key_metadata_offset + public_key_metadata_size",
-            ));
-        }
-        let public_key_metadata = &aux_block
-            [public_key_metadata_offset..public_key_metadata_offset + public_key_metadata_size];
+        let public_key = &aux_block[public_key_offset as usize..][..public_key_size as usize];
+        let public_key_metadata =
+            &aux_block[public_key_metadata_offset as usize..][..public_key_metadata_size as usize];
 
         let mut descriptors: Vec<Descriptor> = vec![];
         let mut descriptor_reader = Cursor::new(&aux_block);
-        let mut pos = descriptor_reader.seek(SeekFrom::Start(descriptors_offset as u64))?;
+        let mut pos = descriptor_reader.seek(SeekFrom::Start(descriptors_offset))?;
 
-        while pos < (descriptors_offset + descriptors_size) as u64 {
+        while pos < descriptors_offset + descriptors_size {
             let descriptor = Descriptor::from_reader(&mut descriptor_reader)?;
             descriptors.push(descriptor);
             pos = descriptor_reader.stream_position()?;
@@ -1901,7 +1886,7 @@ pub fn decode_public_key(data: &[u8]) -> Result<RsaPublicKey> {
     let key_bits = reader
         .read_u32::<BigEndian>()?
         .to_usize()
-        .ok_or_else(|| Error::IntegerTooLarge("key_bits"))?;
+        .ok_or_else(|| Error::FieldOutOfBounds("key_bits"))?;
 
     // Skip n0inv.
     reader.read_discard_exact(4)?;
@@ -1958,7 +1943,7 @@ fn write_image_internal(
         let padding_size = padding::write_zeros(&mut writer, block_size)?;
         eof_image_size
             .checked_add(padding_size)
-            .ok_or_else(|| Error::IntegerTooLarge("vbmeta_offset"))?
+            .ok_or_else(|| Error::FieldOutOfBounds("vbmeta_offset"))?
     } else {
         eof_image_size
     };
