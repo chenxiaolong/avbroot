@@ -1020,7 +1020,7 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
                     "vendor_ramdisk_table_entry_size",
                     table_entry_size,
                 ));
-            } else if table_size != table_entry_num * table_entry_size {
+            } else if table_entry_num.checked_mul(table_entry_size) != Some(table_size) {
                 return Err(Error::InvalidFieldValue(
                     "vendor_ramdisk_table_size",
                     table_size,
