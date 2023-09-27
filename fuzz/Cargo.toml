@@ -1,0 +1,18 @@
+[package]
+name = "fuzz"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+# There's currently no good way to exclude a workspace member for a specific
+# platform, so we just compile empty stubs on Windows (which isn't supported by
+# honggfuzz).
+# https://github.com/rust-lang/cargo/issues/5220
+# https://github.com/rust-lang/cargo/issues/6179
+[target.'cfg(unix)'.dependencies]
+avbroot = { path = "../avbroot" }
+honggfuzz = "0.5.55"

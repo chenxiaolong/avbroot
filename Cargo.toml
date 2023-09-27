@@ -1,6 +1,6 @@
 [workspace]
 default-members = ["avbroot"]
-members = ["avbroot", "e2e", "xtask"]
+members = ["avbroot", "e2e", "fuzz", "xtask"]
 resolver = "2"
 
 [workspace.package]
