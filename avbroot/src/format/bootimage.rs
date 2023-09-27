@@ -272,6 +272,8 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
             return Err(Error::FieldOutOfBounds("ramdisk_size"));
         } else if second_size > COMPONENT_MAX_SIZE {
             return Err(Error::FieldOutOfBounds("second_size"));
+        } else if page_size == 0 {
+            return Err(Error::InvalidFieldValue("page_size", 0));
         }
 
         let os_version = reader.read_u32::<LittleEndian>()?;
@@ -422,6 +424,8 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
             return Err(Error::FieldOutOfBounds("ramdisk_size"));
         } else if self.second.len() > COMPONENT_MAX_SIZE as usize {
             return Err(Error::FieldOutOfBounds("second_size"));
+        } else if self.page_size == 0 {
+            return Err(Error::InvalidFieldValue("page_size", 0));
         }
 
         if let Some(v1) = &self.v1_extra {
@@ -964,6 +968,10 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
         }
 
         let page_size = reader.read_u32::<LittleEndian>()?;
+        if page_size == 0 {
+            return Err(Error::InvalidFieldValue("page_size", 0));
+        }
+
         let kernel_addr = reader.read_u32::<LittleEndian>()?;
         let ramdisk_addr = reader.read_u32::<LittleEndian>()?;
 
@@ -1012,7 +1020,7 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
                     "vendor_ramdisk_table_entry_size",
                     table_entry_size,
                 ));
-            } else if table_size != table_entry_num * table_entry_size {
+            } else if table_entry_num.checked_mul(table_entry_size) != Some(table_size) {
                 return Err(Error::InvalidFieldValue(
                     "vendor_ramdisk_table_size",
                     table_size,
@@ -1148,10 +1156,10 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
         let vendor_ramdisk_size = self.ramdisks.iter().map(|r| r.len()).sum::<usize>();
         if vendor_ramdisk_size > COMPONENT_MAX_SIZE as usize {
             return Err(Error::FieldOutOfBounds("vendor_ramdisk_size"));
-        }
-
-        if self.dtb.len() > COMPONENT_MAX_SIZE as usize {
+        } else if self.dtb.len() > COMPONENT_MAX_SIZE as usize {
             return Err(Error::FieldOutOfBounds("dtb_size"));
+        } else if self.page_size == 0 {
+            return Err(Error::InvalidFieldValue("page_size", 0));
         }
 
         if let Some(v4) = &self.v4_extra {
