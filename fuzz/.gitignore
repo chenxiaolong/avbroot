@@ -1,0 +1,4 @@
+/hfuzz_target/
+HONGGFUZZ.REPORT.TXT
+*.honggfuzz.cov
+*.fuzz
