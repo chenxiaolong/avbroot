@@ -35,6 +35,13 @@ const C_ISCTG: u32 = 0o110000;
 
 const IO_BLOCK_SIZE: u64 = 512;
 
+/// The threshold when parsing an entry's filename where memory allocation
+/// switches from allocating the exact size to resizing as necessary.
+const REALLOC_NAME_THRESHOLD: usize = 1024;
+/// The threshold when parsing an entry's contents where memory allocation
+/// switches from allocating the exact size to resizing as necessary.
+const REALLOC_DATA_THRESHOLD: usize = 1024 * 1024;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Unknown magic: {0:?}")]
@@ -84,6 +91,31 @@ fn write_int(mut writer: impl Write, mut value: u32) -> io::Result<()> {
     }
 
     writer.write_all(&buf)
+}
+
+/// Read a chunk of bytes from the reader. If `size` is less than
+/// `realloc_thresh`, then the buffer is allocated with the exact size.
+/// Otherwise, the buffer starts with a capacity of `realloc_thresh` and grows
+/// as necessary. This avoids allocating excessive memory when the entry
+/// specifies an excessively large value that's not backed by actual data.
+fn read_data(mut reader: impl Read, size: usize, realloc_thresh: usize) -> io::Result<Vec<u8>> {
+    if size < realloc_thresh {
+        let mut buf = vec![0u8; size];
+        reader.read_exact(&mut buf)?;
+        Ok(buf)
+    } else {
+        let mut buf = Vec::with_capacity(realloc_thresh);
+        let mut offset = 0;
+
+        while offset < size {
+            let n = (size - offset).min(16384);
+            buf.resize(offset + n, 0);
+            reader.read_exact(&mut buf[offset..][..n])?;
+            offset += n;
+        }
+
+        Ok(buf)
+    }
 }
 
 fn file_type(mode: u32) -> u32 {
@@ -224,8 +256,11 @@ impl<R: Read> FromReader<R> for CpioEntryNew {
         let namesize = read_int(&mut reader)?;
         let chksum = read_int(&mut reader)?;
 
-        let mut name = vec![0u8; namesize.to_usize().unwrap()];
-        reader.read_exact(&mut name)?;
+        let mut name = read_data(
+            &mut reader,
+            namesize.to_usize().unwrap(),
+            REALLOC_NAME_THRESHOLD,
+        )?;
         if name.last() != Some(&b'\0') {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -236,8 +271,11 @@ impl<R: Read> FromReader<R> for CpioEntryNew {
         name.pop();
         padding::read_discard(&mut reader, 4)?;
 
-        let mut content = vec![0u8; filesize.to_usize().unwrap()];
-        reader.read_exact(&mut content)?;
+        let content = read_data(
+            &mut reader,
+            filesize.to_usize().unwrap(),
+            REALLOC_DATA_THRESHOLD,
+        )?;
         padding::read_discard(&mut reader, 4)?;
 
         Ok(Self {
