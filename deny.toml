@@ -5,6 +5,7 @@ yanked = "deny"
 notice = "deny"
 
 [licenses]
+include-dev = true
 unlicensed = "deny"
 allow = [
     "Apache-2.0",
@@ -26,9 +27,19 @@ license-files = [
 
 [bans]
 multiple-versions = "warn"
+multiple-versions-include-dev = true
 deny = [
     # https://github.com/serde-rs/serde/issues/2538
     { name = "serde_derive", version = ">=1.0.172,<1.0.184" },
+]
+
+[bans.build]
+executables = "deny"
+include-dependencies = true
+include-workspace = true
+bypass = [
+    # Copies of unmodified crashwrangler objects for old macOS versions.
+    { name = "honggfuzz", allow-globs = ["honggfuzz/third_party/mac/CrashReport_*.o"] },
 ]
 
 [sources]
