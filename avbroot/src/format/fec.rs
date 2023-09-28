@@ -173,11 +173,13 @@ impl Fec {
         let rounds = div_ceil(blocks, u64::from(rs_k));
 
         // Check upfront so we don't need to do checked multiplication later.
-        rounds.checked_mul(u64::from(parity))
+        rounds
+            .checked_mul(u64::from(parity))
             .and_then(|s| s.checked_mul(u64::from(block_size)))
             .and_then(|s| s.to_usize())
             .ok_or_else(|| Error::FieldOutOfBounds("fec_data_size"))?;
-        rounds.checked_mul(u64::from(rs_k))
+        rounds
+            .checked_mul(u64::from(rs_k))
             .and_then(|s| s.checked_mul(u64::from(block_size)))
             .ok_or_else(|| Error::FieldOutOfBounds("fec_grid_size"))?;
 

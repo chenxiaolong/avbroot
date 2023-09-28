@@ -43,6 +43,8 @@ use crate::{
 const OTA_MAGIC: &[u8; 4] = b"CrAU";
 const OTA_HEADER_SIZE: usize = OTA_MAGIC.len() + 8 + 8 + 4;
 
+const MANIFEST_MAX_SIZE: usize = 1024 * 1024;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Unknown magic: {0:?}")]
@@ -84,8 +86,8 @@ pub enum Error {
     MissingPartitions(HashSet<String>),
     #[error("{0:?} field is missing")]
     MissingField(&'static str),
-    #[error("{0:?} field exceeds integer bounds")]
-    IntegerTooLarge(&'static str),
+    #[error("{0:?} field is out of bounds")]
+    FieldOutOfBounds(&'static str),
     #[error("Crypto error")]
     Crypto(#[from] crypto::Error),
     #[error("Protobuf error")]
@@ -139,7 +141,14 @@ impl<R: Read> FromReader<R> for PayloadHeader {
         let manifest_size = reader
             .read_u64::<BigEndian>()?
             .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("manifest_size"))?;
+            .and_then(|s| {
+                if s <= MANIFEST_MAX_SIZE {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::FieldOutOfBounds("manifest_size"))?;
         let metadata_signature_size = reader.read_u32::<BigEndian>()?;
 
         let mut manifest_raw = vec![0u8; manifest_size];
@@ -779,10 +788,10 @@ pub fn apply_operation(
 
         let out_offset = start_block
             .checked_mul(block_size.into())
-            .ok_or_else(|| Error::IntegerTooLarge("out_offset"))?;
+            .ok_or_else(|| Error::FieldOutOfBounds("out_offset"))?;
         let out_data_length = num_blocks
             .checked_mul(block_size.into())
-            .ok_or_else(|| Error::IntegerTooLarge("out_data_length"))?;
+            .ok_or_else(|| Error::FieldOutOfBounds("out_data_length"))?;
 
         writer.seek(SeekFrom::Start(out_offset))?;
 
@@ -809,7 +818,7 @@ pub fn apply_operation(
                     .ok_or_else(|| Error::MissingField("data_length"))?;
                 let in_offset = blob_offset
                     .checked_add(data_offset)
-                    .ok_or_else(|| Error::IntegerTooLarge("in_offset"))?;
+                    .ok_or_else(|| Error::FieldOutOfBounds("in_offset"))?;
 
                 reader.seek(SeekFrom::Start(in_offset))?;
 
