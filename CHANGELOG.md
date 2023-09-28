@@ -11,7 +11,7 @@
 
 * Implement size limits for parsers to prevent allocating too much memory ([Issue #157], [PR #158], [PR #159])
   * avbroot is memory-safe, but malicious/corrupted images previously could potentially cause too much memory to be allocated, leading to the OS killing the process.
-* Add fuzzers to help catch panics/crashes ([Issue #160], [PR #161], [PR #162])
+* Add fuzzers to help catch panics/crashes ([Issue #160], [PR #161], [PR #162], [PR #163])
 
 Behind-the-scenes changes:
 
@@ -80,3 +80,4 @@ Behind-the-scenes changes:
 [PR #159]: https://github.com/chenxiaolong/avbroot/pull/159
 [PR #161]: https://github.com/chenxiaolong/avbroot/pull/161
 [PR #162]: https://github.com/chenxiaolong/avbroot/pull/162
+[PR #163]: https://github.com/chenxiaolong/avbroot/pull/163
