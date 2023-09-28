@@ -16,6 +16,7 @@
 Behind-the-scenes changes:
 
 * Consolidate logic for handling `--pass-file` and `--pass-env-var` ([PR #156])
+* cargo-deny: Block executables in dependencies ([PR #133])
 
 ### Version 2.1.0
 
@@ -64,6 +65,7 @@ Behind-the-scenes changes:
 [Issue #160]: https://github.com/chenxiaolong/avbroot/issues/160
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
+[PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
 [PR #135]: https://github.com/chenxiaolong/avbroot/pull/135
 [PR #136]: https://github.com/chenxiaolong/avbroot/pull/136
 [PR #137]: https://github.com/chenxiaolong/avbroot/pull/137
