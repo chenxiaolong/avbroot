@@ -29,6 +29,8 @@ const FEC_HEADER_SIZE: usize = 60;
 const FEC_MAGIC: u32 = 0xFECFECFE;
 const FEC_VERSION: u32 = 0;
 
+const FEC_MAX_BLOCK_SIZE: u32 = 16384;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("FEC with parity byte count of {0} is not supported")]
@@ -61,8 +63,8 @@ pub enum Error {
     InvalidHeaderFecSize { value: usize, available: usize },
     #[error("Expected FEC digest {expected}, but have {actual}")]
     InvalidFecDigest { expected: String, actual: String },
-    #[error("{0:?} field exceeds integer bounds")]
-    IntegerTooLarge(&'static str),
+    #[error("{0:?} field is out of bounds")]
+    FieldOutOfBounds(&'static str),
     #[error("I/O error")]
     Io(#[from] io::Error),
 }
@@ -158,6 +160,8 @@ impl Fec {
                 input: file_size,
                 block: block_size,
             });
+        } else if block_size > FEC_MAX_BLOCK_SIZE {
+            return Err(Error::FieldOutOfBounds("block_size"));
         }
 
         let rs_k = 255 - parity;
@@ -167,6 +171,15 @@ impl Fec {
 
         let blocks = div_ceil(file_size, u64::from(block_size));
         let rounds = div_ceil(blocks, u64::from(rs_k));
+
+        // Check upfront so we don't need to do checked multiplication later.
+        rounds.checked_mul(u64::from(parity))
+            .and_then(|s| s.checked_mul(u64::from(block_size)))
+            .and_then(|s| s.to_usize())
+            .ok_or_else(|| Error::FieldOutOfBounds("fec_data_size"))?;
+        rounds.checked_mul(u64::from(rs_k))
+            .and_then(|s| s.checked_mul(u64::from(block_size)))
+            .ok_or_else(|| Error::FieldOutOfBounds("fec_grid_size"))?;
 
         Ok(Self {
             file_size,
@@ -588,7 +601,7 @@ impl FecImage {
             .fec
             .len()
             .to_u32()
-            .ok_or_else(|| Error::IntegerTooLarge("fec_size"))?;
+            .ok_or_else(|| Error::FieldOutOfBounds("fec_size"))?;
 
         let mut writer = Cursor::new([0u8; FEC_HEADER_SIZE]);
 
@@ -649,12 +662,12 @@ impl<R: Read> FromReader<R> for FecImage {
         let parity = header_reader
             .read_u32::<LittleEndian>()?
             .to_u8()
-            .ok_or_else(|| Error::IntegerTooLarge("parity"))?;
+            .ok_or_else(|| Error::FieldOutOfBounds("parity"))?;
 
         let fec_size = header_reader
             .read_u32::<LittleEndian>()?
             .to_usize()
-            .ok_or_else(|| Error::IntegerTooLarge("fec_size"))?;
+            .ok_or_else(|| Error::FieldOutOfBounds("fec_size"))?;
         let actual_fec_size = fec.len() - FEC_BLOCK_SIZE;
         if fec_size != actual_fec_size {
             return Err(Error::InvalidHeaderFecSize {
