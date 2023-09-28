@@ -521,8 +521,8 @@ pub fn parse_zip_ota_info(
 
     let metadata = {
         let mut entry = zip.by_name(PATH_METADATA_PB)?;
-        let mut buf = vec![0u8; entry.size() as usize];
-        entry.read_exact(&mut buf)?;
+        let mut buf = Vec::new();
+        entry.read_to_end(&mut buf)?;
         util::read_protobuf::<OtaMetadata>(&buf)?
     };
 
