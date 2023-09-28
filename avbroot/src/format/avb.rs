@@ -1650,9 +1650,11 @@ impl<R: Read> FromReader<R> for Header {
         let signature_offset = reader.read_u64::<BigEndian>()?;
         let signature_size = reader.read_u64::<BigEndian>()?;
 
-        let auth_block_combined = hash_size + signature_size;
+        let auth_block_combined = hash_size
+            .checked_add(signature_size)
+            .ok_or_else(|| Error::FieldOutOfBounds("auth_block_combined"))?;
         let auth_block_padding = padding::calc(auth_block_combined, 64);
-        if auth_block_size != auth_block_combined + auth_block_padding {
+        if auth_block_combined.checked_add(auth_block_padding) != Some(auth_block_size) {
             return Err(Error::FieldOutOfBounds("auth_block_size"));
         } else if hash_offset > auth_block_combined - hash_size {
             return Err(Error::FieldOutOfBounds("hash_offset"));
@@ -1667,9 +1669,12 @@ impl<R: Read> FromReader<R> for Header {
         let descriptors_offset = reader.read_u64::<BigEndian>()?;
         let descriptors_size = reader.read_u64::<BigEndian>()?;
 
-        let aux_block_combined = public_key_size + public_key_metadata_size + descriptors_size;
+        let aux_block_combined = public_key_size
+            .checked_add(public_key_metadata_size)
+            .and_then(|s| s.checked_add(descriptors_size))
+            .ok_or_else(|| Error::FieldOutOfBounds("aux_block_combined"))?;
         let aux_block_padding = padding::calc(aux_block_combined, 64);
-        if aux_block_size != aux_block_combined + aux_block_padding {
+        if aux_block_combined.checked_add(aux_block_padding) != Some(aux_block_size) {
             return Err(Error::FieldOutOfBounds("aux_block_size"));
         } else if public_key_offset > aux_block_combined - public_key_size {
             return Err(Error::FieldOutOfBounds("public_key_offset"));
