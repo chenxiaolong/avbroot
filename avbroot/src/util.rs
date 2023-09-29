@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
-use std::fmt;
+use std::{fmt, path::Path};
 
 use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 
@@ -49,4 +49,16 @@ pub fn write_protobuf<M: MessageWrite>(message: &M) -> quick_protobuf::Result<Ve
     let mut writer = Writer::new(&mut buf);
     message.write_message(&mut writer)?;
     Ok(buf)
+}
+
+/// Get the non-empty parent of a path. If the path has no parent in the string,
+/// then `.` is returned. This does not perform any filesystem operations.
+pub fn parent_path(path: &Path) -> &Path {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            return parent;
+        }
+    }
+
+    Path::new(".")
 }

@@ -13,6 +13,8 @@ anyhow = "1.0.75"
 base64 = "0.21.3"
 bstr = "1.6.2"
 byteorder = "1.4.3"
+cap-std = "2.0.0"
+cap-tempfile = "2.0.0"
 clap = { version = "4.4.1", features = ["derive"] }
 clap_complete = "4.4.0"
 cms = { version = "0.2.2", features = ["std"] }
