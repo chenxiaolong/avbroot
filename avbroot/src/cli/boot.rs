@@ -13,7 +13,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 use crate::{
-    format::{avb::Header, bootimage::BootImage, compression::CompressedReader, cpio},
+    format::{avb::Header, bootimage::BootImage, compression::CompressedReader, cpio::CpioReader},
     stream::{FromReader, ToWriter},
 };
 
@@ -300,12 +300,16 @@ pub fn magisk_info_subcommand(cli: &MagiskInfoCli) -> Result<()> {
         let reader = Cursor::new(ramdisk);
         let reader = CompressedReader::new(reader, true)
             .with_context(|| format!("Failed to load ramdisk #{i}"))?;
-        let entries = cpio::load(reader, false)
-            .with_context(|| format!("Failed to load ramdisk #{i} cpio"))?;
+        let mut cpio_reader = CpioReader::new(reader, false);
 
-        if let Some(e) = entries.iter().find(|e| e.name == b".backup/.magisk") {
-            io::stdout().write_all(&e.content)?;
-            return Ok(());
+        while let Some(entry) = cpio_reader
+            .next_entry()
+            .with_context(|| format!("Failed to read ramdisk #{i} cpio entry"))?
+        {
+            if entry.path == b".backup/.magisk" {
+                io::copy(&mut cpio_reader, &mut io::stdout())?;
+                return Ok(());
+            }
         }
     }
 

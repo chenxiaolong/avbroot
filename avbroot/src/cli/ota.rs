@@ -1147,7 +1147,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
             .with_context(|| format!("Failed to read boot image: {path:?}"))?
     };
 
-    let ramdisk_certs = OtaCertPatcher::get_certificates(&boot_image)
+    let ramdisk_certs = OtaCertPatcher::get_certificates(&boot_image, cancel_signal)
         .context("Failed to read ramdisk's otacerts.zip")?;
     if !ramdisk_certs.contains(&ota_cert) {
         bail!("Ramdisk's otacerts.zip does not contain OTA certificate");

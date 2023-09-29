@@ -5,107 +5,88 @@
 
 use std::{
     fs::File,
+    io::{BufReader, BufWriter},
     path::{Path, PathBuf},
     str,
+    sync::atomic::AtomicBool,
 };
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use crate::format::{
-    compression::{CompressedFormat, CompressedReader, CompressedWriter},
-    cpio::{self, CpioEntryNew},
+use crate::{
+    format::{
+        compression::{CompressedFormat, CompressedReader, CompressedWriter},
+        cpio::{CpioEntryData, CpioReader, CpioWriter},
+    },
+    stream,
 };
 
-static CONTENT_BEGIN: &str = "----- BEGIN UTF-8 CONTENT -----";
-static CONTENT_END: &str = "----- END UTF-8 CONTENT -----";
-static CONTENT_END_NO_NEWLINE: &str = "----- END UTF-8 CONTENT (NO NEWLINE) -----";
-
-static BINARY_BEGIN: &str = "----- BEGIN BINARY CONTENT -----";
-static BINARY_END: &str = "----- END BINARY CONTENT -----";
-static BINARY_END_TRUNCATED: &str = "----- END BINARY CONTENT (TRUNCATED) -----";
-
-static NO_DATA: &str = "----- NO DATA -----";
-
-fn print_content(data: &[u8], truncate: bool) {
-    if data.is_empty() {
-        println!("{NO_DATA}");
-        return;
-    }
-
-    if !data.contains(&b'\0') {
-        if let Ok(s) = str::from_utf8(data) {
-            if !s.contains(CONTENT_BEGIN)
-                && !s.contains(CONTENT_END)
-                && !s.contains(CONTENT_END_NO_NEWLINE)
-            {
-                println!("{CONTENT_BEGIN}");
-                print!("{s}");
-                if data.last() == Some(&b'\n') {
-                    println!("{CONTENT_END}");
-                } else {
-                    println!();
-                    println!("{CONTENT_END_NO_NEWLINE}");
-                }
-
-                return;
-            }
-        }
-    }
-
-    println!("{BINARY_BEGIN}");
-
-    if data.len() > 512 && truncate {
-        println!("{}", data[..512].escape_ascii());
-        println!("{BINARY_END_TRUNCATED}");
-    } else {
-        println!("{}", data.escape_ascii());
-        println!("{BINARY_END}");
-    }
-}
-
-fn load_archive(
+fn open_reader(
     path: &Path,
     include_trailer: bool,
-) -> Result<(Vec<CpioEntryNew>, CompressedFormat)> {
+) -> Result<(
+    CpioReader<CompressedReader<BufReader<File>>>,
+    CompressedFormat,
+)> {
     let file = File::open(path)?;
-    let reader = CompressedReader::new(file, true)?;
+    let reader = CompressedReader::new(BufReader::new(file), true)?;
     let format = reader.format();
-    let entries = cpio::load(reader, include_trailer)?;
+    let cpio_reader = CpioReader::new(reader, include_trailer);
 
-    Ok((entries, format))
+    Ok((cpio_reader, format))
 }
 
-fn save_archive(path: &Path, entries: &[CpioEntryNew], format: CompressedFormat) -> Result<()> {
+fn open_writer(
+    path: &Path,
+    format: CompressedFormat,
+) -> Result<CpioWriter<CompressedWriter<BufWriter<File>>>> {
     let file = File::create(path)?;
-    let mut writer = CompressedWriter::new(file, format)?;
-    cpio::save(&mut writer, entries, false)?;
-    writer.finish()?;
+    let writer = CompressedWriter::new(BufWriter::new(file), format)?;
+    let cpio_writer = CpioWriter::new(writer, false);
+
+    Ok(cpio_writer)
+}
+
+fn flush_writer(writer: CpioWriter<CompressedWriter<BufWriter<File>>>) -> Result<()> {
+    let compressed_writer = writer.finish()?;
+    let buf_writer = compressed_writer.finish()?;
+    buf_writer.into_inner()?;
 
     Ok(())
 }
 
-pub fn ramdisk_main(cli: &RamdiskCli) -> Result<()> {
+pub fn ramdisk_main(cli: &RamdiskCli, cancel_signal: &AtomicBool) -> Result<()> {
     match &cli.command {
         RamdiskCommand::Dump(c) => {
-            let (entries, format) = load_archive(&c.input, true)
+            let (mut reader, format) = open_reader(&c.input, true)
                 .with_context(|| format!("Failed to read cpio: {:?}", c.input))?;
 
             println!("Compression format: {format:?}");
-            println!();
 
-            for entry in entries {
-                println!("{entry}");
-                print_content(&entry.content, !c.no_truncate);
+            while let Some(entry) = reader.next_entry().context("Failed to read cpio entry")? {
                 println!();
+                println!("{entry}");
             }
         }
         RamdiskCommand::Repack(c) => {
-            let (entries, format) = load_archive(&c.input, false)
-                .with_context(|| format!("Failed to read cpio: {:?}", c.input))?;
+            let (mut reader, format) = open_reader(&c.input, false)
+                .with_context(|| format!("Failed to open cpio for reading: {:?}", c.input))?;
+            let mut writer = open_writer(&c.output, format)
+                .with_context(|| format!("Failed to open cpio for writing: {:?}", c.output))?;
 
-            save_archive(&c.output, &entries, format)
-                .with_context(|| format!("Failed to write cpio: {:?}", c.output))?;
+            while let Some(entry) = reader.next_entry().context("Failed to read cpio entry")? {
+                writer
+                    .start_entry(&entry)
+                    .context("Failed to write cpio entry")?;
+
+                if let CpioEntryData::Size(s) = &entry.data {
+                    stream::copy_n(&mut reader, &mut writer, u64::from(*s), cancel_signal)
+                        .context("Failed to copy cpio entry data")?;
+                }
+            }
+
+            flush_writer(writer).context("Failed to flush cpio writer")?;
         }
     }
 
