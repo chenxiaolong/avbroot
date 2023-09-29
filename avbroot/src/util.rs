@@ -5,17 +5,18 @@
 
 use std::{fmt, path::Path};
 
+use num_traits::PrimInt;
 use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 
 pub const ZEROS: [u8; 16384] = [0u8; 16384];
 
 /// A small wrapper to format a number as a size in bytes.
 #[derive(Clone, Copy)]
-pub struct NumBytes(pub usize);
+pub struct NumBytes<T: PrimInt>(pub T);
 
-impl fmt::Debug for NumBytes {
+impl<T: PrimInt + fmt::Debug> fmt::Debug for NumBytes<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0 == 1 {
+        if self.0 == T::one() {
             write!(f, "<{:?} byte>", self.0)
         } else {
             write!(f, "<{:?} bytes>", self.0)

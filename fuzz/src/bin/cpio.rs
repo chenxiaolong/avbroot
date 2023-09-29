@@ -1,6 +1,6 @@
 #[cfg(not(windows))]
 mod fuzz {
-    use std::io::Cursor;
+    use std::{io::Cursor, sync::atomic::AtomicBool};
 
     use avbroot::format::cpio;
     use honggfuzz::fuzz;
@@ -8,8 +8,9 @@ mod fuzz {
     pub fn main() {
         loop {
             fuzz!(|data: &[u8]| {
+                let cancel_signal = AtomicBool::new(false);
                 let reader = Cursor::new(data);
-                let _ = cpio::load(reader, true);
+                let _ = cpio::load(reader, true, &cancel_signal);
             });
         }
     }

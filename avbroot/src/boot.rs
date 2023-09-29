@@ -32,7 +32,7 @@ use crate::{
         avb::{self, Descriptor},
         bootimage::{self, BootImage, BootImageExt, RamdiskMeta},
         compression::{self, CompressedFormat, CompressedReader, CompressedWriter},
-        cpio::{self, CpioEntryNew},
+        cpio::{self, CpioEntry, CpioEntryData},
     },
     stream::{self, FromReader, HashingWriter, SectionReader, ToWriter},
 };
@@ -73,18 +73,25 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-fn load_ramdisk(data: &[u8]) -> Result<(Vec<CpioEntryNew>, CompressedFormat)> {
+fn load_ramdisk(
+    data: &[u8],
+    cancel_signal: &AtomicBool,
+) -> Result<(Vec<CpioEntry>, CompressedFormat)> {
     let raw_reader = Cursor::new(data);
     let mut reader = CompressedReader::new(raw_reader, false)?;
-    let entries = cpio::load(&mut reader, false)?;
+    let entries = cpio::load(&mut reader, false, cancel_signal)?;
 
     Ok((entries, reader.format()))
 }
 
-fn save_ramdisk(entries: &[CpioEntryNew], format: CompressedFormat) -> Result<Vec<u8>> {
+fn save_ramdisk(
+    entries: &[CpioEntry],
+    format: CompressedFormat,
+    cancel_signal: &AtomicBool,
+) -> Result<Vec<u8>> {
     let raw_writer = Cursor::new(vec![]);
     let mut writer = CompressedWriter::new(raw_writer, format)?;
-    cpio::save(&mut writer, entries, false)?;
+    cpio::save(&mut writer, entries, false, cancel_signal)?;
 
     let raw_writer = writer.finish()?;
     Ok(raw_writer.into_inner())
@@ -193,7 +200,7 @@ impl MagiskRootPatcher {
     /// entries as `.backup/<path>`.
     ///
     /// Both lists and entries within the lists may be mutated.
-    fn apply_magisk_backup(old_entries: &mut [CpioEntryNew], new_entries: &mut Vec<CpioEntryNew>) {
+    fn apply_magisk_backup(old_entries: &mut [CpioEntry], new_entries: &mut Vec<CpioEntry>) {
         cpio::sort(old_entries);
         cpio::sort(new_entries);
 
@@ -205,20 +212,20 @@ impl MagiskRootPatcher {
 
         loop {
             match (old_iter.peek(), new_iter.peek()) {
-                (Some(&old), Some(&new)) => match old.name.cmp(&new.name) {
+                (Some(&old), Some(&new)) => match old.path.cmp(&new.path) {
                     Ordering::Less => {
                         to_back_up.push(old);
                         old_iter.next();
                     }
                     Ordering::Equal => {
-                        if old.content != new.content {
+                        if old.data != new.data {
                             to_back_up.push(old);
                         }
                         old_iter.next();
                         new_iter.next();
                     }
                     Ordering::Greater => {
-                        rm_list.extend(&new.name);
+                        rm_list.extend(&new.path);
                         rm_list.push(b'\0');
                         new_iter.next();
                     }
@@ -228,7 +235,7 @@ impl MagiskRootPatcher {
                     old_iter.next();
                 }
                 (None, Some(new)) => {
-                    rm_list.extend(&new.name);
+                    rm_list.extend(&new.path);
                     rm_list.push(b'\0');
                     new_iter.next();
                 }
@@ -236,22 +243,20 @@ impl MagiskRootPatcher {
             }
         }
 
-        // Intentially using 000 permissions to match Magisk.
-        new_entries.push(CpioEntryNew::new_directory(b".backup"));
+        new_entries.push(CpioEntry::new_directory(b".backup", 0));
 
         for old_entry in to_back_up {
             let mut new_entry = old_entry.clone();
-            new_entry.name = b".backup/".to_vec();
-            new_entry.name.extend(&old_entry.name);
+            new_entry.path = b".backup/".to_vec();
+            new_entry.path.extend(&old_entry.path);
             new_entries.push(new_entry);
         }
 
-        {
-            // Intentially using 000 permissions to match Magisk.
-            let mut entry = CpioEntryNew::new_file(b".backup/.rmlist");
-            entry.content = rm_list;
-            new_entries.push(entry);
-        }
+        new_entries.push(CpioEntry::new_file(
+            b".backup/.rmlist",
+            0,
+            CpioEntryData::Data(rm_list),
+        ));
     }
 }
 
@@ -269,7 +274,7 @@ impl BootImagePatcher for MagiskRootPatcher {
             BootImage::VendorV3Through4(b) => b.ramdisks.first(),
         };
         let (mut entries, ramdisk_format) = match ramdisk {
-            Some(r) if !r.is_empty() => load_ramdisk(r)?,
+            Some(r) if !r.is_empty() => load_ramdisk(r, cancel_signal)?,
             _ => (vec![], CompressedFormat::Lz4Legacy),
         };
 
@@ -280,13 +285,11 @@ impl BootImagePatcher for MagiskRootPatcher {
             (b"overlay.d".as_slice(), 0o750),
             (b"overlay.d/sbin".as_slice(), 0o750),
         ] {
-            let mut entry = CpioEntryNew::new_directory(path);
-            entry.mode |= perms;
-            entries.push(entry);
+            entries.push(CpioEntry::new_directory(path, perms));
         }
 
         // Delete the original init.
-        entries.retain(|e| e.name != b"init");
+        entries.retain(|e| e.path != b"init");
 
         // Add magiskinit.
         {
@@ -294,10 +297,11 @@ impl BootImagePatcher for MagiskRootPatcher {
             let mut data = vec![];
             zip_entry.read_to_end(&mut data)?;
 
-            let mut entry = CpioEntryNew::new_file(b"init");
-            entry.mode |= 0o750;
-            entry.content = data;
-            entries.push(entry);
+            entries.push(CpioEntry::new_file(
+                b"init",
+                0o750,
+                CpioEntryData::Data(data),
+            ));
         }
 
         // Add xz-compressed magisk32 and magisk64.
@@ -326,10 +330,12 @@ impl BootImagePatcher for MagiskRootPatcher {
             stream::copy(reader, &mut writer, cancel_signal)?;
 
             let raw_writer = writer.finish()?;
-            let mut entry = CpioEntryNew::new_file(target);
-            entry.mode |= 0o644;
-            entry.content = raw_writer.into_inner();
-            entries.push(entry);
+
+            entries.push(CpioEntry::new_file(
+                target,
+                0o644,
+                CpioEntryData::Data(raw_writer.into_inner()),
+            ));
         }
 
         // Create Magisk .backup directory structure.
@@ -359,17 +365,16 @@ impl BootImagePatcher for MagiskRootPatcher {
             magisk_config.push_str(&format!("RANDOMSEED={:#x}\n", self.random_seed));
         }
 
-        {
-            // Intentially using 000 permissions to match Magisk.
-            let mut entry = CpioEntryNew::new_file(b".backup/.magisk");
-            entry.content = magisk_config.into_bytes();
-            entries.push(entry);
-        }
+        entries.push(CpioEntry::new_file(
+            b".backup/.magisk",
+            0,
+            CpioEntryData::Data(magisk_config.into_bytes()),
+        ));
 
         // Repack ramdisk.
         cpio::sort(&mut entries);
         cpio::reassign_inodes(&mut entries);
-        let new_ramdisk = save_ramdisk(&entries, ramdisk_format)?;
+        let new_ramdisk = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
 
         match boot_image {
             BootImage::V0Through2(b) => b.ramdisk = new_ramdisk,
@@ -408,7 +413,10 @@ impl OtaCertPatcher {
         Self { cert }
     }
 
-    pub fn get_certificates(boot_image: &BootImage) -> Result<Vec<Certificate>> {
+    pub fn get_certificates(
+        boot_image: &BootImage,
+        cancel_signal: &AtomicBool,
+    ) -> Result<Vec<Certificate>> {
         let mut ramdisks = vec![];
 
         match boot_image {
@@ -420,12 +428,15 @@ impl OtaCertPatcher {
         let mut certificates = vec![];
 
         for ramdisk in ramdisks {
-            let (entries, _) = load_ramdisk(ramdisk)?;
-            let Some(entry) = entries.iter().find(|e| e.name == Self::OTACERTS_PATH) else {
+            let (entries, _) = load_ramdisk(ramdisk, cancel_signal)?;
+            let Some(entry) = entries.iter().find(|e| e.path == Self::OTACERTS_PATH) else {
+                continue;
+            };
+            let CpioEntryData::Data(data) = &entry.data else {
                 continue;
             };
 
-            let mut zip = ZipArchive::new(Cursor::new(&entry.content))?;
+            let mut zip = ZipArchive::new(Cursor::new(&data))?;
 
             for index in 0..zip.len() {
                 let zip_entry = zip.by_index(index)?;
@@ -441,16 +452,16 @@ impl OtaCertPatcher {
         Ok(certificates)
     }
 
-    fn patch_ramdisk(&self, data: &mut Vec<u8>) -> Result<bool> {
-        let (mut entries, ramdisk_format) = load_ramdisk(data)?;
-        let Some(entry) = entries.iter_mut().find(|e| e.name == Self::OTACERTS_PATH) else {
+    fn patch_ramdisk(&self, data: &mut Vec<u8>, cancel_signal: &AtomicBool) -> Result<bool> {
+        let (mut entries, ramdisk_format) = load_ramdisk(data, cancel_signal)?;
+        let Some(entry) = entries.iter_mut().find(|e| e.path == Self::OTACERTS_PATH) else {
             return Ok(false);
         };
 
         // Create a new otacerts archive. The old certs are ignored since
         // flashing a stock OTA will render the device unbootable.
         {
-            let raw_writer = Cursor::new(vec![]);
+            let raw_writer = Cursor::new(Vec::new());
             let mut writer = ZipWriter::new(raw_writer);
             let options = FileOptions::default().compression_method(CompressionMethod::Stored);
             writer.start_file("ota.x509.pem", options)?;
@@ -458,26 +469,26 @@ impl OtaCertPatcher {
             crypto::write_pem_cert(&mut writer, &self.cert)?;
 
             let raw_writer = writer.finish()?;
-            entry.content = raw_writer.into_inner();
+            entry.data = CpioEntryData::Data(raw_writer.into_inner());
         }
 
         // Repack ramdisk.
-        *data = save_ramdisk(&entries, ramdisk_format)?;
+        *data = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
 
         Ok(true)
     }
 }
 
 impl BootImagePatcher for OtaCertPatcher {
-    fn patch(&self, boot_image: &mut BootImage, _cancel_signal: &AtomicBool) -> Result<()> {
+    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
         let patched_any = match boot_image {
-            BootImage::V0Through2(b) => self.patch_ramdisk(&mut b.ramdisk)?,
-            BootImage::V3Through4(b) => self.patch_ramdisk(&mut b.ramdisk)?,
+            BootImage::V0Through2(b) => self.patch_ramdisk(&mut b.ramdisk, cancel_signal)?,
+            BootImage::V3Through4(b) => self.patch_ramdisk(&mut b.ramdisk, cancel_signal)?,
             BootImage::VendorV3Through4(b) => {
                 let mut patched = false;
 
                 for ramdisk in &mut b.ramdisks {
-                    if self.patch_ramdisk(ramdisk)? {
+                    if self.patch_ramdisk(ramdisk, cancel_signal)? {
                         patched = true;
                         break;
                     }

@@ -45,7 +45,7 @@ pub fn main(cancel_signal: &AtomicBool) -> Result<()> {
         Command::Fec(c) => fec::fec_main(&c, cancel_signal),
         Command::Key(c) => key::key_main(&c),
         Command::Ota(c) => ota::ota_main(&c, cancel_signal),
-        Command::Ramdisk(c) => ramdisk::ramdisk_main(&c),
+        Command::Ramdisk(c) => ramdisk::ramdisk_main(&c, cancel_signal),
         // Deprecated aliases.
         Command::Patch(c) => ota::patch_subcommand(&c, cancel_signal),
         Command::Extract(c) => ota::extract_subcommand(&c, cancel_signal),
