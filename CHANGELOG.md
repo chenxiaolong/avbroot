@@ -7,6 +7,12 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+Behind-the-scenes changes:
+
+* Add streaming CPIO reader and writer ([PR #172])
+
 ### Version 2.1.1
 
 This release is all about hardening avbroot against untrusted (or corrupted) inputs. While all of avbroot's parsers are memory-safe, it's still possible for crashes to occur due to logic issues like allocating too much memory or dividing by zero. With this release, most of these potential issues have been fixed and fuzz tests have been added to help find more of these situations.
@@ -94,3 +100,4 @@ Behind-the-scenes changes:
 [PR #169]: https://github.com/chenxiaolong/avbroot/pull/169
 [PR #170]: https://github.com/chenxiaolong/avbroot/pull/170
 [PR #171]: https://github.com/chenxiaolong/avbroot/pull/171
+[PR #172]: https://github.com/chenxiaolong/avbroot/pull/172
