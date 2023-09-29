@@ -9,14 +9,13 @@
 
 ### Unreleased
 
-* Implement size limits for parsers to prevent allocating too much memory ([Issue #157], [PR #158], [PR #159], [PR #164], [PR #168], [PR #169], [PR #170])
-  * avbroot is memory-safe, but malicious/corrupted images previously could potentially cause too much memory to be allocated, leading to the OS killing the process.
-* Add fuzzers to help catch panics/crashes ([Issue #160], [PR #161], [PR #162], [PR #163], [PR #165], [PR #167])
-
 Behind-the-scenes changes:
 
 * Consolidate logic for handling `--pass-file` and `--pass-env-var` ([PR #156])
 * cargo-deny: Block executables in dependencies ([PR #133])
+* Implement size limits for parsers to prevent allocating too much memory ([Issue #157], [PR #158], [PR #159], [PR #164], [PR #168], [PR #169], [PR #170])
+* Add fuzzers to help catch panics/crashes ([Issue #160], [PR #161], [PR #162], [PR #163], [PR #165], [PR #167])
+* Use handle-based directory operations instead of path-based directory operations ([Issue #166], [PR #171])
 
 ### Version 2.1.0
 
@@ -63,6 +62,7 @@ Behind-the-scenes changes:
 [Issue #148]: https://github.com/chenxiaolong/avbroot/issues/148
 [Issue #157]: https://github.com/chenxiaolong/avbroot/issues/157
 [Issue #160]: https://github.com/chenxiaolong/avbroot/issues/160
+[Issue #166]: https://github.com/chenxiaolong/avbroot/issues/166
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -89,3 +89,4 @@ Behind-the-scenes changes:
 [PR #168]: https://github.com/chenxiaolong/avbroot/pull/168
 [PR #169]: https://github.com/chenxiaolong/avbroot/pull/169
 [PR #170]: https://github.com/chenxiaolong/avbroot/pull/170
+[PR #171]: https://github.com/chenxiaolong/avbroot/pull/171
