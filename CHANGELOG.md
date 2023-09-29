@@ -7,7 +7,11 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 2.1.1
+
+This release is all about hardening avbroot against untrusted (or corrupted) inputs. While all of avbroot's parsers are memory-safe, it's still possible for crashes to occur due to logic issues like allocating too much memory or dividing by zero. With this release, most of these potential issues have been fixed and fuzz tests have been added to help find more of these situations.
+
+On the filesystem side of things, it is no longer possible for a nefarious program to cause avbroot to write to unintended locations by eg. swapping out an output directory or temp directory with a symlink while it is running.
 
 Behind-the-scenes changes:
 
