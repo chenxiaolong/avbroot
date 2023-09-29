@@ -9,6 +9,7 @@ include-dev = true
 unlicensed = "deny"
 allow = [
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause",
     "ISC",
     "MIT",

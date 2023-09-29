@@ -6,7 +6,7 @@
 use std::{
     collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{self, BufReader, BufWriter, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     str,
@@ -14,6 +14,10 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use cap_std::{
+    ambient_authority,
+    fs::{Dir, OpenOptions},
+};
 use clap::{Args, Parser, Subcommand};
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use rsa::RsaPublicKey;
@@ -27,6 +31,7 @@ use crate::{
         Header,
     },
     stream::{self, PSeekFile},
+    util,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -95,7 +100,7 @@ fn write_raw(
     size: u64,
     cancel_signal: &AtomicBool,
 ) -> Result<PSeekFile> {
-    let file = OpenOptions::new()
+    let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
@@ -290,7 +295,7 @@ fn ensure_name_is_safe(name: &str) -> Result<()> {
 /// `seen` is used to prevent cycles. `descriptors` will contain all of the hash
 /// and hash tree descriptors that need to be verified.
 pub fn verify_headers(
-    directory: &Path,
+    directory: &Dir,
     name: &str,
     expected_key: Option<&RsaPublicKey>,
     seen: &mut HashSet<String>,
@@ -302,9 +307,10 @@ pub fn verify_headers(
 
     ensure_name_is_safe(name)?;
 
-    let path = directory.join(format!("{name}.img"));
-    let raw_reader =
-        File::open(&path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
+    let path = format!("{name}.img");
+    let raw_reader = directory
+        .open(&path)
+        .with_context(|| format!("Failed to open for reading: {path:?}"))?;
     let (header, _, _) = avb::load_image(BufReader::new(raw_reader))
         .with_context(|| format!("Failed to load vbmeta structures: {path:?}"))?;
 
@@ -417,7 +423,7 @@ fn verify_and_repair(
 /// Verify hash and hash tree descriptor digests and FEC data against their
 /// corresponding input files.
 pub fn verify_descriptors(
-    directory: &Path,
+    directory: &Dir,
     descriptors: &HashMap<String, Descriptor>,
     repair: bool,
     cancel_signal: &AtomicBool,
@@ -425,12 +431,10 @@ pub fn verify_descriptors(
     descriptors
         .par_iter()
         .map(|(name, descriptor)| {
-            let path = directory.join(format!("{name}.img"));
-            let file = match OpenOptions::new()
-                .read(true)
-                .write(repair)
-                .open(&path)
-                .map(PSeekFile::new)
+            let path = format!("{name}.img");
+            let file = match directory
+                .open_with(&path, OpenOptions::new().read(true).write(repair))
+                .map(|f| PSeekFile::new(f.into_std()))
             {
                 Ok(f) => f,
                 // Some devices, like bluejay, have vbmeta descriptors that
@@ -557,7 +561,10 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
         None
     };
 
-    let directory = cli.input.parent().unwrap_or_else(|| Path::new("."));
+    let authority = ambient_authority();
+    let parent_path = util::parent_path(&cli.input);
+    let directory = Dir::open_ambient_dir(parent_path, authority)
+        .with_context(|| format!("Failed to open directory: {parent_path:?}"))?;
     let name = cli
         .input
         .file_stem()
@@ -569,13 +576,13 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
     let mut descriptors = HashMap::<String, Descriptor>::new();
 
     verify_headers(
-        directory,
+        &directory,
         name,
         public_key.as_ref(),
         &mut seen,
         &mut descriptors,
     )?;
-    verify_descriptors(directory, &descriptors, cli.repair, cancel_signal)?;
+    verify_descriptors(&directory, &descriptors, cli.repair, cancel_signal)?;
 
     status!("Successfully verified all vbmeta signatures and hashes");
 

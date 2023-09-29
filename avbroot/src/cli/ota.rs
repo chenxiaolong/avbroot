@@ -16,11 +16,13 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use cap_std::{ambient_authority, fs::Dir};
+use cap_tempfile::TempDir;
 use clap::{value_parser, ArgAction, Args, Parser, Subcommand};
 use phf::phf_map;
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 use rsa::RsaPrivateKey;
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::NamedTempFile;
 use topological_sort::TopologicalSort;
 use x509_cert::Certificate;
 use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
@@ -44,6 +46,7 @@ use crate::{
         self, CountingWriter, FromReader, HolePunchingWriter, PSeekFile, ReadSeek, SectionReader,
         ToWriter,
     },
+    util,
 };
 
 static PARTITION_PRIORITIES: phf::Map<&'static str, &[&'static str]> = phf_map! {
@@ -785,7 +788,7 @@ fn patch_ota_zip(
 
 fn extract_ota_zip(
     raw_reader: &PSeekFile,
-    directory: &Path,
+    directory: &Dir,
     payload_offset: u64,
     payload_size: u64,
     header: &PayloadHeader,
@@ -798,18 +801,16 @@ fn extract_ota_zip(
         }
     }
 
-    fs::create_dir_all(directory)
-        .with_context(|| format!("Failed to create directory: {directory:?}"))?;
-
     status!("Extracting from the payload: {}", joined(images));
 
     // Pre-open all output files.
     let output_files = images
         .iter()
         .map(|name| {
-            let path = directory.join(format!("{name}.img"));
-            let file = File::create(&path)
-                .map(PSeekFile::new)
+            let path = format!("{name}.img");
+            let file = directory
+                .create(&path)
+                .map(|f| PSeekFile::new(f.into_std()))
                 .with_context(|| format!("Failed to open for writing: {path:?}"))?;
             Ok((name.as_str(), file))
         })
@@ -920,7 +921,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         output
             .file_name()
             .unwrap_or_else(|| OsStr::new("avbroot.tmp")),
-        output.parent().unwrap_or_else(|| Path::new(".")),
+        util::parent_path(&output),
     )
     .context("Failed to open temporary output file")?;
     let temp_path = temp_writer.path().to_owned();
@@ -1044,9 +1045,15 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         }
     }
 
+    let authority = ambient_authority();
+    Dir::create_ambient_dir_all(&cli.directory, authority)
+        .with_context(|| format!("Failed to create directory: {:?}", cli.directory))?;
+    let directory = Dir::open_ambient_dir(&cli.directory, authority)
+        .with_context(|| format!("Failed to open directory: {:?}", cli.directory))?;
+
     extract_ota_zip(
         &raw_reader,
-        &cli.directory,
+        &directory,
         payload_offset,
         payload_size,
         &header,
@@ -1107,7 +1114,8 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     status!("Extracting partition images to temporary directory");
 
-    let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
+    let authority = ambient_authority();
+    let temp_dir = TempDir::new(authority).context("Failed to create temporary directory")?;
     let raw_reader = reader.into_inner();
     let unique_images = header
         .manifest
@@ -1119,7 +1127,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     extract_ota_zip(
         &raw_reader,
-        temp_dir.path(),
+        &temp_dir,
         pf_payload.offset,
         pf_payload.size,
         &header,
@@ -1131,11 +1139,10 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     let boot_image = {
         let partitions_by_type = get_partitions_by_type(&header.manifest)?;
-        let path = temp_dir
-            .path()
-            .join(format!("{}.img", partitions_by_type["@otacerts"]));
-        let file =
-            File::open(&path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
+        let path = format!("{}.img", partitions_by_type["@otacerts"]);
+        let file = temp_dir
+            .open(&path)
+            .with_context(|| format!("Failed to open for reading: {path:?}"))?;
         BootImage::from_reader(BufReader::new(file))
             .with_context(|| format!("Failed to read boot image: {path:?}"))?
     };
@@ -1162,13 +1169,13 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     let mut descriptors = HashMap::<String, Descriptor>::new();
 
     cli::avb::verify_headers(
-        temp_dir.path(),
+        &temp_dir,
         "vbmeta",
         public_key.as_ref(),
         &mut seen,
         &mut descriptors,
     )?;
-    cli::avb::verify_descriptors(temp_dir.path(), &descriptors, false, cancel_signal)?;
+    cli::avb::verify_descriptors(&temp_dir, &descriptors, false, cancel_signal)?;
 
     status!("Signatures are all valid!");
 
