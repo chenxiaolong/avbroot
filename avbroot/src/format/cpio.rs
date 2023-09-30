@@ -11,11 +11,14 @@ use std::{
 };
 
 use bstr::ByteSlice;
-use num_traits::ToPrimitive;
+use num_traits::{ToPrimitive, Zero};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
+    escape,
     format::padding,
+    octal,
     stream::{
         self, CountingReader, CountingWriter, FromReader, ReadDiscardExt, ToWriter, WriteZerosExt,
     },
@@ -109,7 +112,7 @@ fn read_data(reader: impl Read, size: usize, cancel_signal: &AtomicBool) -> io::
     Ok(cursor.into_inner())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum CpioEntryType {
     Pipe,
     Char,
@@ -174,7 +177,8 @@ impl Default for CpioEntryType {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
 pub enum CpioEntryData {
     /// Size of entry's data. [`CpioReader`] and [`CpioWriter`] use this for
     /// [`CpioEntryType::Regular`] entries to allow for lazy reads and writes.
@@ -184,7 +188,7 @@ pub enum CpioEntryData {
     /// content. [`CpioReader`] will never use this when reading regular files.
     /// [`CpioWriter`] will write this immediately and lazy writes will not be
     /// allowed.
-    Data(Vec<u8>),
+    Data(#[serde(with = "escape")] Vec<u8>),
 }
 
 impl fmt::Debug for CpioEntryData {
@@ -214,45 +218,77 @@ impl CpioEntryData {
 
         Ok(size)
     }
+
+    fn is_size(&self) -> bool {
+        matches!(self, CpioEntryData::Size(_))
+    }
 }
 
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CpioEntry {
+    /// File path.
+    #[serde(with = "escape")]
+    pub path: Vec<u8>,
+
+    /// File data.
+    #[serde(default, skip_serializing_if = "CpioEntryData::is_size")]
+    pub data: CpioEntryData,
+
     /// Inode number.
+    #[serde(default, skip_serializing_if = "Zero::is_zero")]
     pub inode: u32,
+
     /// File type portion of the `st_mode`-style mode.
     pub file_type: CpioEntryType,
+
     /// Permissions portion of the `st_mode`-style mode.
+    #[serde(default, skip_serializing_if = "Zero::is_zero", with = "octal")]
     pub file_mode: u16,
+
     /// Owner user ID.
+    #[serde(default, skip_serializing_if = "Zero::is_zero")]
     pub uid: u32,
+
     /// Owner group ID.
+    #[serde(default, skip_serializing_if = "Zero::is_zero")]
     pub gid: u32,
+
     /// Number of paths referencing the inode.
+    #[serde(default, skip_serializing_if = "Zero::is_zero")]
     pub nlink: u32,
+
     /// Modification timestamp in Unix time.
+    #[serde(default, skip_serializing_if = "Zero::is_zero")]
     pub mtime: u32,
+
     /// Major ID (class of device) for the device containing the inode.
+    #[serde(default, skip_serializing_if = "Zero::is_zero")]
     pub dev_maj: u32,
+
     /// Minor ID (specific device instance) for the device containing the inode.
+    #[serde(default, skip_serializing_if = "Zero::is_zero")]
     pub dev_min: u32,
+
     /// Major ID (class of device) represented by this entry. This is only
     /// relevant for [`CpioEntryType::Char`] and [`CpioEntryType::Block`].
+    #[serde(default, skip_serializing_if = "Zero::is_zero")]
     pub rdev_maj: u32,
+
     /// Minor ID (specific device instance) represented by this entry. This is
     /// only relevant for [`CpioEntryType::Char`] and [`CpioEntryType::Block`].
+    #[serde(default, skip_serializing_if = "Zero::is_zero")]
     pub rdev_min: u32,
+
     /// CRC32 checksum.
+    #[serde(default, skip_serializing_if = "Zero::is_zero")]
     pub crc32: u32,
-    /// File path.
-    pub path: Vec<u8>,
-    /// File data.
-    pub data: CpioEntryData,
 }
 
 impl fmt::Debug for CpioEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CpioEntry")
+            .field("path", &self.path.as_bstr())
+            .field("data", &self.data)
             .field("inode", &self.inode)
             .field("file_type", &self.file_type)
             .field("file_mode", &self.file_mode)
@@ -265,8 +301,6 @@ impl fmt::Debug for CpioEntry {
             .field("rdev_maj", &self.rdev_maj)
             .field("rdev_min", &self.rdev_min)
             .field("crc32", &self.crc32)
-            .field("path", &self.path.as_bstr())
-            .field("data", &self.data)
             .finish()
     }
 }
@@ -304,43 +338,47 @@ impl fmt::Display for CpioEntry {
 impl CpioEntry {
     pub fn new_trailer() -> Self {
         Self {
+            path: CPIO_TRAILER.to_vec(),
             // Must be 1 for CRC format.
             nlink: 1,
-            path: CPIO_TRAILER.to_vec(),
             ..Default::default()
         }
     }
 
     pub fn new_symlink(path: &[u8], link_target: &[u8]) -> Self {
         Self {
+            path: path.to_owned(),
+            data: CpioEntryData::Data(link_target.to_owned()),
             file_type: CpioEntryType::Symlink,
             file_mode: 0o777,
             nlink: 1,
-            path: path.to_owned(),
-            data: CpioEntryData::Data(link_target.to_owned()),
             ..Default::default()
         }
     }
 
     pub fn new_directory(path: &[u8], mode: u16) -> Self {
         Self {
+            path: path.to_owned(),
             file_type: CpioEntryType::Directory,
             file_mode: mode,
             nlink: 1,
-            path: path.to_owned(),
             ..Default::default()
         }
     }
 
     pub fn new_file(path: &[u8], mode: u16, data: CpioEntryData) -> Self {
         Self {
+            path: path.to_owned(),
+            data,
             file_type: CpioEntryType::Regular,
             file_mode: mode,
             nlink: 1,
-            path: path.to_owned(),
-            data,
             ..Default::default()
         }
+    }
+
+    pub fn is_trailer(&self) -> bool {
+        self.path == CPIO_TRAILER
     }
 }
 
@@ -407,6 +445,8 @@ impl<R: Read> FromReader<R> for CpioEntry {
         };
 
         Ok(Self {
+            path,
+            data,
             inode,
             file_type,
             file_mode: (mode & 0o7777) as u16,
@@ -419,8 +459,6 @@ impl<R: Read> FromReader<R> for CpioEntry {
             rdev_maj,
             rdev_min,
             crc32,
-            path,
-            data,
         })
     }
 }
@@ -522,7 +560,7 @@ impl<R: Read> CpioReader<R> {
 
         let entry = CpioEntry::from_reader(&mut self.reader)?;
 
-        if entry.path == CPIO_TRAILER {
+        if entry.is_trailer() {
             self.done = true;
 
             if !self.include_trailer {

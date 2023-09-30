@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::cli::{avb, boot, completion, fec, key, ota, ramdisk};
+use crate::cli::{avb, boot, completion, cpio, fec, key, ota};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
@@ -16,10 +16,10 @@ pub enum Command {
     Avb(avb::AvbCli),
     Boot(boot::BootCli),
     Completion(completion::CompletionCli),
+    Cpio(cpio::CpioCli),
     Fec(fec::FecCli),
     Key(key::KeyCli),
     Ota(ota::OtaCli),
-    Ramdisk(ramdisk::RamdiskCli),
     /// (Deprecated: Use `avbroot ota patch` instead.)
     Patch(ota::PatchCli),
     /// (Deprecated: Use `avbroot ota extract` instead.)
@@ -42,10 +42,10 @@ pub fn main(cancel_signal: &AtomicBool) -> Result<()> {
         Command::Avb(c) => avb::avb_main(&c, cancel_signal),
         Command::Boot(c) => boot::boot_main(&c),
         Command::Completion(c) => completion::completion_main(&c),
+        Command::Cpio(c) => cpio::cpio_main(&c, cancel_signal),
         Command::Fec(c) => fec::fec_main(&c, cancel_signal),
         Command::Key(c) => key::key_main(&c),
         Command::Ota(c) => ota::ota_main(&c, cancel_signal),
-        Command::Ramdisk(c) => ramdisk::ramdisk_main(&c, cancel_signal),
         // Deprecated aliases.
         Command::Patch(c) => ota::patch_subcommand(&c, cancel_signal),
         Command::Extract(c) => ota::extract_subcommand(&c, cancel_signal),

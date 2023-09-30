@@ -34,7 +34,7 @@ use crate::{
     util,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 struct AvbInfo {
     header: Header,
     footer: Option<Footer>,
@@ -782,7 +782,7 @@ enum AvbCommand {
     Verify(VerifyCli),
 }
 
-/// Show information about AVB-protected images.
+/// Pack, unpack, and inspect AVB-protected images.
 #[derive(Debug, Parser)]
 pub struct AvbCli {
     #[command(subcommand)]

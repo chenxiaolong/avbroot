@@ -483,7 +483,7 @@ enum BootCommand {
     MagiskInfo(MagiskInfoCli),
 }
 
-/// Pack or unpack boot images.
+/// Pack, unpack, and inspect boot images.
 #[derive(Debug, Parser)]
 pub struct BootCli {
     #[command(subcommand)]
