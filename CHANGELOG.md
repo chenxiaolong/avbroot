@@ -9,6 +9,8 @@
 
 ### Unreleased
 
+* Add new unpack and pack commands for cpio archives (ramdisks) ([PR #173])
+
 Behind-the-scenes changes:
 
 * Add streaming CPIO reader and writer ([PR #172])
@@ -101,3 +103,4 @@ Behind-the-scenes changes:
 [PR #170]: https://github.com/chenxiaolong/avbroot/pull/170
 [PR #171]: https://github.com/chenxiaolong/avbroot/pull/171
 [PR #172]: https://github.com/chenxiaolong/avbroot/pull/172
+[PR #173]: https://github.com/chenxiaolong/avbroot/pull/173
