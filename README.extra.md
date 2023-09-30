@@ -94,6 +94,48 @@ avbroot boot info -i <input boot image>
 
 All of the `boot` subcommands show the boot image information. This specific subcommand just does it without performing any other operation. To show avbroot's internal representation of the information, pass in `-d`.
 
+## `avbroot cpio`
+
+### Unpacking a cpio archive
+
+```bash
+avbroot cpio unpack -i <input cpio archive>
+```
+
+This subcommand unpacks the cpio archive. The list of file entries and their metadata, like permissions, are written to `cpio.toml`. The contents of regular files are extracted to `cpio_tree/`. Other file types, like symlinks and block devices, are not extracted at all. Their information only exists in the TOML file.
+
+The files inside the tree will have default permissions, ownership, and modification timestamps. This metadata exists only inside the TOML file in order to ensure that the behavior is the same across all platforms.
+
+Both uncompressed archives and compressed archives (gzip or legacy lz4) are supported.
+
+### Packing a cpio archive
+
+```bash
+avbroot cpio pack -o <output cpio archive>
+```
+
+This subcommand packs a new cpio archive from the file entries listed in `cpio.toml` and the file contents in `cpio_tree/`. Note that **only entries listed in the TOML file are packed**. Extra files inside the tree are silently ignored.
+
+The files are packed in the order listed in the TOML file. When packing ramdisks specifically, it's important to ensure that files are listed after their parent directories (which also **must** exist). Otherwise, the kernel will ignore them. As long as the file paths don't contain anything weird (eg. `a//b` or `a/./b`), sorting the entires with `--sort` should do the trick.
+
+The new archive will be written in the same format (compressed or uncompressed) as the original archive.
+
+### Repacking a cpio archive
+
+```bash
+avbroot cpio repack -i <input cpio archive> -o <output cpio archive>
+```
+
+This is almost equivalent to running `avbroot cpio unpack` followed by `avbroot cpio pack`, except inode numbers will not be reassigned.
+
+### Showing information about a cpio archive
+
+```bash
+avbroot cpio info -i <input cpio archive>
+```
+
+All of the `cpio` subcommands show details about all the entries in the archive. This specific subcommand just does it without performing any other operation.
+
 ## `avbroot fec`
 
 This set of commands is for working with dm-verity FEC (forward error correction) data. The FEC data allows small errors in partition data to be corrected. This increases reliability of the system because when dm-verity encounters data that doesn't match the expected checksum, it will either trigger a kernel panic or reboot the system.
@@ -150,27 +192,3 @@ avbroot fec repair -i <input/output data file> -f <input FEC file>
 This will repair the file in place. As described above, in each column, up to `parity / 2` bytes can be corrected.
 
 Note that FEC is **not** a replacement for checksums, like SHA-256. When there are too many errors, the file can potentially be "successfully repaired" to some incorrect data.
-
-## `avbroot ramdisk`
-
-### Dumping a cpio archive
-
-```bash
-avbroot ramdisk dump -i <cpio archive>
-```
-
-This subcommand dumps all information about a cpio archive to stdout. This includes the compression format, all header fields (including the trailer entry), and all data. If an entry's data can be decoded as UTF-8, then it is printed out as text. Otherwise, the binary data is printed out `\x##`-encoded for non-ASCII bytes. The escape-encoded data is truncated to 512 bytes by default to avoid outputting too much data, but this behavior can be disabled with `--no-truncate`.
-
-### Repacking a cpio archive
-
-```bash
-avbroot ramdisk repack -i <input cpio archive> -o <output cpio archive>
-```
-
-This subcommand repacks a cpio archive, including recompression if needed. This is useful for roundtrip testing of avbroot's cpio parser and compression handling. The uncompressed output should be identical to the uncompressed input, except:
-
-* files are sorted by name
-* inodes are reassigned, starting from 300000
-* there is no excess padding at the end of the file
-
-The compressed output may differ from what other tools produce due to differences in compression levels and header metadata. avbroot avoids specifying header information where possible (eg. gzip timestamp) for reproducibility.

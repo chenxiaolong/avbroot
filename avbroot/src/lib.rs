@@ -18,6 +18,7 @@ pub mod cli;
 pub mod crypto;
 pub mod escape;
 pub mod format;
+pub mod octal;
 pub mod protobuf;
 pub mod stream;
 pub mod util;

@@ -8,6 +8,7 @@ use std::io::{self, Read, Seek, Write};
 use byteorder::{LittleEndian, WriteBytesExt};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use lz4_flex::frame::FrameDecoder;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 static GZIP_MAGIC: &[u8; 2] = b"\x1f\x8b";
@@ -96,7 +97,7 @@ impl<W: Write> Write for Lz4LegacyEncoder<W> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum CompressedFormat {
     None,
     Gzip,

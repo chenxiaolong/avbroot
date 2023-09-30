@@ -7,10 +7,10 @@ pub mod args;
 pub mod avb;
 pub mod boot;
 pub mod completion;
+pub mod cpio;
 pub mod fec;
 pub mod key;
 pub mod ota;
-pub mod ramdisk;
 
 macro_rules! status {
     ($($arg:tt)*) => {
