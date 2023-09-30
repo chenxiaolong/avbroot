@@ -14,6 +14,7 @@
 Behind-the-scenes changes:
 
 * Add streaming CPIO reader and writer ([PR #172])
+* Update dependencies ([PR #174])
 
 ### Version 2.1.1
 
@@ -104,3 +105,4 @@ Behind-the-scenes changes:
 [PR #171]: https://github.com/chenxiaolong/avbroot/pull/171
 [PR #172]: https://github.com/chenxiaolong/avbroot/pull/172
 [PR #173]: https://github.com/chenxiaolong/avbroot/pull/173
+[PR #174]: https://github.com/chenxiaolong/avbroot/pull/174
