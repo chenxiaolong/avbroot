@@ -26,6 +26,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use avbroot::{
     cli::ota::{ExtractCli, PatchCli, VerifyCli},
     format::{ota, payload::PayloadHeader},
+    protobuf::chromeos_update_engine::install_operation::Type,
     stream::{self, FromReader, HashingReader, PSeekFile, SectionReader},
 };
 use clap::Parser;
@@ -121,13 +122,11 @@ fn strip_image(
             .collect::<HashSet<_>>();
     let mut data_holes = vec![];
 
-    use avbroot::protobuf::chromeos_update_engine::mod_InstallOperation::Type;
-
     for p in &header.manifest.partitions {
         if !required_images.contains(&p.partition_name) {
             for op in &p.operations {
-                match op.type_pb {
-                    Type::ZERO | Type::DISCARD => continue,
+                match op.r#type() {
+                    Type::Zero | Type::Discard => continue,
                     _ => {
                         let start = payload_offset
                             + header.blob_offset

@@ -14,7 +14,7 @@ use base64::Engine;
 use byteorder::{BigEndian, ReadBytesExt};
 use bzip2::write::BzDecoder;
 use num_traits::ToPrimitive;
-use quick_protobuf::MessageWrite;
+use prost::Message;
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use ring::digest::{Context, Digest};
 use rsa::{traits::PublicKeyParts, Pkcs1v15Sign, RsaPrivateKey};
@@ -30,14 +30,13 @@ use xz2::{
 use crate::{
     crypto,
     protobuf::chromeos_update_engine::{
-        mod_InstallOperation, mod_Signatures::Signature, DeltaArchiveManifest, Extent,
+        install_operation::Type, signatures::Signature, DeltaArchiveManifest, Extent,
         InstallOperation, PartitionInfo, PartitionUpdate, Signatures,
     },
     stream::{
         self, CountingReader, CountingWriter, FromReader, HashingWriter, ReadDiscardExt, ReadSeek,
         SharedCursor, WriteSeek,
     },
-    util,
 };
 
 const OTA_MAGIC: &[u8; 4] = b"CrAU";
@@ -68,7 +67,7 @@ pub enum Error {
         actual: String,
     },
     #[error("Unsupported partition operation: {0:?}")]
-    UnsupportedOperation(mod_InstallOperation::Type),
+    UnsupportedOperation(Type),
     #[error("Expected sha256 {expected:?}, but have {actual:?}")]
     MismatchedDigest {
         expected: Option<String>,
@@ -90,8 +89,8 @@ pub enum Error {
     FieldOutOfBounds(&'static str),
     #[error("Crypto error")]
     Crypto(#[from] crypto::Error),
-    #[error("Protobuf error")]
-    Protobuf(#[from] quick_protobuf::Error),
+    #[error("Failed to decode protobuf message")]
+    ProtobufDecode(#[from] prost::DecodeError),
     #[error("XZ stream error")]
     XzStream(#[from] xz2::stream::Error),
     #[error("RSA error")]
@@ -153,7 +152,7 @@ impl<R: Read> FromReader<R> for PayloadHeader {
 
         let mut manifest_raw = vec![0u8; manifest_size];
         reader.read_exact(&mut manifest_raw)?;
-        let manifest: DeltaArchiveManifest = util::read_protobuf(&manifest_raw)?;
+        let manifest = DeltaArchiveManifest::decode(manifest_raw.as_slice())?;
 
         // Skip manifest signatures.
         reader.read_discard_exact(metadata_signature_size.into())?;
@@ -184,6 +183,7 @@ fn sign_digest(digest: &[u8], key: &RsaPrivateKey) -> Result<Signatures> {
         data: Some(digest_signed),
         // Always fits in even a u16.
         unpadded_signature_size: Some(unpadded_size as u32),
+        ..Default::default()
     };
 
     let signatures = Signatures {
@@ -329,14 +329,14 @@ impl<W: Write> PayloadWriter<W> {
             ring::digest::digest(&ring::digest::SHA256, b"").as_ref(),
             &key,
         )?;
-        let dummy_sig_size = dummy_sig.get_size();
+        let dummy_sig_size = dummy_sig.encoded_len();
 
         // Fill out the new payload signature information.
         header.manifest.signatures_offset = Some(blob_size);
         header.manifest.signatures_size = Some(dummy_sig_size as u64);
 
         // Build new manifest.
-        let manifest_raw_new = util::write_protobuf(&header.manifest)?;
+        let manifest_raw_new = header.manifest.encode_to_vec();
 
         // Excludes signatures (hashes are for signing).
         let mut h_partial = Context::new(&ring::digest::SHA256);
@@ -364,7 +364,7 @@ impl<W: Write> PayloadWriter<W> {
         // in the payload hash.
         let metadata_hash = h_partial.clone().finish();
         let metadata_sig = sign_digest(metadata_hash.as_ref(), &key)?;
-        let metadata_sig_raw = util::write_protobuf(&metadata_sig)?;
+        let metadata_sig_raw = metadata_sig.encode_to_vec();
         write_hash!(inner, [h_full], &metadata_sig_raw)?;
 
         Ok(Self {
@@ -392,7 +392,7 @@ impl<W: Write> PayloadWriter<W> {
         // Append payload signature.
         let payload_partial_hash = self.h_partial.clone().finish();
         let payload_sig = sign_digest(payload_partial_hash.as_ref(), &self.key)?;
-        let payload_sig_raw = util::write_protobuf(&payload_sig)?;
+        let payload_sig_raw = payload_sig.encode_to_vec();
         write_hash!(self.inner, [self.h_full], &payload_sig_raw)?;
 
         // Everything before the blob.
@@ -600,18 +600,12 @@ impl<W: Write> CompressedPartitionWriter<W> {
             num_blocks: Some(self.written / u64::from(self.block_size)),
         };
 
-        let operation = InstallOperation {
-            type_pb: mod_InstallOperation::Type::REPLACE_XZ,
-            // Must be manually updated by the caller.
-            data_offset: None,
-            data_length: Some(size_compressed),
-            src_extents: vec![],
-            src_length: None,
-            dst_extents: vec![extent],
-            dst_length: None,
-            data_sha256_hash: Some(digest_compressed.as_ref().to_vec()),
-            src_sha256_hash: None,
-        };
+        // data_offset must be manually updated by the caller.
+        let mut operation = InstallOperation::default();
+        operation.set_type(Type::ReplaceXz);
+        operation.data_length = Some(size_compressed);
+        operation.dst_extents.push(extent);
+        operation.data_sha256_hash = Some(digest_compressed.as_ref().to_vec());
 
         partition.operations.clear();
         partition.operations.push(operation);
@@ -685,7 +679,7 @@ pub fn verify_payload(
         )?;
 
         let buf = writer.into_inner();
-        util::read_protobuf::<Signatures>(&buf)?
+        Signatures::decode(buf.as_slice())?
     };
 
     // Check the metadata signatures.
@@ -737,7 +731,7 @@ pub fn verify_payload(
         )?;
 
         let buf = writer.into_inner();
-        util::read_protobuf::<Signatures>(&buf)?
+        Signatures::decode(buf.as_slice())?
     };
 
     // Check the payload signatures.
@@ -797,10 +791,10 @@ pub fn apply_operation(
 
         let mut hasher = Context::new(&ring::digest::SHA256);
 
-        match op.type_pb {
+        match op.r#type() {
             // Handle ZERO/DISCARD specially since they don't require access to
             // the payload blob.
-            mod_InstallOperation::Type::ZERO | mod_InstallOperation::Type::DISCARD => {
+            Type::Zero | Type::Discard => {
                 stream::copy_n_inspect(
                     io::repeat(0),
                     &mut writer,
@@ -823,7 +817,7 @@ pub fn apply_operation(
                 reader.seek(SeekFrom::Start(in_offset))?;
 
                 match other {
-                    mod_InstallOperation::Type::REPLACE => {
+                    Type::Replace => {
                         stream::copy_n_inspect(
                             &mut reader,
                             &mut writer,
@@ -832,7 +826,7 @@ pub fn apply_operation(
                             cancel_signal,
                         )?;
                     }
-                    mod_InstallOperation::Type::REPLACE_BZ => {
+                    Type::ReplaceBz => {
                         let mut decoder = BzDecoder::new(&mut writer);
                         stream::copy_n_inspect(
                             &mut reader,
@@ -843,7 +837,7 @@ pub fn apply_operation(
                         )?;
                         decoder.finish()?;
                     }
-                    mod_InstallOperation::Type::REPLACE_XZ => {
+                    Type::ReplaceXz => {
                         let mut decoder = XzDecoder::new(&mut writer);
                         stream::copy_n_inspect(
                             &mut reader,
@@ -854,7 +848,7 @@ pub fn apply_operation(
                         )?;
                         decoder.finish()?;
                     }
-                    _ => return Err(Error::UnsupportedOperation(op.type_pb)),
+                    _ => return Err(Error::UnsupportedOperation(op.r#type())),
                 }
             }
         }
@@ -862,9 +856,7 @@ pub fn apply_operation(
         let expected_digest = op.data_sha256_hash.as_deref();
         let digest = hasher.finish();
 
-        if expected_digest != Some(digest.as_ref())
-            && op.type_pb != mod_InstallOperation::Type::ZERO
-        {
+        if expected_digest != Some(digest.as_ref()) && op.r#type() != Type::Zero {
             return Err(Error::MismatchedDigest {
                 expected: expected_digest.map(hex::encode),
                 actual: hex::encode(digest.as_ref()),
@@ -902,7 +894,7 @@ pub fn extract_image_to_memory(
             apply_operation(
                 reader,
                 writer,
-                header.manifest.block_size,
+                header.manifest.block_size(),
                 header.blob_offset,
                 op,
                 cancel_signal,
@@ -952,7 +944,7 @@ pub fn extract_images<'a>(
             apply_operation(
                 reader,
                 writer,
-                header.manifest.block_size,
+                header.manifest.block_size(),
                 header.blob_offset,
                 op,
                 cancel_signal,

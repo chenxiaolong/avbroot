@@ -6,7 +6,6 @@
 use std::{fmt, path::Path};
 
 use num_traits::PrimInt;
-use quick_protobuf::{BytesReader, MessageRead, MessageWrite, Writer};
 
 pub const ZEROS: [u8; 16384] = [0u8; 16384];
 
@@ -36,20 +35,6 @@ pub fn is_zero(mut buf: &[u8]) -> bool {
     }
 
     true
-}
-
-/// Read a protobuf message with no leading size field.
-pub fn read_protobuf<'a, M: MessageRead<'a>>(data: &'a [u8]) -> quick_protobuf::Result<M> {
-    let mut reader = BytesReader::from_bytes(data);
-    M::from_reader(&mut reader, data)
-}
-
-/// Write a protobuf message with no leading size field.
-pub fn write_protobuf<M: MessageWrite>(message: &M) -> quick_protobuf::Result<Vec<u8>> {
-    let mut buf = Vec::with_capacity(message.get_size());
-    let mut writer = Writer::new(&mut buf);
-    message.write_message(&mut writer)?;
-    Ok(buf)
 }
 
 /// Get the non-empty parent of a path. If the path has no parent in the string,
