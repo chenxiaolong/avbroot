@@ -1,4 +1,5 @@
 ---
+name: Github Release
 on:
   push:
     # Uncomment to test against a branch

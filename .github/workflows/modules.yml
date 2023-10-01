@@ -1,4 +1,5 @@
 ---
+name: Modules
 on:
   push:
     branches:

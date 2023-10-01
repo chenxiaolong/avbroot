@@ -1,4 +1,5 @@
 ---
+name: cargo-deny
 on:
   push:
     branches:
