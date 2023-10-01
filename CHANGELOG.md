@@ -17,6 +17,7 @@ Behind-the-scenes changes:
 
 * Add streaming CPIO reader and writer ([PR #172])
 * Update dependencies ([PR #174])
+* Switch to prost for protobuf encoding/decoding ([PR #176])
 
 ### Version 2.1.1
 
@@ -109,3 +110,4 @@ Behind-the-scenes changes:
 [PR #173]: https://github.com/chenxiaolong/avbroot/pull/173
 [PR #174]: https://github.com/chenxiaolong/avbroot/pull/174
 [PR #175]: https://github.com/chenxiaolong/avbroot/pull/175
+[PR #176]: https://github.com/chenxiaolong/avbroot/pull/176
