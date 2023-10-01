@@ -202,7 +202,6 @@ fn unpack_subcommand(
 fn pack_subcommand(cpio_cli: &CpioCli, cli: &PackCli, cancel_signal: &AtomicBool) -> Result<()> {
     let mut info = read_info(&cli.input_info)?;
     let mut writer = open_writer(&cli.output, info.format)?;
-    let mut inode = 300000;
 
     display_format(cpio_cli, info.format);
 
@@ -210,14 +209,13 @@ fn pack_subcommand(cpio_cli: &CpioCli, cli: &PackCli, cancel_signal: &AtomicBool
         cpio::sort(&mut info.entries);
     }
 
+    cpio::assign_inodes(&mut info.entries, true)?;
+
     let authority = ambient_authority();
     let tree = Dir::open_ambient_dir(&cli.input_tree, authority)
         .with_context(|| format!("Failed to open directory: {:?}", cli.input_tree))?;
 
     for entry in &mut info.entries {
-        entry.inode = inode;
-        inode += 1;
-
         let out = open_tree_file(&tree, entry)?;
 
         if let Some((_, file_size)) = &out {
@@ -321,9 +319,9 @@ struct UnpackCli {
 /// silently ignored. Entries are added to the archive in the order that they
 /// are listed unless --sort is specified.
 ///
-/// All fields inside the info TOML are used as-is, except for the inode
-/// numbers, which will be regenerated. If any fields for an entry are missing,
-/// they will be set to 0.
+/// All fields inside the info TOML are used as-is. Missing fields in entries
+/// are set to 0, aside from the inode number, which will be assigned a unique
+/// value.
 #[derive(Debug, Parser)]
 struct PackCli {
     /// Path to output cpio file.

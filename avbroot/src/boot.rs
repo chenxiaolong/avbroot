@@ -373,7 +373,7 @@ impl BootImagePatcher for MagiskRootPatcher {
 
         // Repack ramdisk.
         cpio::sort(&mut entries);
-        cpio::reassign_inodes(&mut entries);
+        cpio::assign_inodes(&mut entries, false)?;
         let new_ramdisk = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
 
         match boot_image {
