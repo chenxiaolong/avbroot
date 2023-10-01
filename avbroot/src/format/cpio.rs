@@ -4,6 +4,7 @@
  */
 
 use std::{
+    collections::{HashMap, HashSet},
     fmt,
     io::{self, Cursor, Read, Write},
     ops::Range,
@@ -53,6 +54,8 @@ pub enum Error {
     HardLinksNotSupported(Vec<u8>),
     #[error("Entry of type {0} should not have data: {:?}", .1.as_bstr())]
     EntryHasData(CpioEntryType, Vec<u8>),
+    #[error("No inodes available for device {0:x},{1:x}")]
+    DeviceFull(u32, u32),
     #[error("{0:?} field exceeds integer bounds")]
     IntegerTooLarge(&'static str),
     #[error("I/O error")]
@@ -637,10 +640,7 @@ impl<W: Write> CpioWriter<W> {
     pub fn finish(mut self) -> Result<W> {
         self.finish_entry()?;
 
-        let mut trailer = CpioEntry::new_trailer();
-        trailer.inode = self.max_inode.wrapping_add(1);
-
-        self.start_entry(&trailer)?;
+        self.start_entry(&CpioEntry::new_trailer())?;
 
         // Pad until the end of the block.
         if self.pad_to_block_size {
@@ -703,13 +703,61 @@ pub fn sort(entries: &mut [CpioEntry]) {
     entries.sort_by(|a, b| a.path.cmp(&b.path));
 }
 
-pub fn reassign_inodes(entries: &mut [CpioEntry]) {
-    let mut inode = 300000;
+/// Assign inodes to entries. If `missing_only` is true, then inodes are only
+/// assigned if the inode field in an entry is set to 0.
+///
+/// New inodes are assigned starting immediately after the highest inode number
+/// for a given ([`CpioEntry::dev_maj`], [`CpioEntry::dev_min`]) pair. If there
+/// are no existing inodes assigned for a device, then the numbers begin at
+/// 300000.
+pub fn assign_inodes(entries: &mut [CpioEntry], missing_only: bool) -> Result<()> {
+    fn next_non_zero(i: u32) -> u32 {
+        if i == u32::MAX {
+            1
+        } else {
+            i.wrapping_add(1)
+        }
+    }
+
+    // (dev maj, dev min) -> (inode set, last assigned inode)
+    let mut inodes: HashMap<(u32, u32), (HashSet<u32>, u32)> = HashMap::new();
+
+    if missing_only {
+        for entry in &mut *entries {
+            if entry.inode != 0 {
+                let key = (entry.dev_maj, entry.dev_min);
+                let (set, last) = inodes.entry(key).or_default();
+
+                set.insert(entry.inode);
+                *last = (*last).max(entry.inode);
+            }
+        }
+    }
 
     for entry in entries {
-        entry.inode = inode;
-        inode += 1;
+        if entry.inode == 0 {
+            let key = (entry.dev_maj, entry.dev_min);
+            let (set, last) = inodes
+                .entry(key)
+                .or_insert_with(|| (HashSet::new(), 299999));
+
+            let mut unused = next_non_zero(*last);
+
+            while set.contains(&unused) {
+                if unused == *last {
+                    return Err(Error::DeviceFull(entry.dev_maj, entry.dev_min));
+                }
+
+                unused = next_non_zero(unused);
+            }
+
+            entry.inode = unused;
+            set.insert(unused);
+            *last = unused;
+        }
     }
+
+    Ok(())
 }
 
 pub fn save(
