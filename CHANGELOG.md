@@ -10,6 +10,8 @@
 ### Unreleased
 
 * Add new unpack and pack commands for cpio archives (ramdisks) ([PR #173])
+* Rename `header.toml` to `boot.toml` for the boot image unpack and pack commands ([PR #175])
+    * Also changes the file format a bit to make it more readable.
 
 Behind-the-scenes changes:
 
@@ -106,3 +108,4 @@ Behind-the-scenes changes:
 [PR #172]: https://github.com/chenxiaolong/avbroot/pull/172
 [PR #173]: https://github.com/chenxiaolong/avbroot/pull/173
 [PR #174]: https://github.com/chenxiaolong/avbroot/pull/174
+[PR #175]: https://github.com/chenxiaolong/avbroot/pull/175
