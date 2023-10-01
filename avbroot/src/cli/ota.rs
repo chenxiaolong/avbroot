@@ -535,7 +535,7 @@ fn patch_ota_payload(
         &mut vbmeta_order,
         clear_vbmeta_flags,
         key_avb,
-        header_locked.manifest.block_size.into(),
+        header_locked.manifest.block_size().into(),
     )?;
 
     status!(
@@ -543,7 +543,7 @@ fn patch_ota_payload(
         joined(sorted(input_streams.keys())),
     );
 
-    let block_size = header_locked.manifest.block_size;
+    let block_size = header_locked.manifest.block_size();
     drop(header_locked);
 
     input_streams

@@ -29,7 +29,7 @@ num-bigint-dig = "0.8.4"
 num-traits = "0.2.16"
 phf = { version = "0.11.2", features = ["macros"] }
 pkcs8 = { version = "0.10.2", features = ["encryption", "pem"] }
-quick-protobuf = "0.8.1"
+prost = "0.12.1"
 rand = "0.8.5"
 rayon = "1.7.0"
 regex = { version = "1.9.4", default-features = false, features = ["perf", "std"] }
@@ -77,8 +77,8 @@ features = ["deflate"]
 rustix = { version = "0.38.9", default-features = false, features = ["process"] }
 
 [build-dependencies]
-# Disable the clap feature since it pulls in an ancient version of clap.
-pb-rs = { version = "0.10.0", default-features = false }
+prost-build = "0.12.1"
+protox = "0.5.0"
 
 [dev-dependencies]
 assert_matches = "1.5.0"

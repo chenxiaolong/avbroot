@@ -5,8 +5,6 @@
 
 use std::{env, ffi::OsStr, fs, io, path::Path};
 
-use pb_rs::{types::FileDescriptor, ConfigBuilder};
-
 fn main() {
     let out_dir = Path::new(&env::var("OUT_DIR").unwrap()).join("protobuf");
     let in_dir = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("protobuf");
@@ -30,14 +28,10 @@ fn main() {
 
     fs::create_dir_all(&out_dir).unwrap();
 
-    let config = ConfigBuilder::new(&protos, None, Some(&out_dir), &[in_dir])
-        .unwrap()
-        .dont_use_cow(true)
-        // We're using this as a means to force quick-protobuf to use BTreeMap
-        // instead of HashMap so that the serialized messages are reproducible.
-        // https://github.com/tafia/quick-protobuf/issues/251
-        .nostd(true)
-        .build();
+    let file_descriptors = protox::compile(&protos, [&in_dir]).unwrap();
 
-    FileDescriptor::run(&config).unwrap();
+    prost_build::Config::new()
+        .btree_map(["."])
+        .compile_fds(file_descriptors)
+        .unwrap();
 }

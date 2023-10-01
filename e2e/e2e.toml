@@ -1,86 +1,86 @@
 [magisk]
-"url" = "https://github.com/topjohnwu/Magisk/releases/download/v26.0/Magisk-v26.0.apk"
-"hash" = "9e14d3d3ca1f1a2765f8ca215ebbf35ea5fd2896fb147eea581fcaa3b4e77d25"
+"url" = "https://github.com/topjohnwu/Magisk/releases/download/v26.3/Magisk.v26.3.apk"
+"hash" = "30ff6ec0709412adfcd0b735c0eb1f61cd9d589af4bdef4cf03c09b986b5acce"
 
 # Google Pixel 7 Pro
 # What's unique: init_boot (boot v4) + vendor_boot (vendor v4)
 [device.cheetah]
-url = "https://dl.google.com/dl/android/aosp/cheetah-ota-tq2a.230305.008.c1-6ac5ff2e.zip"
+url = "https://dl.google.com/dl/android/aosp/cheetah-ota-tq3a.230901.001-6b881553.zip"
 sections = [
-    { start = 0, end = 151715 },
-    { start = 21683150, end = 23179365 },
-    { start = 2043499985, end = 2043508325 },
-    { start = 2315331822, end = 2333060126 },
-    { start = 2344084950, end = 2344090066 },
+    { start = 0, end = 152523 },
+    { start = 21750700, end = 23251455 },
+    { start = 2044485458, end = 2044493782 },
+    { start = 2316042420, end = 2333812318 },
+    { start = 2344911202, end = 2344916318 },
 ]
-hash.original.full = "6ac5ff2e14dc16755ea4ea30e6dbe25103b889a36a465194ef943bd0d665b91c"
-hash.original.stripped = "549522015f0369a3b89385f532ab62235b47c2c39540bd0adaaf6acc81fdda94"
-hash.patched.full = "b380720852e2a1e994bcf38064f577bac68b18e799cf8166cb6a7edb8a661cb4"
-hash.patched.stripped = "560cdf4d7b25fb5bc650f96ae5a3c7593ac229a364bb39887287cfb734f6b377"
-hash.avb_images."init_boot.img" = "fac9305ce22b897fbfb193968d5346f4c70f6c18c3060bb106226f134ce5f433"
-hash.avb_images."vbmeta.img" = "0b3d719b751dd43bbec95d02b1bf57b5dae62e42a52502895892a207b773e77d"
-hash.avb_images."vbmeta_system.img" = "cf8c77dcf0a4474d49b5bdc2a44bdb3646464d5212fbe12aa5d3c5f531742f4f"
-hash.avb_images."vbmeta_vendor.img" = "660d8f61acd95a4f8ad416b4cbe126e9c039706462b4236ad723953c72ac49a8"
-hash.avb_images."vendor_boot.img" = "c788d4d8eb7926ad1bfa2a9c000343c3c73cedc580449f5270a711feb620f033"
+hash.original.full = "6b881553f012d582080642d660e1cf5c9e6fe41e9f1c6ab12ae87fab7894e307"
+hash.original.stripped = "9befd7887a125ebd8e9ae0555469dababe6bc04b0aa41aa2562036782a6d87e0"
+hash.patched.full = "9a16823737ec3586977106dbddfce3dc64acfcff4d7bc275989c6b78bd5b096e"
+hash.patched.stripped = "0d3e5610a0215c94183a6ff15e4a44ceef20d476b3c1d3399fb1498e615c4623"
+hash.avb_images."init_boot.img" = "a0f057ef2c2085a8fff2f4df98753e6db7721eb5f06e4011acdb3d10b1f75f85"
+hash.avb_images."vbmeta.img" = "488d6a2e9941de44abd4bdf74dec463d5d6fdbf879f6dd3445a58bb7872a412e"
+hash.avb_images."vbmeta_system.img" = "dbb63e08f26f46ccda501d99058d513ff71e3d6302c14d587442b666ff08862a"
+hash.avb_images."vbmeta_vendor.img" = "6ffa0a10e72c3371653be80de1380832b4d7f8bbf38a2bd861d44a4097a57117"
+hash.avb_images."vendor_boot.img" = "9662194df18e78549f3fb212e26926ecac8baecaa5a5e63af7ae12a9d56b87fd"
 
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
 [device.bluejay]
-url = "https://dl.google.com/dl/android/aosp/bluejay-ota-tq2a.230305.008.e1-915f9087.zip"
+url = "https://dl.google.com/dl/android/aosp/bluejay-ota-tq3a.230901.001-1f1f0abe.zip"
 sections = [
-    { start = 0, end = 140787 },
-    { start = 1060207, end = 21612852 },
-    { start = 1886150700, end = 1886158844 },
-    { start = 2069112987, end = 2092260102 },
-    { start = 2098778558, end = 2098783674 },
+    { start = 0, end = 142587 },
+    { start = 1062619, end = 21678441 },
+    { start = 1920893927, end = 1920902079 },
+    { start = 2103596124, end = 2126776858 },
+    { start = 2133324030, end = 2133329146 },
 ]
-hash.original.full = "915f9087b627b6961be9bb447dc63a7a1083b536753a78715e98641eaeb9c9d1"
-hash.original.stripped = "a3ee5b6e39e687665c31790118ab9f47715b0b8285ae9847dbf81307f963db14"
-hash.patched.full = "bfa7b26d90bdc889a7a199439e1564b219e5e2dbfddc1657bc1c6b73229be67e"
-hash.patched.stripped = "4e56ee4a8554f2b08ffc2f1470ad60b9b63d2b6fb469ed1f7c4b1204bbf8ad7d"
-hash.avb_images."boot.img" = "a1a705092e7034d20b83c94d78291418e13c343b1573c1b11e0fc884fc00ae62"
-hash.avb_images."vbmeta.img" = "3c123705be57ab142d2b43beef9b123eaad129df17a523b59b1d63b9122d28b0"
-hash.avb_images."vbmeta_system.img" = "285b83e4290f3257dc3678f0c3191794830bb2d72fb0969b69fc8f09d7ddff12"
-hash.avb_images."vbmeta_vendor.img" = "981f736586b91a9f4c93c4208a0d191a35ff15118c6fa505d755ee7fda8b2477"
-hash.avb_images."vendor_boot.img" = "ceffcb4fdb33aa3bb2c70621060acd5af612206b21cc413d5c2d39fee25144ab"
+hash.original.full = "1f1f0abe67a6f6f47287be6dafec2c12628de6a715b82ca7beddaf67ad22aca5"
+hash.original.stripped = "38b15f5efdc7e056bc799859ba72ef9a73e93c61292c59f85fb4b9c31acc5f82"
+hash.patched.full = "5904f5eaeccd8bb6bb62919eeedef9bacbafd0261d88d2f86844cce5aac14da0"
+hash.patched.stripped = "e3facf3f17fb35733f8e53611926f436880fa85d62a1655da8cee1aa6a672da4"
+hash.avb_images."boot.img" = "2ecab6d2c261dd52f55b9d275429343472be6bdc360efe14ef3336a9fdce3778"
+hash.avb_images."vbmeta.img" = "0ad8baf243194e8cd1b52a498a3b4c8c0c5e2bb5a399af616c171406eac2c5b6"
+hash.avb_images."vbmeta_system.img" = "98a050f0d53a016fbb78147b1b4a9bca3fde615aa4da34bf62c2e07a395104b5"
+hash.avb_images."vbmeta_vendor.img" = "fac530f47f237e76f3c7c3cdfe96308170dd8e8f0b227d81114a489c69ba763c"
+hash.avb_images."vendor_boot.img" = "f4691800d32dc12eb1e2a9ace9d1e036b844043953ab56b986ce9c04054d3656"
 
 # Google Pixel 4a 5G
 # What's unique: boot (boot v3) + vendor_boot (vendor v3)
 [device.bramble]
-url = "https://dl.google.com/dl/android/aosp/bramble-ota-tq2a.230305.008.c1-a925dd09.zip"
+url = "https://dl.google.com/dl/android/aosp/bramble-ota-tq3a.230901.001-6d107ffa.zip"
 sections = [
-    { start = 0, end = 140531 },
-    { start = 496187, end = 11655082 },
-    { start = 1650283561, end = 1650287993 },
-    { start = 1884739919, end = 1908081011 },
-    { start = 1910894027, end = 1910899144 },
+    { start = 0, end = 142225 },
+    { start = 497945, end = 11647087 },
+    { start = 1683478307, end = 1683482723 },
+    { start = 1917281683, end = 1940628772 },
+    { start = 1943442548, end = 1943447665 },
 ]
-hash.original.full = "a925dd09c8d613d46cf72677c16f4fadee18bc21734d57047c6ccf31f672507b"
-hash.original.stripped = "79322b0b417359e8f072032de676d7e5bd2715a3b3554c48ed5cc9e9a25c6866"
-hash.patched.full = "cf79cd60acd3635f5085d8bb411d4a8dc4d7e62440f62a14e7ea12f5a9b7cd8a"
-hash.patched.stripped = "b684a78fe08014f1633e74d1f380e137823ba77a47ddf428bc649364f5548b75"
-hash.avb_images."boot.img" = "2bbf2c6d2f82d454426b26ac3b4887b26ca0591b458e6cf137207ecbb8f7649d"
-hash.avb_images."vbmeta.img" = "ab3b2487671b3fc28e163898621d6c068164d335b6ddd9b94e4fde9471c95d66"
-hash.avb_images."vbmeta_system.img" = "2fcd52d7462916a8510bbb07f2f5a14200afe2de97568396fe75e04c5c283152"
-hash.avb_images."vendor_boot.img" = "e27f157c4ebf4e958165997a4b87d4de1cfc34f4dea423a153327a27b053cac7"
+hash.original.full = "6d107ffac1cd3da2c972112acc75957ed725e5c13d57ca724d9bcca5404fcebd"
+hash.original.stripped = "5b889bdab3bb12ddcd3c243a56e1c58bedada8831069f49d56fe5098fb141e35"
+hash.patched.full = "d101bb5376eea859b69ea78cb4162753b69cff81c14b4f244021f27ec0ce58d0"
+hash.patched.stripped = "04c4d8f2e5dc744fd5a8295a00349e661260ccd2dd0750201dedc1e2294b7962"
+hash.avb_images."boot.img" = "e6bd56ad12013ed2e4cf26451d5e769c40bab05feee39f9a741d15ecf272cfbe"
+hash.avb_images."vbmeta.img" = "f5079baa3aec734c3f8b346958a3fce9e7641e3ea2f1f9bbf13031b81d2a00a6"
+hash.avb_images."vbmeta_system.img" = "9a7c6fd654e7a92aeffbdbd55ea0d87eee36f4c235e1b505423ad8a13a751a00"
+hash.avb_images."vendor_boot.img" = "3cc7f110e69d3b32e33ecaac654f4189807d6cb8ad479b05054cec5c0372fafe"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)
 [device.sunfish]
-url = "https://dl.google.com/dl/android/aosp/sunfish-ota-tq2a.230305.008.c1-174fd16b.zip"
+url = "https://dl.google.com/dl/android/aosp/sunfish-ota-tq3a.230805.001-01fd34b2.zip"
 sections = [
-    { start = 0, end = 129700 },
-    { start = 476996, end = 34035261 },
-    { start = 1624751947, end = 1624756371 },
-    { start = 1823132563, end = 1823137581 },
+    { start = 0, end = 131325 },
+    { start = 478553, end = 34014760 },
+    { start = 1658403115, end = 1658407531 },
+    { start = 1855778567, end = 1855783585 },
 ]
-hash.original.full = "174fd16b47ef994ea8f3cb0f3fb456df2654b0aa1f9ea6fb8e54e5c6319f2601"
-hash.original.stripped = "943ce3ae2aac8a0ccd4a7e9d4e38a9c495c39639f2621c6853be4c7a3fa0fc26"
-hash.patched.full = "cdfffa731f0aca0ab9eff1e7d7bfee8c4716054d64cf0a47e50f50da6cbdb849"
-hash.patched.stripped = "35b720058c460dd28b00f40bed4bcd1d133522d42d00ba048172b3092a7444ee"
-hash.avb_images."boot.img" = "22182f2efc7043f35d79e71abb400ce919c6b3b8419405e16469644932367ee6"
-hash.avb_images."vbmeta.img" = "4cbe171bb37515f59cd4082cc2d982ca1edfeba9db09dd62c8959dd318423888"
-hash.avb_images."vbmeta_system.img" = "7cdb590bfc1056a5a8c7606ff05e99eb344efe108296682698b5cfe83905e0cd"
+hash.original.full = "01fd34b206152a3559039161c9874ab03df37da4268b86a9e0be899de5fc0af7"
+hash.original.stripped = "cc311b5bd46e06cfdefbade794d33aa9bc3ceda4ad4f38bfe9f0dfc17033d207"
+hash.patched.full = "e06bef2fbf5d58d058d4b181a7f54cba6bc19b66986eb4c11519381f34b37622"
+hash.patched.stripped = "709d2de4463df439349b85567bcda4a440685f5b82472ad098dbbcbdfefd05c6"
+hash.avb_images."boot.img" = "ac504c793b095a66d79638295f2a6458c3ea775328238c8bb363a913d62d412a"
+hash.avb_images."vbmeta.img" = "52a0b55a46ece965e58cbea199baa888f42d0789f3ddb24e740487d606732870"
+hash.avb_images."vbmeta_system.img" = "1d3efa00fd1d44a594c7317072468fa95c23d83d2759d6d6e757783ceeabc594"
 
 # OnePlus 10 Pro
 # Build NE2215_11_C.26
@@ -107,9 +107,9 @@ sections = [
 ]
 hash.original.full = "929f892fbd70699cf7f118a119aac1ae1b86351e1ada17715666fa4401e63472"
 hash.original.stripped = "4eabaf79b6c2b5df305e3ecdc2b9570c0dd27350b4e8d6434584000c4989ff3d"
-hash.patched.full = "3453b2eda97ca1ba7367fa9d0dd37b21a5065e2e57cc3bbe9a6f135349d42d0b"
-hash.patched.stripped = "1a41e435bdbf4302761e719e218e8682145644c0fe276739c3265f392adbd74d"
-hash.avb_images."boot.img" = "f5dc3b147c54589be8db00ca15257a3688424a9eb88bd9c2cec82ebf4f6bf859"
+hash.patched.full = "ca06e7d2905c421935e177d82535cee8e346facfa060b9dd5394387a758f8fdb"
+hash.patched.stripped = "a1e2af8c50682b7cc02bd7ecc9b303cfc2f7dc540d5b5d43380075d13f54de0a"
+hash.avb_images."boot.img" = "5bdf0f13343e52711eee493aeada0281c17a3b5204808228a564aa45c3a1871d"
 hash.avb_images."recovery.img" = "a42c0bf4f023cd24394184a33ee113783a9c89a7cc4c0c582a5f72cc23b72309"
 hash.avb_images."vbmeta.img" = "c022cf79da301a8430af5c49704944c490707fa0306031fe3ea22c39ce4734f6"
 hash.avb_images."vbmeta_system.img" = "749616b7f04487c05e9e363ad2071a0ab3bae29d497daf1f1a7695f7c8cfa82a"

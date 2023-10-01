@@ -13,6 +13,7 @@ use std::{
 use cms::signed_data::SignedData;
 use const_oid::{db::rfc5912, ObjectIdentifier};
 use memchr::memmem;
+use prost::Message;
 use ring::digest::Context;
 use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 use sha1::Sha1;
@@ -24,9 +25,8 @@ use zip::{result::ZipError, write::FileOptions, CompressionMethod, ZipArchive, Z
 use crate::{
     crypto,
     format::payload::{self, PayloadHeader},
-    protobuf::build::tools::releasetools::{mod_OtaMetadata::OtaType, OtaMetadata},
+    protobuf::build::tools::releasetools::{ota_metadata::OtaType, OtaMetadata},
     stream::{self, FromReader, HashingReader, HashingWriter},
-    util,
 };
 
 pub const PATH_METADATA: &str = "META-INF/com/android/metadata";
@@ -76,8 +76,8 @@ pub enum Error {
     CmsSign(#[from] crypto::Error),
     #[error("Payload error")]
     Payload(#[from] payload::Error),
-    #[error("Protobuf error")]
-    Protobuf(#[from] quick_protobuf::Error),
+    #[error("Failed to decode protobuf message")]
+    ProtobufDecode(#[from] prost::DecodeError),
     #[error("SPKI error")]
     Spki(#[from] pkcs8::spki::Error),
     #[error("x509 DER error")]
@@ -99,11 +99,11 @@ fn serialize_metadata(metadata: &OtaMetadata) -> Result<(String, Vec<u8>)> {
 
     let mut pairs = BTreeMap::<String, String>::new();
 
-    match metadata.type_pb {
-        OtaType::AB => {
+    match metadata.r#type() {
+        OtaType::Ab => {
             pairs.insert("ota-type".to_owned(), "AB".to_owned());
         }
-        OtaType::BLOCK => {
+        OtaType::Block => {
             pairs.insert("ota-type".to_owned(), "BLOCK".to_owned());
         }
         _ => {}
@@ -161,7 +161,7 @@ fn serialize_metadata(metadata: &OtaMetadata) -> Result<(String, Vec<u8>)> {
         .into_iter()
         .map(|(k, v)| format!("{k}={v}\n"))
         .collect::<String>();
-    let modern_metadata = util::write_protobuf(metadata)?;
+    let modern_metadata = metadata.encode_to_vec();
 
     Ok((legacy_metadata, modern_metadata))
 }
@@ -299,7 +299,7 @@ pub fn add_metadata(
     metadata_pb_raw: &[u8],
     payload_metadata_size: u64,
 ) -> Result<OtaMetadata> {
-    let mut metadata: OtaMetadata = util::read_protobuf(metadata_pb_raw)?;
+    let mut metadata = OtaMetadata::decode(metadata_pb_raw)?;
     let options = FileOptions::default().compression_method(CompressionMethod::Stored);
 
     let mut zip_entries = zip_entries.to_owned();
@@ -523,7 +523,7 @@ pub fn parse_zip_ota_info(
         let mut entry = zip.by_name(PATH_METADATA_PB)?;
         let mut buf = Vec::new();
         entry.read_to_end(&mut buf)?;
-        util::read_protobuf::<OtaMetadata>(&buf)?
+        OtaMetadata::decode(buf.as_slice())?
     };
 
     let certificate = {
