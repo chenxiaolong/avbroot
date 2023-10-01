@@ -1255,6 +1255,7 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "type")]
 pub enum BootImage {
     V0Through2(BootImageV0Through2),
     V3Through4(BootImageV3Through4),

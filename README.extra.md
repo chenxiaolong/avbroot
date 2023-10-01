@@ -68,7 +68,7 @@ By default, this command will not write to any file and fails if an image is cor
 avbroot boot unpack -i <input boot image>
 ```
 
-This subcommand unpacks all of the components of the boot image into the current directory by default (see `--help`). The header fields are saved to `header.toml` and each blob section is saved to a separate file. Each blob is written to disk as-is, without decompression.
+This subcommand unpacks all of the components of the boot image into the current directory by default (see `--help`). The header fields are saved to `boot.toml` and each blob section is saved to a separate file. Each blob is written to disk as-is, without decompression.
 
 ### Packing a boot image
 

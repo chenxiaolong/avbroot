@@ -334,7 +334,7 @@ struct UnpackCli {
     input: PathBuf,
 
     /// Path to output header TOML.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "header.toml")]
+    #[arg(long, value_name = "FILE", value_parser, default_value = "boot.toml")]
     output_header: PathBuf,
 
     /// Path to output kernel image.
@@ -394,7 +394,7 @@ struct PackCli {
     output: PathBuf,
 
     /// Path to input header TOML.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "header.toml")]
+    #[arg(long, value_name = "FILE", value_parser, default_value = "boot.toml")]
     input_header: PathBuf,
 
     /// Path to input kernel image.
