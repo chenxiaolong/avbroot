@@ -189,7 +189,7 @@ Magisk versions 25211 and newer require a writable partition for storing custom 
     Alternatively, avbroot can print out what Magisk detected by running:
 
     ```bash
-    avbroot ota magisk-info \
+    avbroot boot magisk-info \
         --image magisk_patched-*.img
     ```
 
