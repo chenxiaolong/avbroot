@@ -7,7 +7,11 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 2.2.0
+
+It's Android 14 release day! All versions of avbroot, including the old Python version, are compatible with Android 14 OTAs.
+
+Changes:
 
 * Add new unpack and pack commands for cpio archives (ramdisks) ([PR #173], [PR #178])
 * Rename `header.toml` to `boot.toml` for the boot image unpack and pack commands ([PR #175])
