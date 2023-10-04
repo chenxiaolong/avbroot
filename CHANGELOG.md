@@ -7,6 +7,12 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+Behind-the-scenes changes:
+
+* Bump maximum payload manifest size to 4 MiB ([PR #182])
+
 ### Version 2.2.0
 
 It's Android 14 release day! All versions of avbroot, including the old Python version, are compatible with Android 14 OTAs.
@@ -117,3 +123,4 @@ Behind-the-scenes changes:
 [PR #176]: https://github.com/chenxiaolong/avbroot/pull/176
 [PR #178]: https://github.com/chenxiaolong/avbroot/pull/178
 [PR #181]: https://github.com/chenxiaolong/avbroot/pull/181
+[PR #182]: https://github.com/chenxiaolong/avbroot/pull/182
