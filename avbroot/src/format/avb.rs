@@ -393,7 +393,7 @@ impl HashTreeDescriptor {
         cancel_signal: &AtomicBool,
     ) -> io::Result<Vec<u8>> {
         // Each digest must be a power of 2.
-        let digest_padding = algorithm.output_len.next_power_of_two() - algorithm.output_len;
+        let digest_padding = algorithm.output_len().next_power_of_two() - algorithm.output_len();
         let mut buf = vec![0u8; block_size as usize];
         let mut result = vec![];
 
