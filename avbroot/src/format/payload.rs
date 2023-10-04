@@ -42,7 +42,7 @@ use crate::{
 const OTA_MAGIC: &[u8; 4] = b"CrAU";
 const OTA_HEADER_SIZE: usize = OTA_MAGIC.len() + 8 + 8 + 4;
 
-const MANIFEST_MAX_SIZE: usize = 1024 * 1024;
+const MANIFEST_MAX_SIZE: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum Error {
