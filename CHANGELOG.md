@@ -9,6 +9,8 @@
 
 ### Unreleased
 
+* Fix missing `--help` text for `avbroot avb unpack`'s `--ignore-invalid` option ([PR #183])
+
 Behind-the-scenes changes:
 
 * Bump maximum payload manifest size to 4 MiB ([PR #182])
@@ -124,3 +126,4 @@ Behind-the-scenes changes:
 [PR #178]: https://github.com/chenxiaolong/avbroot/pull/178
 [PR #181]: https://github.com/chenxiaolong/avbroot/pull/181
 [PR #182]: https://github.com/chenxiaolong/avbroot/pull/182
+[PR #183]: https://github.com/chenxiaolong/avbroot/pull/183
