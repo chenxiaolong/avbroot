@@ -1195,19 +1195,25 @@ pub fn ota_main(cli: &OtaCli, cancel_signal: &AtomicBool) -> Result<()> {
 // inside a group: https://github.com/clap-rs/clap/issues/4707. Even if that
 // were fixed, the former option's error message is much more user friendly.
 
+const HEADING_PATH: &str = "Path options";
+const HEADING_KEY: &str = "Key options";
+const HEADING_MAGISK: &str = "Magisk patch options";
+const HEADING_PREPATCHED: &str = "Prepatched boot image options";
+const HEADING_OTHER: &str = "Other patch options";
+
 #[derive(Debug, Args)]
 #[group(required = true, multiple = false)]
 pub struct RootGroup {
     /// Path to Magisk APK.
-    #[arg(long, value_name = "FILE", value_parser)]
+    #[arg(long, value_name = "FILE", value_parser, help_heading = HEADING_MAGISK)]
     pub magisk: Option<PathBuf>,
 
     /// Path to prepatched boot image.
-    #[arg(long, value_name = "FILE", value_parser)]
+    #[arg(long, value_name = "FILE", value_parser, help_heading = HEADING_PREPATCHED)]
     pub prepatched: Option<PathBuf>,
 
     /// Skip applying root patch.
-    #[arg(long)]
+    #[arg(long, help_heading = HEADING_OTHER)]
     pub rootless: bool,
 }
 
@@ -1215,23 +1221,35 @@ pub struct RootGroup {
 #[derive(Debug, Parser)]
 pub struct PatchCli {
     /// Patch to original OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE", value_parser, help_heading = HEADING_PATH)]
     pub input: PathBuf,
 
     /// Path to new OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE", value_parser, help_heading = HEADING_PATH)]
     pub output: Option<PathBuf>,
 
     /// Private key for signing vbmeta images.
-    #[arg(long, alias = "privkey-avb", value_name = "FILE", value_parser)]
+    #[arg(
+        long,
+        alias = "privkey-avb",
+        value_name = "FILE",
+        value_parser,
+        help_heading = HEADING_KEY
+    )]
     pub key_avb: PathBuf,
 
     /// Private key for signing the OTA.
-    #[arg(long, alias = "privkey-ota", value_name = "FILE", value_parser)]
+    #[arg(
+        long,
+        alias = "privkey-ota",
+        value_name = "FILE",
+        value_parser,
+        help_heading = HEADING_KEY
+    )]
     pub key_ota: PathBuf,
 
     /// Certificate for OTA signing key.
-    #[arg(long, value_name = "FILE", value_parser)]
+    #[arg(long, value_name = "FILE", value_parser, help_heading = HEADING_KEY)]
     pub cert_ota: PathBuf,
 
     /// Environment variable containing AVB private key passphrase.
@@ -1240,7 +1258,8 @@ pub struct PatchCli {
         alias = "passphrase-avb-env-var",
         value_name = "ENV_VAR",
         value_parser,
-        group = "pass_avb"
+        group = "pass_avb",
+        help_heading = HEADING_KEY
     )]
     pub pass_avb_env_var: Option<OsString>,
 
@@ -1250,7 +1269,8 @@ pub struct PatchCli {
         alias = "passphrase-avb-file",
         value_name = "FILE",
         value_parser,
-        group = "pass_avb"
+        group = "pass_avb",
+        help_heading = HEADING_KEY
     )]
     pub pass_avb_file: Option<PathBuf>,
 
@@ -1260,7 +1280,8 @@ pub struct PatchCli {
         alias = "passphrase-ota-env-var",
         value_name = "ENV_VAR",
         value_parser,
-        group = "pass_ota"
+        group = "pass_ota",
+        help_heading = HEADING_KEY
     )]
     pub pass_ota_env_var: Option<OsString>,
 
@@ -1270,39 +1291,70 @@ pub struct PatchCli {
         alias = "passphrase-ota-file",
         value_name = "FILE",
         value_parser,
-        group = "pass_ota"
+        group = "pass_ota",
+        help_heading = HEADING_KEY
     )]
     pub pass_ota_file: Option<PathBuf>,
 
     /// Use partition image from a file instead of the original payload.
-    #[arg(long, value_names = ["PARTITION", "FILE"], value_parser = value_parser!(OsString), num_args = 2)]
+    #[arg(
+        long,
+        value_names = ["PARTITION", "FILE"],
+        value_parser = value_parser!(OsString),
+        num_args = 2,
+        help_heading = HEADING_PATH,
+    )]
     pub replace: Vec<OsString>,
 
     #[command(flatten)]
     pub root: RootGroup,
 
-    /// Magisk preinit block device.
-    #[arg(long, value_name = "PARTITION", conflicts_with_all = ["prepatched", "rootless"])]
+    /// Magisk preinit block device (version >=25211 only).
+    #[arg(
+        long,
+        value_name = "PARTITION",
+        conflicts_with_all = ["prepatched", "rootless"],
+        help_heading = HEADING_MAGISK
+    )]
     pub magisk_preinit_device: Option<String>,
 
-    /// Magisk random seed.
-    #[arg(long, value_name = "NUMBER", conflicts_with_all = ["prepatched", "rootless"])]
+    /// Magisk random seed (version >=25211, <26103 only).
+    #[arg(
+        long,
+        value_name = "NUMBER",
+        conflicts_with_all = ["prepatched", "rootless"],
+        help_heading = HEADING_MAGISK
+    )]
     pub magisk_random_seed: Option<u64>,
 
     /// Ignore Magisk compatibility/version warnings.
-    #[arg(long, conflicts_with_all = ["prepatched", "rootless"])]
+    #[arg(
+        long,
+        conflicts_with_all = ["prepatched", "rootless"],
+        help_heading = HEADING_MAGISK
+    )]
     pub ignore_magisk_warnings: bool,
 
     /// Ignore compatibility issues with prepatched boot images.
-    #[arg(long, action = ArgAction::Count, conflicts_with_all = ["magisk", "rootless"])]
+    #[arg(
+        long,
+        action = ArgAction::Count,
+        conflicts_with_all = ["magisk", "rootless"],
+        help_heading = HEADING_PREPATCHED
+    )]
     pub ignore_prepatched_compat: u8,
 
     /// Forcibly clear vbmeta flags if they disable AVB.
-    #[arg(long)]
+    #[arg(long, help_heading = HEADING_OTHER)]
     pub clear_vbmeta_flags: bool,
 
     /// Boot partition name.
-    #[arg(long, value_name = "PARTITION", default_value = "@gki_ramdisk")]
+    #[arg(
+        long,
+        value_name = "PARTITION",
+        default_value = "@gki_ramdisk",
+        help_heading = HEADING_OTHER
+    )]
     pub boot_partition: String,
 }
 
