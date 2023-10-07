@@ -664,7 +664,7 @@ struct UnpackCli {
     #[arg(long, value_name = "FILE", value_parser, default_value = "raw.img")]
     output_raw: PathBuf,
 
-    // Ignore invalid digests or FEC data.
+    /// Ignore invalid digests or FEC data.
     #[arg(long)]
     ignore_invalid: bool,
 
