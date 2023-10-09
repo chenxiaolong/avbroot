@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Fix missing `--help` text for `avbroot avb unpack`'s `--ignore-invalid` option ([PR #183])
+* Group `avbroot ota patch --help` output into more readable sections ([PR #184])
 
 Behind-the-scenes changes:
 
@@ -127,3 +128,4 @@ Behind-the-scenes changes:
 [PR #181]: https://github.com/chenxiaolong/avbroot/pull/181
 [PR #182]: https://github.com/chenxiaolong/avbroot/pull/182
 [PR #183]: https://github.com/chenxiaolong/avbroot/pull/183
+[PR #184]: https://github.com/chenxiaolong/avbroot/pull/184
