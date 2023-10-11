@@ -59,12 +59,19 @@ static PARTITION_PRIORITIES: phf::Map<&'static str, &[&'static str]> = phf_map! 
 };
 
 fn joined(into_iter: impl IntoIterator<Item = impl Display>) -> String {
-    let items = into_iter
-        .into_iter()
-        .map(|i| i.to_string())
-        .collect::<Vec<_>>();
+    use std::fmt::Write;
 
-    items.join(", ")
+    let mut result = String::new();
+
+    for (i, item) in into_iter.into_iter().enumerate() {
+        if i > 0 {
+            result.push_str(", ");
+        }
+
+        write!(result, "{item}").expect("Failed to allocate");
+    }
+
+    result
 }
 
 fn sorted<T: Ord>(iter: impl Iterator<Item = T>) -> Vec<T> {
@@ -236,16 +243,14 @@ fn patch_boot_images(
     Ok(())
 }
 
-/// From the set of input images (modified partitions + all vbmeta partitions)
-/// and determine the order to patch the vbmeta images so that it can be done in
-/// a single pass.
-fn get_vbmeta_patch_order(
+/// Load the specified vbmeta image headers. If an image has a vbmeta footer,
+/// then an error is returned because the vbmeta patching logic only ever writes
+/// root vbmeta images.
+fn load_vbmeta_images(
     images: &mut HashMap<String, Box<dyn ReadSeek + Send>>,
     vbmeta_images: &HashSet<String>,
-) -> Result<Vec<(String, Header, HashSet<String>)>> {
-    let mut dep_graph = HashMap::<&str, HashSet<String>>::new();
-    let mut headers = HashMap::<&str, Header>::new();
-    let mut missing = images.keys().cloned().collect::<BTreeSet<_>>();
+) -> Result<HashMap<String, Header>> {
+    let mut result = HashMap::new();
 
     for name in vbmeta_images {
         let reader = images.get_mut(name).unwrap();
@@ -253,9 +258,83 @@ fn get_vbmeta_patch_order(
             .with_context(|| format!("Failed to load vbmeta image: {name}"))?;
 
         if let Some(f) = footer {
-            warning!("{name} is a vbmeta partition, but has a footer: {f:?}");
+            bail!("{name} is a vbmeta partition, but has a footer: {f:?}");
         }
 
+        result.insert(name.clone(), header);
+    }
+
+    Ok(result)
+}
+
+/// Check if a partition is critical to AVB's chain of trust. This is not
+/// foolproof and uses a heuristic based on AOSP's boot process. OEM-specific
+/// partitions may be equally important, but it's infeasible to list them all.
+fn is_critical_to_avb(name: &str) -> bool {
+    name.ends_with("boot")
+        || name.starts_with("odm")
+        || name.starts_with("system")
+        || name.starts_with("vbmeta")
+        || name.starts_with("vendor")
+        || name == "dtbo"
+        || name == "product"
+        || name == "pvmfw"
+        || name == "recovery"
+}
+
+/// Check that all critical partitions within the payload are protected by a
+/// vbmeta image in `vbmeta_headers`.
+fn ensure_partitions_protected(
+    manifest: &DeltaArchiveManifest,
+    vbmeta_headers: &HashMap<String, Header>,
+) -> Result<()> {
+    let critical_partitions = manifest
+        .partitions
+        .iter()
+        .map(|p| &p.partition_name)
+        .filter(|n| is_critical_to_avb(n))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    // vbmeta partitions first.
+    let mut avb_partitions = vbmeta_headers.keys().cloned().collect::<BTreeSet<_>>();
+
+    // Then, everything referred to by the descriptors.
+    for header in vbmeta_headers.values() {
+        let partition_names = header
+            .descriptors
+            .iter()
+            .filter_map(|d| d.partition_name())
+            .map(|n| n.to_owned());
+
+        avb_partitions.extend(partition_names);
+    }
+
+    let missing = critical_partitions
+        .difference(&avb_partitions)
+        .collect::<Vec<_>>();
+
+    if !missing.is_empty() {
+        bail!(
+            "Found critical partitions that are not protected by AVB: {}",
+            joined(missing),
+        );
+    }
+
+    Ok(())
+}
+
+/// From the set of input images (modified partitions + all vbmeta partitions),
+/// determine the order to patch the vbmeta images so that it can be done in a
+/// single pass.
+fn get_vbmeta_patch_order(
+    images: &mut HashMap<String, Box<dyn ReadSeek + Send>>,
+    vbmeta_headers: &HashMap<String, Header>,
+) -> Result<Vec<(String, HashSet<String>)>> {
+    let mut dep_graph = HashMap::<&str, HashSet<String>>::new();
+    let mut missing = images.keys().cloned().collect::<BTreeSet<_>>();
+
+    for (name, header) in vbmeta_headers {
         dep_graph.insert(name, HashSet::new());
         missing.remove(name);
 
@@ -273,34 +352,31 @@ fn get_vbmeta_patch_order(
                 missing.remove(partition_name);
             }
         }
-
-        headers.insert(name, header);
     }
 
     if !missing.is_empty() {
         warning!("Partitions aren't protected by AVB: {:?}", joined(missing));
     }
 
-    // Prune vbmeta images we don't need.
-    loop {
-        let unneeded = dep_graph
-            .iter()
-            .find(|(_, d)| d.is_empty())
-            .map(|(&n, _)| n.to_owned());
-        match unneeded {
-            Some(name) => {
-                dep_graph.remove(name.as_str());
-                headers.remove(name.as_str());
+    // Ensure that there's only a single root of trust. Otherwise, there could
+    // be eg. a `vbmeta_unused` containing all the relevant descriptors, but is
+    // never loaded by the bootloader.
+    let mut roots = BTreeSet::new();
 
-                for deps in dep_graph.values_mut() {
-                    deps.remove(name.as_str());
-                }
-            }
-            None => break,
+    for name in vbmeta_headers.keys() {
+        if !dep_graph.values().any(|d| d.contains(name)) {
+            roots.insert(name.as_str());
         }
     }
 
-    // Compute the patching order. This only includes vbmeta images.
+    // For zero roots, let TopologicalSort report the cycle.
+    if roots.len() > 1 {
+        bail!("Found multiple root vbmeta images: {}", joined(roots));
+    }
+
+    // Compute the patching order. This only includes vbmeta images. All vbmeta
+    // images are included (even those that have no dependencies) so that
+    // update_vbmeta_headers() can check and update the flags field if needed.
     let mut topo = TopologicalSort::<String>::new();
     let mut order = vec![];
 
@@ -313,13 +389,9 @@ fn get_vbmeta_patch_order(
     while !topo.is_empty() {
         match topo.pop() {
             Some(item) => {
-                // Only include vbmeta images that we need to modify.
-                if headers.contains_key(item.as_str()) {
-                    order.push((
-                        item.clone(),
-                        headers.remove(item.as_str()).unwrap(),
-                        dep_graph.remove(item.as_str()).unwrap(),
-                    ));
+                // Only include vbmeta images.
+                if dep_graph.contains_key(item.as_str()) {
+                    order.push((item.clone(), dep_graph.remove(item.as_str()).unwrap()));
                 }
             }
             None => bail!("vbmeta dependency graph has cycle: {topo:?}"),
@@ -329,25 +401,42 @@ fn get_vbmeta_patch_order(
     Ok(order)
 }
 
-/// Update vbmeta descriptors based on the footers from the specified images and
-/// then re-sign the vbmeta images.
-fn update_vbmeta_descriptors(
+/// Update vbmeta headers.
+///
+/// * If [`Header::flags`] is non-zero, then an error is returned because the
+///   value renders AVB useless. If `clear_vbmeta_flags` is set to true, then
+///   the value is set to 0 instead.
+/// * [`Header::descriptors`] is updated for each dependency listed in `order`.
+/// * [`Header::algorithm_type`] is updated with an algorithm type that matches
+///   `key`. This is not a factor when determining if a header is changed.
+///
+/// If changes were made to a vbmeta header, then the image in `images` will be
+/// replaced with a new in-memory reader containing the new image. Otherwise,
+/// the image is removed from `images` entirely to avoid needing to repack it.
+fn update_vbmeta_headers(
     images: &mut HashMap<String, Box<dyn ReadSeek + Send>>,
-    order: &mut [(String, Header, HashSet<String>)],
+    headers: &mut HashMap<String, Header>,
+    order: &mut [(String, HashSet<String>)],
     clear_vbmeta_flags: bool,
     key: &RsaPrivateKey,
     block_size: u64,
 ) -> Result<()> {
-    for (name, parent_header, deps) in order {
+    let mut unchanged = HashSet::new();
+
+    for (name, deps) in order {
+        let parent_header = headers.get_mut(name).unwrap();
+        let orig_parent_header = parent_header.clone();
+
         if parent_header.flags != 0 {
             if clear_vbmeta_flags {
                 parent_header.flags = 0;
             } else {
-                bail!("{name} header flags disable AVB {:#x}", parent_header.flags);
+                bail!(
+                    "Verified boot is disabled by {name}'s header flags: {:#x}",
+                    parent_header.flags,
+                );
             }
         }
-
-        parent_header.set_algo_for_key(key)?;
 
         for dep in deps.iter() {
             // This can't fail since the descriptor must have existed for the
@@ -396,19 +485,32 @@ fn update_vbmeta_descriptors(
             }
         }
 
-        parent_header
-            .sign(key)
-            .with_context(|| format!("Failed to sign vbmeta header for image: {name}"))?;
+        // Only sign and rewrite the image if we need to. Some vbmeta images may
+        // have no dependencies and are only being processed to ensure that the
+        // flags are set to a sane value.
+        if parent_header != &orig_parent_header {
+            parent_header.set_algo_for_key(key)?;
+            parent_header
+                .sign(key)
+                .with_context(|| format!("Failed to sign vbmeta header for image: {name}"))?;
 
-        let mut writer = Cursor::new(Vec::new());
-        parent_header
-            .to_writer(&mut writer)
-            .with_context(|| format!("Failed to write vbmeta image: {name}"))?;
+            let mut writer = Cursor::new(Vec::new());
+            parent_header
+                .to_writer(&mut writer)
+                .with_context(|| format!("Failed to write vbmeta image: {name}"))?;
 
-        padding::write_zeros(&mut writer, block_size)
-            .with_context(|| format!("Failed to write vbmeta padding: {name}"))?;
+            padding::write_zeros(&mut writer, block_size)
+                .with_context(|| format!("Failed to write vbmeta padding: {name}"))?;
 
-        *images.get_mut(name).unwrap() = Box::new(writer);
+            *images.get_mut(name).unwrap() = Box::new(writer);
+        } else {
+            unchanged.insert(name.as_str());
+        }
+    }
+
+    // No need to package a replacement image if it's unchanged.
+    for name in unchanged {
+        images.remove(name);
     }
 
     Ok(())
@@ -515,11 +617,15 @@ fn patch_ota_payload(
         cancel_signal,
     )?;
 
-    let mut vbmeta_order = get_vbmeta_patch_order(&mut input_streams, &vbmeta_images)?;
+    let mut vbmeta_headers = load_vbmeta_images(&mut input_streams, &vbmeta_images)?;
+
+    ensure_partitions_protected(&header_locked.manifest, &vbmeta_headers)?;
+
+    let mut vbmeta_order = get_vbmeta_patch_order(&mut input_streams, &vbmeta_headers)?;
 
     status!(
         "Patching vbmeta images: {}",
-        joined(vbmeta_order.iter().map(|(n, _, _)| n)),
+        joined(vbmeta_order.iter().map(|(n, _)| n)),
     );
 
     // Get rid of input readers for vbmeta partitions we don't need to modify.
@@ -530,8 +636,9 @@ fn patch_ota_payload(
         }
     }
 
-    update_vbmeta_descriptors(
+    update_vbmeta_headers(
         &mut input_streams,
+        &mut vbmeta_headers,
         &mut vbmeta_order,
         clear_vbmeta_flags,
         key_avb,
