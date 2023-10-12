@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use crate::{
     format::verityrs,
-    stream::{self, FromReader, ReadSeek, ToWriter, WriteSeek, WriteZerosExt},
+    stream::{self, FromReader, ReadSeekReopen, ToWriter, WriteSeekReopen, WriteZerosExt},
     util::NumBytes,
 };
 
@@ -419,7 +419,7 @@ impl Fec {
     /// This function is multithreaded and uses rayon's global thread pool.
     pub fn generate(
         &self,
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<Vec<u8>> {
         let fec_size = self.fec_size();
@@ -430,7 +430,7 @@ impl Fec {
             .map(|(round, buf)| -> Result<()> {
                 stream::check_cancel(cancel_signal)?;
 
-                let reader = open_input()?;
+                let reader = input.reopen_boxed()?;
                 self.generate_one_round(reader, round as u64, buf)
             })
             .collect::<Result<()>>()?;
@@ -445,7 +445,7 @@ impl Fec {
     /// This function is multithreaded and uses rayon's global thread pool.
     pub fn verify(
         &self,
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
         fec: &[u8],
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
@@ -463,7 +463,7 @@ impl Fec {
             .map(|(round, buf)| -> Result<()> {
                 stream::check_cancel(cancel_signal)?;
 
-                let reader = open_input()?;
+                let reader = input.reopen_boxed()?;
                 self.verify_one_round(reader, round as u64, buf)
             })
             .collect::<Result<()>>()?;
@@ -484,8 +484,8 @@ impl Fec {
     /// This function is multithreaded and uses rayon's global thread pool.
     pub fn repair(
         &self,
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
-        open_output: impl Fn() -> io::Result<Box<dyn WriteSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
+        output: &(dyn WriteSeekReopen + Sync),
         fec: &[u8],
         cancel_signal: &AtomicBool,
     ) -> Result<u64> {
@@ -504,8 +504,8 @@ impl Fec {
             .map(|(round, buf)| -> Result<u64> {
                 stream::check_cancel(cancel_signal)?;
 
-                let reader = open_input()?;
-                let writer = open_output()?;
+                let reader = input.reopen_boxed()?;
+                let writer = output.reopen_boxed()?;
                 self.repair_one_round(reader, writer, round as u64, buf)
             })
             .collect::<Result<Vec<u64>>>()?
@@ -542,16 +542,16 @@ impl FecImage {
     /// Generate FEC data for a file. `parity` is the number of parity bytes per
     /// 255-byte Reed-Solomon codeword.
     pub fn generate(
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
         parity: u8,
         cancel_signal: &AtomicBool,
     ) -> Result<Self> {
         let data_size = {
-            let mut file = open_input()?;
+            let mut file = input.reopen_boxed()?;
             file.seek(SeekFrom::End(0))?
         };
         let fec = Fec::new(data_size, FEC_BLOCK_SIZE as u32, parity)?;
-        let fec_data = fec.generate(open_input, cancel_signal)?;
+        let fec_data = fec.generate(input, cancel_signal)?;
 
         Ok(Self {
             fec: fec_data,
@@ -564,11 +564,11 @@ impl FecImage {
     /// [`Self::repair()`] if performing a repair is not necessary.
     pub fn verify(
         &self,
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         let fec = Fec::new(self.data_size, FEC_BLOCK_SIZE as u32, self.parity)?;
-        fec.verify(open_input, &self.fec, cancel_signal)
+        fec.verify(input, &self.fec, cancel_signal)
     }
 
     /// Repair a file using this instance's FEC data. The maximum correctable
@@ -588,12 +588,12 @@ impl FecImage {
     /// that multiple threads will always read and write disjoint file offsets.
     pub fn repair(
         &self,
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
-        open_output: impl Fn() -> io::Result<Box<dyn WriteSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
+        output: &(dyn WriteSeekReopen + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<u64> {
         let fec = Fec::new(self.data_size, FEC_BLOCK_SIZE as u32, self.parity)?;
-        fec.repair(open_input, open_output, &self.fec, cancel_signal)
+        fec.repair(input, output, &self.fec, cancel_signal)
     }
 
     /// Build one instance of the FEC header. The caller is responsible for
@@ -764,18 +764,15 @@ mod tests {
         let num_codewords = fec.rounds as usize * block_size as usize;
 
         // Generate FEC data.
-        let fec_data = fec
-            .generate(|| Ok(Box::new(file.reopen())), &cancel_signal)
-            .unwrap();
+        let fec_data = fec.generate(&file, &cancel_signal).unwrap();
 
         // Verify that there are no errors.
-        fec.verify(|| Ok(Box::new(file.reopen())), &fec_data, &cancel_signal)
-            .unwrap();
+        fec.verify(&file, &fec_data, &cancel_signal).unwrap();
 
         // Verify that errors are detected.
         corrupt_byte(&mut file, 0);
         assert_matches!(
-            fec.verify(|| Ok(Box::new(file.reopen())), &fec_data, &cancel_signal,),
+            fec.verify(&file, &fec_data, &cancel_signal),
             Err(Error::HasErrors)
         );
 
@@ -785,13 +782,7 @@ mod tests {
         }
 
         // Verify that all the single-byte errors can be fixed.
-        fec.repair(
-            || Ok(Box::new(file.reopen())),
-            || Ok(Box::new(file.reopen())),
-            &fec_data,
-            &cancel_signal,
-        )
-        .unwrap();
+        fec.repair(&file, &file, &fec_data, &cancel_signal).unwrap();
 
         let repaired_digest = {
             let mut buf = Vec::new();
@@ -826,7 +817,7 @@ mod tests {
             file.write_all(&buf).unwrap();
         }
 
-        let image = FecImage::generate(|| Ok(Box::new(file.reopen())), 2, &cancel_signal).unwrap();
+        let image = FecImage::generate(&file, 2, &cancel_signal).unwrap();
 
         let mut fec_file = Cursor::new(Vec::new());
         image.to_writer(&mut fec_file).unwrap();

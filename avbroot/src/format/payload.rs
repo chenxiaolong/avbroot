@@ -34,8 +34,8 @@ use crate::{
         InstallOperation, PartitionInfo, PartitionUpdate, Signatures,
     },
     stream::{
-        self, CountingReader, CountingWriter, FromReader, HashingWriter, ReadDiscardExt, ReadSeek,
-        SharedCursor, WriteSeek,
+        self, CountingReader, CountingWriter, FromReader, HashingWriter, ReadDiscardExt,
+        ReadSeekReopen, Reopen, SharedCursor, WriteSeek,
     },
 };
 
@@ -871,7 +871,7 @@ pub fn apply_operation(
 /// multithreaded and uses rayon's global thread pool. `open_payload` will be
 /// called from multiple threads.
 pub fn extract_image_to_memory(
-    open_payload: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+    payload: &(dyn ReadSeekReopen + Sync),
     header: &PayloadHeader,
     partition_name: &str,
     cancel_signal: &AtomicBool,
@@ -888,8 +888,8 @@ pub fn extract_image_to_memory(
         .operations
         .par_iter()
         .map(|op| -> Result<()> {
-            let reader = open_payload()?;
-            let writer = stream.reopen();
+            let reader = payload.reopen_boxed()?;
+            let writer = stream.reopen()?;
 
             apply_operation(
                 reader,
@@ -911,7 +911,7 @@ pub fn extract_image_to_memory(
 /// is done multithreaded and uses rayon's global thread pool. `open_payload`
 /// and `open_output` will be called from multiple threads.
 pub fn extract_images<'a>(
-    open_payload: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+    payload: &(dyn ReadSeekReopen + Sync),
     open_output: impl Fn(&str) -> io::Result<Box<dyn WriteSeek>> + Sync,
     header: &PayloadHeader,
     partition_names: impl IntoIterator<Item = &'a str>,
@@ -938,7 +938,7 @@ pub fn extract_images<'a>(
     operations
         .into_par_iter()
         .map(|(name, op)| -> Result<()> {
-            let reader = open_payload()?;
+            let reader = payload.reopen_boxed()?;
             let writer = open_output(name)?;
 
             apply_operation(

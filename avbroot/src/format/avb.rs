@@ -28,8 +28,8 @@ use crate::{
         padding,
     },
     stream::{
-        self, CountingReader, FromReader, ReadDiscardExt, ReadSeek, ReadStringExt, ToWriter,
-        WriteSeek, WriteStringExt, WriteZerosExt,
+        self, CountingReader, FromReader, ReadDiscardExt, ReadSeekReopen, ReadStringExt, ToWriter,
+        WriteSeekReopen, WriteStringExt, WriteZerosExt,
     },
     util,
 };
@@ -427,7 +427,7 @@ impl HashTreeDescriptor {
     ///
     /// NOTE: The result is **not** padded to the block size.
     fn hash_one_level_parallel(
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
         image_size: u64,
         block_size: u32,
         algorithm: &'static Algorithm,
@@ -449,7 +449,7 @@ impl HashTreeDescriptor {
                 let start = c * chunk_size;
                 let size = chunk_size.min(image_size - start);
 
-                let mut reader = open_input()?;
+                let mut reader = input.reopen_boxed()?;
                 reader.seek(SeekFrom::Start(start))?;
 
                 Self::hash_one_level(reader, size, block_size, algorithm, salt, cancel_signal)
@@ -461,7 +461,7 @@ impl HashTreeDescriptor {
 
     /// Calculate the hash tree for the given input in parallel.
     fn calculate_hash_tree(
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
         image_size: u64,
         block_size: u32,
         algorithm: &'static Algorithm,
@@ -470,7 +470,7 @@ impl HashTreeDescriptor {
     ) -> io::Result<(Vec<u8>, Vec<u8>)> {
         // Small files are hashed directly, exactly like a hash descriptor.
         if image_size <= u64::from(block_size) {
-            let mut reader = open_input()?;
+            let mut reader = input.reopen_boxed()?;
             let mut buf = vec![0u8; block_size as usize];
             reader.read_exact(&mut buf)?;
 
@@ -500,7 +500,7 @@ impl HashTreeDescriptor {
             } else {
                 // Initially read from file.
                 Self::hash_one_level_parallel(
-                    &open_input,
+                    input,
                     level_size,
                     block_size,
                     algorithm,
@@ -590,13 +590,13 @@ impl HashTreeDescriptor {
     /// original state by truncating it to [`Self::image_size`].
     pub fn update(
         &mut self,
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
-        open_output: impl Fn() -> io::Result<Box<dyn WriteSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
+        output: &(dyn WriteSeekReopen + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         let algorithm = ring_algorithm(&self.hash_algorithm)?;
         let (root_digest, hash_tree) = Self::calculate_hash_tree(
-            &open_input,
+            input,
             self.image_size,
             self.data_block_size,
             algorithm,
@@ -610,7 +610,7 @@ impl HashTreeDescriptor {
 
         let tree_size = hash_tree.len() as u64;
 
-        let mut writer = open_output()?;
+        let mut writer = output.reopen_boxed()?;
         writer.seek(SeekFrom::Start(self.image_size))?;
         writer
             .write_all(&hash_tree)
@@ -633,7 +633,7 @@ impl HashTreeDescriptor {
             // The FEC covers the hash tree as well.
             let fec = Fec::new(self.image_size + tree_size, self.data_block_size, parity)?;
 
-            let fec_data = fec.generate(open_input, cancel_signal)?;
+            let fec_data = fec.generate(input, cancel_signal)?;
             let fec_size = fec_data
                 .len()
                 .to_u64()
@@ -660,7 +660,7 @@ impl HashTreeDescriptor {
     /// handles to the same file.
     pub fn verify(
         &self,
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         self.check_offsets()?;
@@ -672,7 +672,7 @@ impl HashTreeDescriptor {
         }
 
         let (actual_root_digest, actual_hash_tree) = Self::calculate_hash_tree(
-            &open_input,
+            input,
             self.image_size,
             self.data_block_size,
             algorithm,
@@ -687,7 +687,7 @@ impl HashTreeDescriptor {
             });
         }
 
-        let mut reader = open_input()?;
+        let mut reader = input.reopen_boxed()?;
         reader.seek(SeekFrom::Start(self.tree_offset))?;
 
         let mut hash_tree = vec![0u8; self.tree_size as usize];
@@ -716,7 +716,7 @@ impl HashTreeDescriptor {
                 .read_exact(&mut fec_data)
                 .map_err(|e| Error::ReadFieldError("fec_data", e))?;
 
-            fec.verify(open_input, &fec_data, cancel_signal)?;
+            fec.verify(input, &fec_data, cancel_signal)?;
         }
 
         Ok(())
@@ -732,8 +732,8 @@ impl HashTreeDescriptor {
     /// actually valid.
     pub fn repair(
         &self,
-        open_input: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
-        open_output: impl Fn() -> io::Result<Box<dyn WriteSeek>> + Sync,
+        input: &(dyn ReadSeekReopen + Sync),
+        output: &(dyn WriteSeekReopen + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         self.check_offsets()?;
@@ -743,7 +743,7 @@ impl HashTreeDescriptor {
             return Err(Error::FecMissing);
         }
 
-        let mut reader = open_input()?;
+        let mut reader = input.reopen_boxed()?;
         reader.seek(SeekFrom::Start(self.fec_offset))?;
 
         let (fec, fec_size) = self.get_fec()?;
@@ -754,7 +754,7 @@ impl HashTreeDescriptor {
             .read_exact(&mut fec_data)
             .map_err(|e| Error::ReadFieldError("fec_data", e))?;
 
-        fec.repair(open_input, open_output, &fec_data, cancel_signal)?;
+        fec.repair(input, output, &fec_data, cancel_signal)?;
 
         Ok(())
     }

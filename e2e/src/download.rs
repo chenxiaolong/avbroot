@@ -18,7 +18,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use avbroot::stream::PSeekFile;
+use avbroot::stream::{PSeekFile, Reopen};
 use serde::{Deserialize, Serialize};
 
 /// Minimum download chunk size per task.
@@ -309,7 +309,8 @@ fn download_ranges(
                 }
 
                 if let Some(thread_range) = remaining.pop_front() {
-                    let file_cloned = file.reopen();
+                    // PSeekFile's reopen can't fail.
+                    let file_cloned = file.reopen().unwrap();
                     let thread_range_cloned = thread_range.clone();
                     let tx_cloned = tx.clone();
 
