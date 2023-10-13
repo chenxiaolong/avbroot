@@ -120,8 +120,9 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-fn ring_algorithm(name: &str) -> Result<&'static Algorithm> {
+fn ring_algorithm(name: &str, for_verify: bool) -> Result<&'static Algorithm> {
     match name {
+        "sha1" if for_verify => Ok(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY),
         "sha256" => Ok(&ring::digest::SHA256),
         "sha512" => Ok(&ring::digest::SHA512),
         a => Err(Error::UnsupportedHashAlgorithm(a.to_owned())),
@@ -594,7 +595,7 @@ impl HashTreeDescriptor {
         output: &(dyn WriteSeekReopen + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
-        let algorithm = ring_algorithm(&self.hash_algorithm)?;
+        let algorithm = ring_algorithm(&self.hash_algorithm, false)?;
         let (root_digest, hash_tree) = Self::calculate_hash_tree(
             input,
             self.image_size,
@@ -665,7 +666,7 @@ impl HashTreeDescriptor {
     ) -> Result<()> {
         self.check_offsets()?;
 
-        let algorithm = ring_algorithm(&self.hash_algorithm)?;
+        let algorithm = ring_algorithm(&self.hash_algorithm, true)?;
 
         if self.tree_size > HASH_TREE_MAX_SIZE {
             return Err(Error::FieldOutOfBounds("tree_size"));
@@ -911,9 +912,10 @@ impl HashDescriptor {
     fn calculate(
         &self,
         reader: impl Read,
+        for_verify: bool,
         cancel_signal: &AtomicBool,
     ) -> Result<ring::digest::Digest> {
-        let algorithm = ring_algorithm(&self.hash_algorithm)?;
+        let algorithm = ring_algorithm(&self.hash_algorithm, for_verify)?;
         let mut context = Context::new(algorithm);
         context.update(&self.salt);
 
@@ -930,14 +932,14 @@ impl HashDescriptor {
 
     /// Update the root hash from the input reader's contents.
     pub fn update(&mut self, reader: impl Read, cancel_signal: &AtomicBool) -> Result<()> {
-        let digest = self.calculate(reader, cancel_signal)?;
+        let digest = self.calculate(reader, false, cancel_signal)?;
         self.root_digest = digest.as_ref().to_vec();
         Ok(())
     }
 
     /// Verify the root hash against the input reader.
     pub fn verify(&self, reader: impl Read, cancel_signal: &AtomicBool) -> Result<()> {
-        let digest = self.calculate(reader, cancel_signal)?;
+        let digest = self.calculate(reader, true, cancel_signal)?;
 
         if self.root_digest != digest.as_ref() {
             return Err(Error::InvalidRootDigest {
