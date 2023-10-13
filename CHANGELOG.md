@@ -17,6 +17,7 @@
 Behind-the-scenes changes:
 
 * Bump maximum payload manifest size to 4 MiB ([PR #182])
+* Reword file handle reopen functionality to use traits instead of callbacks ([PR #189])
 
 ### Version 2.2.0
 
@@ -132,3 +133,4 @@ Behind-the-scenes changes:
 [PR #183]: https://github.com/chenxiaolong/avbroot/pull/183
 [PR #184]: https://github.com/chenxiaolong/avbroot/pull/184
 [PR #188]: https://github.com/chenxiaolong/avbroot/pull/188
+[PR #189]: https://github.com/chenxiaolong/avbroot/pull/189
