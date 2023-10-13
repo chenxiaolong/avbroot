@@ -764,8 +764,6 @@ pub fn patch_boot(
         patcher.patch(&mut boot_image, cancel_signal)?;
     }
 
-    header.set_algo_for_key(key)?;
-
     let mut descriptor_iter = header.descriptors.iter_mut().filter_map(|d| {
         if let Descriptor::Hash(h) = d {
             Some(h)
@@ -794,6 +792,7 @@ pub fn patch_boot(
     }
 
     if !header.public_key.is_empty() {
+        header.set_algo_for_key(key)?;
         header.sign(key)?;
     }
 
