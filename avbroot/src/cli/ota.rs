@@ -9,7 +9,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt::Display,
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
+    io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Mutex},
     time::Instant,
@@ -43,8 +43,8 @@ use crate::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
     },
     stream::{
-        self, CountingWriter, FromReader, HolePunchingWriter, PSeekFile, ReadSeek, SectionReader,
-        ToWriter,
+        self, CountingWriter, FromReader, HolePunchingWriter, PSeekFile, ReadSeek, ReadSeekReopen,
+        Reopen, SectionReader, ToWriter,
     },
     util,
 };
@@ -149,7 +149,7 @@ pub fn get_required_images(
 /// in `external_images`, the real file on the filesystem is opened. Otherwise,
 /// the image is extracted from the payload.
 fn open_input_streams(
-    open_payload: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+    payload: &(dyn ReadSeekReopen + Sync),
     required_images: &HashMap<String, String>,
     external_images: &HashMap<String, PathBuf>,
     header: &PayloadHeader,
@@ -174,9 +174,8 @@ fn open_input_streams(
         } else {
             status!("Extracting from original payload: {name}");
 
-            let stream =
-                payload::extract_image_to_memory(&open_payload, header, name, cancel_signal)
-                    .with_context(|| format!("Failed to extract from original payload: {name}"))?;
+            let stream = payload::extract_image_to_memory(payload, header, name, cancel_signal)
+                .with_context(|| format!("Failed to extract from original payload: {name}"))?;
             input_streams.insert(name.clone(), Box::new(stream));
         }
     }
@@ -547,7 +546,7 @@ fn compress_image(
 
 #[allow(clippy::too_many_arguments)]
 fn patch_ota_payload(
-    open_payload: impl Fn() -> io::Result<Box<dyn ReadSeek>> + Sync,
+    payload: &(dyn ReadSeekReopen + Sync),
     writer: impl Write,
     external_images: &HashMap<String, PathBuf>,
     boot_partition: &str,
@@ -558,8 +557,8 @@ fn patch_ota_payload(
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
-    let header =
-        PayloadHeader::from_reader(open_payload()?).context("Failed to load OTA payload header")?;
+    let header = PayloadHeader::from_reader(payload.reopen_boxed()?)
+        .context("Failed to load OTA payload header")?;
     if !header.is_full_ota() {
         bail!("Payload is a delta OTA, not a full OTA");
     }
@@ -601,7 +600,7 @@ fn patch_ota_payload(
     // from the old payload). The values will be replaced later if the images
     // need to be patched (eg. boot or vbmeta image).
     let mut input_streams = open_input_streams(
-        &open_payload,
+        payload,
         &required_images,
         external_images,
         &header_locked,
@@ -666,7 +665,7 @@ fn patch_ota_payload(
     let header_locked = header.lock().unwrap();
     let mut payload_writer = PayloadWriter::new(writer, header_locked.clone(), key_ota.clone())
         .context("Failed to write payload header")?;
-    let mut orig_payload_reader = open_payload().context("Failed to open payload")?;
+    let mut orig_payload_reader = payload.reopen_boxed().context("Failed to open payload")?;
 
     while payload_writer
         .begin_next_operation()
@@ -820,19 +819,16 @@ fn patch_ota_zip(
                     bail!("{path} is not stored uncompressed");
                 }
 
-                let payload_offset = reader.data_start();
-                let payload_size = reader.size();
+                // The zip library doesn't provide us with a seekable reader, so
+                // we make our own from the underlying file.
+                let payload_reader = SectionReader::new(
+                    BufReader::new(raw_reader.reopen()?),
+                    reader.data_start(),
+                    reader.size(),
+                )?;
 
                 let (p, m) = patch_ota_payload(
-                    || {
-                        // The zip library doesn't provide us with a seekable
-                        // reader, so we make our own from the underlying file.
-                        Ok(Box::new(SectionReader::new(
-                            BufReader::new(raw_reader.reopen()),
-                            payload_offset,
-                            payload_size,
-                        )?))
-                    },
+                    &payload_reader,
                     &mut writer,
                     external_images,
                     boot_partition,
@@ -923,18 +919,18 @@ fn extract_ota_zip(
         })
         .collect::<Result<HashMap<_, _>>>()?;
 
+    let payload_reader = SectionReader::new(
+        BufReader::new(raw_reader.reopen()?),
+        payload_offset,
+        payload_size,
+    )?;
+
     // Extract the images. Each time we're asked to open a new file, we just
     // clone the relevant PSeekFile. We only ever have one actual kernel file
     // descriptor for each file.
     payload::extract_images(
-        || {
-            Ok(Box::new(SectionReader::new(
-                BufReader::new(raw_reader.reopen()),
-                payload_offset,
-                payload_size,
-            )?))
-        },
-        |name| Ok(Box::new(BufWriter::new(output_files[name].reopen()))),
+        &payload_reader,
+        |name| Ok(Box::new(BufWriter::new(output_files[name].reopen()?))),
         header,
         images.iter().map(|n| n.as_str()),
         cancel_signal,
@@ -1020,7 +1016,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
-    let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.reopen()))
+    let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.reopen()?))
         .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
 
     // Open the output file for reading too, so we can verify offsets later.
@@ -1109,7 +1105,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
-    let mut zip = ZipArchive::new(BufReader::new(raw_reader.reopen()))
+    let mut zip = ZipArchive::new(BufReader::new(raw_reader.reopen()?))
         .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
     let payload_entry = zip
         .by_name(ota::PATH_PAYLOAD)
@@ -1119,7 +1115,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
 
     // Open the payload data directly.
     let mut payload_reader = SectionReader::new(
-        BufReader::new(raw_reader.reopen()),
+        BufReader::new(raw_reader.reopen()?),
         payload_offset,
         payload_size,
     )

@@ -138,10 +138,7 @@ fn round_trip_appended_hash_tree_image() {
 
     // Verify the hash tree and FEC data.
     match header.appended_descriptor().unwrap() {
-        AppendedDescriptorRef::HashTree(d) => {
-            d.verify(|| Ok(Box::new(reader.reopen())), &cancel_signal)
-                .unwrap();
-        }
+        AppendedDescriptorRef::HashTree(d) => d.verify(&reader, &cancel_signal).unwrap(),
         AppendedDescriptorRef::Hash(_) => panic!("Expected hash tree descriptor"),
     }
 
@@ -166,12 +163,7 @@ fn round_trip_appended_hash_tree_image() {
             d.fec_offset = 0;
             d.fec_size = 0;
 
-            d.update(
-                || Ok(Box::new(writer.reopen())),
-                || Ok(Box::new(writer.reopen())),
-                &cancel_signal,
-            )
-            .unwrap();
+            d.update(&writer, &writer, &cancel_signal).unwrap();
         }
         AppendedDescriptorMut::Hash(_) => panic!("Expected hash tree descriptor"),
     }

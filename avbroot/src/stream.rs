@@ -5,7 +5,7 @@
 
 use std::{
     fs::File,
-    io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, RwLock,
@@ -29,6 +29,28 @@ impl<R: Read + Seek> ReadSeek for R {}
 pub trait WriteSeek: Write + Seek {}
 
 impl<W: Write + Seek> WriteSeek for W {}
+
+/// A trait for seekable and reopenable readers.
+pub trait ReadSeekReopen: ReadSeek {
+    fn reopen_boxed(&self) -> io::Result<Box<dyn ReadSeek>>;
+}
+
+impl<R: ReadSeek + Reopen + 'static> ReadSeekReopen for R {
+    fn reopen_boxed(&self) -> io::Result<Box<dyn ReadSeek>> {
+        Ok(Box::new(self.reopen()?))
+    }
+}
+
+/// A trait for seekable and reopenable writers.
+pub trait WriteSeekReopen: WriteSeek {
+    fn reopen_boxed(&self) -> io::Result<Box<dyn WriteSeek>>;
+}
+
+impl<W: WriteSeek + Reopen + 'static> WriteSeekReopen for W {
+    fn reopen_boxed(&self) -> io::Result<Box<dyn WriteSeek>> {
+        Ok(Box::new(self.reopen()?))
+    }
+}
 
 /// Common function for reading a structure from a reader.
 pub trait FromReader<R: Read>: Sized {
@@ -165,6 +187,25 @@ impl<W: Write> WriteStringExt for W {
         self.write_zeros_exact(num_zeros)?;
 
         Ok(())
+    }
+}
+
+/// Extensions for file-like types to reopen themselves.
+pub trait Reopen: Sized {
+    /// Open a new handle to the same file. The new handle is independently
+    /// seekable and the file offset is initially set to 0.
+    fn reopen(&self) -> io::Result<Self>;
+}
+
+impl<R: Read + Reopen> Reopen for BufReader<R> {
+    fn reopen(&self) -> io::Result<Self> {
+        Ok(BufReader::new(self.get_ref().reopen()?))
+    }
+}
+
+impl<W: Write + Reopen> Reopen for BufWriter<W> {
+    fn reopen(&self) -> io::Result<Self> {
+        Ok(BufWriter::new(self.get_ref().reopen()?))
     }
 }
 
@@ -325,6 +366,14 @@ impl<R: Read + Seek> SectionReader<R> {
     }
 }
 
+impl<R: Read + Seek + Reopen> Reopen for SectionReader<R> {
+    fn reopen(&self) -> io::Result<Self> {
+        let inner = self.inner.reopen()?;
+
+        Self::new(inner, self.start, self.size)
+    }
+}
+
 impl<R: Read + Seek> Read for SectionReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let to_read = self.size.saturating_sub(self.pos).min(buf.len() as u64) as usize;
@@ -417,13 +466,6 @@ impl PSeekFile {
         }
     }
 
-    pub fn reopen(&self) -> Self {
-        Self {
-            file: self.file.clone(),
-            offset: 0,
-        }
-    }
-
     pub fn set_len(&self, size: u64) -> io::Result<()> {
         let file_locked = self.file.read().unwrap();
         file_locked.set_len(size)
@@ -455,6 +497,15 @@ impl PSeekFile {
     fn write_at(&self, buf: &[u8]) -> io::Result<usize> {
         use std::os::unix::fs::FileExt;
         self.file.read().unwrap().write_at(buf, self.offset)
+    }
+}
+
+impl Reopen for PSeekFile {
+    fn reopen(&self) -> io::Result<Self> {
+        Ok(Self {
+            file: self.file.clone(),
+            offset: 0,
+        })
     }
 }
 
@@ -530,12 +581,14 @@ impl SharedCursor {
             ..Default::default()
         }
     }
+}
 
-    pub fn reopen(&self) -> Self {
-        Self {
+impl Reopen for SharedCursor {
+    fn reopen(&self) -> io::Result<Self> {
+        Ok(Self {
             inner: self.inner.clone(),
             offset: 0,
-        }
+        })
     }
 }
 
@@ -668,8 +721,8 @@ mod tests {
 
     use super::{
         CountingReader, CountingWriter, HashingReader, HashingWriter, HolePunchingWriter,
-        PSeekFile, ReadDiscardExt, ReadStringExt, SectionReader, SharedCursor, WriteStringExt,
-        WriteZerosExt,
+        PSeekFile, ReadDiscardExt, ReadStringExt, Reopen, SectionReader, SharedCursor,
+        WriteStringExt, WriteZerosExt,
     };
 
     const FOOBAR_SHA256: [u8; 32] = [
@@ -848,8 +901,8 @@ mod tests {
     fn pseek_file() {
         let raw_file = tempfile::tempfile().unwrap();
         let mut a = PSeekFile::new(raw_file);
-        let mut b = a.reopen();
-        let mut c = b.reopen();
+        let mut b = a.reopen().unwrap();
+        let mut c = b.reopen().unwrap();
 
         b.write_all(b"foobar").unwrap();
         c.write_all(b"hello").unwrap();
@@ -868,8 +921,8 @@ mod tests {
     #[test]
     fn shared_cursor() {
         let mut a = SharedCursor::default();
-        let mut b = a.reopen();
-        let mut c = b.reopen();
+        let mut b = a.reopen().unwrap();
+        let mut c = b.reopen().unwrap();
 
         b.write_all(b"foobar").unwrap();
         c.write_all(b"hello").unwrap();

@@ -27,7 +27,7 @@ use avbroot::{
     cli::ota::{ExtractCli, PatchCli, VerifyCli},
     format::{ota, payload::PayloadHeader},
     protobuf::chromeos_update_engine::install_operation::Type,
-    stream::{self, FromReader, HashingReader, PSeekFile, SectionReader},
+    stream::{self, FromReader, HashingReader, PSeekFile, Reopen, SectionReader},
 };
 use clap::Parser;
 use tempfile::TempDir;
@@ -98,7 +98,7 @@ fn strip_image(
     let mut raw_reader = File::open(input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {input:?}"))?;
-    let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.reopen()))
+    let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.reopen()?))
         .with_context(|| format!("Failed to read zip: {input:?}"))?;
     let payload_entry = zip_reader
         .by_name(ota::PATH_PAYLOAD)
@@ -108,7 +108,7 @@ fn strip_image(
 
     // Open the payload data directly.
     let mut payload_reader = SectionReader::new(
-        BufReader::new(raw_reader.reopen()),
+        BufReader::new(raw_reader.reopen()?),
         payload_offset,
         payload_size,
     )?;

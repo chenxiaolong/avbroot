@@ -23,7 +23,7 @@ mod fuzz {
                         input.write_zeros_exact(fec.data_size).unwrap();
                     }
 
-                    let _ = fec.verify(|| Ok(Box::new(input.reopen())), &cancel_signal);
+                    let _ = fec.verify(&input, &cancel_signal);
                 }
             });
         }

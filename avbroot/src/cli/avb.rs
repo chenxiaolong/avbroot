@@ -30,7 +30,7 @@ use crate::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
         Header,
     },
-    stream::{self, PSeekFile},
+    stream::{self, PSeekFile, Reopen},
     util,
 };
 
@@ -145,7 +145,7 @@ fn write_raw_and_verify(
 
     let raw_file = write_raw(path, reader, copy_size, cancel_signal)?;
 
-    let result = verify_and_repair(None, raw_file.reopen(), descriptor, true, cancel_signal);
+    let result = verify_and_repair(None, raw_file.reopen()?, descriptor, true, cancel_signal);
 
     // Chop off the old hash tree and FEC data.
     raw_file.set_len(f.original_image_size)?;
@@ -180,12 +180,8 @@ fn write_raw_and_update(
     match info.header.appended_descriptor_mut()? {
         AppendedDescriptorMut::HashTree(d) => {
             d.image_size = image_size;
-            d.update(
-                || Ok(Box::new(raw_file.reopen())),
-                || Ok(Box::new(raw_file.reopen())),
-                cancel_signal,
-            )
-            .context("Failed to update hash tree descriptor")?;
+            d.update(&raw_file, &raw_file, cancel_signal)
+                .context("Failed to update hash tree descriptor")?;
         }
         AppendedDescriptorMut::Hash(d) => {
             d.image_size = image_size;
@@ -384,7 +380,7 @@ fn verify_and_repair(
         AppendedDescriptorRef::HashTree(d) => {
             status!("Verifying hash tree descriptor{suffix}");
 
-            match d.verify(|| Ok(Box::new(file.reopen())), cancel_signal) {
+            match d.verify(&file, cancel_signal) {
                 Err(
                     e @ avb::Error::InvalidRootDigest { .. }
                     | e @ avb::Error::InvalidHashTree { .. },
@@ -392,17 +388,12 @@ fn verify_and_repair(
                     warning!("Failed to verify hash tree descriptor{suffix}: {e}");
                     warning!("Attempting to repair using FEC data{suffix}");
 
-                    d.repair(
-                        || Ok(Box::new(file.reopen())),
-                        || Ok(Box::new(file.reopen())),
-                        cancel_signal,
-                    )
-                    .with_context(|| format!("Failed to repair data{suffix}"))?;
+                    d.repair(&file, &file, cancel_signal)
+                        .with_context(|| format!("Failed to repair data{suffix}"))?;
 
-                    d.verify(|| Ok(Box::new(file.reopen())), cancel_signal)
-                        .map(|_| {
-                            status!("Successfully repaired data{suffix}");
-                        })
+                    d.verify(&file, cancel_signal).map(|_| {
+                        status!("Successfully repaired data{suffix}");
+                    })
                 }
                 ret => ret,
             }
@@ -518,11 +509,7 @@ fn repack_subcommand(cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> 
         // Write new hash tree and FEC data instead of copying the original.
         // THere could have been errors in the original FEC data itself.
         if let AppendedDescriptorMut::HashTree(d) = info.header.appended_descriptor_mut()? {
-            d.update(
-                || Ok(Box::new(file.reopen())),
-                || Ok(Box::new(file.reopen())),
-                cancel_signal,
-            )?;
+            d.update(&file, &file, cancel_signal)?;
         }
 
         file
