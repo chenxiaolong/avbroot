@@ -19,6 +19,7 @@ Behind-the-scenes changes:
 
 * Bump maximum payload manifest size to 4 MiB ([PR #182])
 * Reword file handle reopen functionality to use traits instead of callbacks ([PR #189])
+* Don't set signature algorithm field for indirectly signed boot images ([PR #191])
 
 ### Version 2.2.0
 
@@ -136,3 +137,4 @@ Behind-the-scenes changes:
 [PR #188]: https://github.com/chenxiaolong/avbroot/pull/188
 [PR #189]: https://github.com/chenxiaolong/avbroot/pull/189
 [PR #190]: https://github.com/chenxiaolong/avbroot/pull/190
+[PR #191]: https://github.com/chenxiaolong/avbroot/pull/191
