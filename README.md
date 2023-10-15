@@ -79,8 +79,8 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
     ```bash
     avbroot ota patch \
         --input /path/to/ota.zip \
-        --privkey-avb /path/to/avb.key \
-        --privkey-ota /path/to/ota.key \
+        --key-avb /path/to/avb.key \
+        --key-ota /path/to/ota.key \
         --cert-ota /path/to/ota.crt \
         --magisk /path/to/magisk.apk
     ```
