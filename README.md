@@ -139,6 +139,20 @@ To update Android or Magisk:
 
 4. Reboot.
 
+## Reverting to stock firmware
+
+To stop using avbroot and revert to the stock firmware:
+
+1. Unlock the bootloader. This will trigger a data wipe.
+
+2. Erase the custom AVB public key.
+
+    ```bash
+    fastboot erase avb_custom_key
+    ```
+
+3. Flash the stock firmware.
+
 ## avbroot Magisk modules
 
 avbroot's Magisk modules can be found on the [releases page](https://github.com/chenxiaolong/avbroot/releases) or they can be built locally by running:
