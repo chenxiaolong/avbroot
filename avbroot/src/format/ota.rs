@@ -44,6 +44,8 @@ const ZIP_EOCD_MAGIC: &[u8; 4] = b"PK\x05\x06";
 
 const COMMENT_MESSAGE: &[u8] = b"signed by avbroot\0";
 
+const LEGACY_SEP: &str = "|";
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Cannot find OTA signature footer magic")]
@@ -64,6 +66,10 @@ pub enum Error {
     UnsupportedDigestAlgorithm(ObjectIdentifier),
     #[error("Unsupported signature algorithm: {0}")]
     UnsupportedSignatureAlgorithm(ObjectIdentifier),
+    #[error("Invalid legacy metadata line: {0:?}")]
+    InvalidLegacyMetadataLine(String),
+    #[error("Unsupported legacy metadata field: {key:?} = {value:?}")]
+    UnsupportedLegacyMetadataField { key: String, value: String },
     #[error("Expected entry offsets {expected:?}, but have {actual:?}")]
     MismatchedPropertyFiles { expected: String, actual: String },
     #[error("Property files {0:?} exceed {1} byte reserved space")]
@@ -92,21 +98,111 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+pub fn parse_protobuf_metadata(data: &[u8]) -> Result<OtaMetadata> {
+    Ok(OtaMetadata::decode(data)?)
+}
+
+/// Synthesize protobuf structure from legacy plain-text metadata.
+pub fn parse_legacy_metadata(data: &str) -> Result<OtaMetadata> {
+    let mut metadata = OtaMetadata::default();
+
+    for line in data.split('\n') {
+        if line.is_empty() {
+            continue;
+        }
+
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| Error::InvalidLegacyMetadataLine(line.to_owned()))?;
+        let unsupported = || Error::UnsupportedLegacyMetadataField {
+            key: key.to_owned(),
+            value: value.to_owned(),
+        };
+        // Booleans are represented by the presence or absence of `<key>=yes`.
+        let parse_yes = || match value {
+            "yes" => Ok(true),
+            _ => Err(unsupported()),
+        };
+        let parse_list = || {
+            value
+                .split(LEGACY_SEP)
+                .map(|s| s.to_owned())
+                .collect::<Vec<_>>()
+        };
+
+        match key {
+            "ota-type" => {
+                match OtaType::from_str_name(value).ok_or_else(unsupported)? {
+                    t @ (OtaType::Ab | OtaType::Block) => metadata.set_type(t),
+                    // Not allowed by AOSP in the legacy format.
+                    _ => return Err(unsupported()),
+                }
+            }
+            "ota-wipe" => metadata.wipe = parse_yes()?,
+            "ota-retrofit-dynamic-partitions" => {
+                metadata.retrofit_dynamic_partitions = parse_yes()?
+            }
+            "ota-downgrade" => metadata.downgrade = parse_yes()?,
+            "ota-required-cache" => {
+                metadata.required_cache = value.parse().map_err(|_| unsupported())?;
+            }
+            "post-build" => {
+                let p = metadata.postcondition.get_or_insert_with(Default::default);
+                p.build = parse_list();
+            }
+            "post-build-incremental" => {
+                let p = metadata.postcondition.get_or_insert_with(Default::default);
+                p.build_incremental = value.to_owned();
+            }
+            "post-sdk-level" => {
+                let p = metadata.postcondition.get_or_insert_with(Default::default);
+                p.sdk_level = value.to_owned();
+            }
+            "post-security-patch-level" => {
+                let p = metadata.postcondition.get_or_insert_with(Default::default);
+                p.security_patch_level = value.to_owned();
+            }
+            "post-timestamp" => {
+                let p = metadata.postcondition.get_or_insert_with(Default::default);
+                p.timestamp = value.parse().map_err(|_| unsupported())?;
+            }
+            "pre-device" => {
+                let p = metadata.precondition.get_or_insert_with(Default::default);
+                p.device = parse_list();
+            }
+            "pre-build" => {
+                let p = metadata.precondition.get_or_insert_with(Default::default);
+                p.build = parse_list();
+            }
+            "pre-build-incremental" => {
+                let p = metadata.precondition.get_or_insert_with(Default::default);
+                p.build_incremental = value.to_owned();
+            }
+            "spl-downgrade" => metadata.spl_downgrade = parse_yes()?,
+            k if k.ends_with("-property-files") => {
+                metadata
+                    .property_files
+                    .insert(key.to_owned(), value.to_owned());
+            }
+            _ => {
+                // Ignore. Some OEMs insert values that aren't defined in AOSP.
+            }
+        }
+    }
+
+    Ok(metadata)
+}
+
 /// Generate the legacy plain-text and modern protobuf serializations of the
 /// given metadata instance.
 fn serialize_metadata(metadata: &OtaMetadata) -> Result<(String, Vec<u8>)> {
-    const SEP: &str = "|";
+    use std::fmt::Write;
 
     let mut pairs = BTreeMap::<String, String>::new();
 
-    match metadata.r#type() {
-        OtaType::Ab => {
-            pairs.insert("ota-type".to_owned(), "AB".to_owned());
-        }
-        OtaType::Block => {
-            pairs.insert("ota-type".to_owned(), "BLOCK".to_owned());
-        }
-        _ => {}
+    // Other types are not allowed by AOSP in the legacy format.
+    if let t @ (OtaType::Ab | OtaType::Block) = metadata.r#type() {
+        pairs.insert("ota-type".to_owned(), t.as_str_name().to_owned());
     }
     if metadata.wipe {
         pairs.insert("ota-wipe".to_owned(), "yes".to_owned());
@@ -127,7 +223,7 @@ fn serialize_metadata(metadata: &OtaMetadata) -> Result<(String, Vec<u8>)> {
     );
 
     if let Some(p) = &metadata.postcondition {
-        pairs.insert("post-build".to_owned(), p.build.join(SEP));
+        pairs.insert("post-build".to_owned(), p.build.join(LEGACY_SEP));
         pairs.insert(
             "post-build-incremental".to_owned(),
             p.build_incremental.clone(),
@@ -141,9 +237,9 @@ fn serialize_metadata(metadata: &OtaMetadata) -> Result<(String, Vec<u8>)> {
     }
 
     if let Some(p) = &metadata.precondition {
-        pairs.insert("pre-device".to_owned(), p.device.join(SEP));
+        pairs.insert("pre-device".to_owned(), p.device.join(LEGACY_SEP));
         if !p.build.is_empty() {
-            pairs.insert("pre-build".to_owned(), p.build.join(SEP));
+            pairs.insert("pre-build".to_owned(), p.build.join(LEGACY_SEP));
             pairs.insert(
                 "pre-build-incremental".to_owned(),
                 p.build_incremental.clone(),
@@ -157,10 +253,10 @@ fn serialize_metadata(metadata: &OtaMetadata) -> Result<(String, Vec<u8>)> {
 
     pairs.extend(metadata.property_files.clone());
 
-    let legacy_metadata = pairs
-        .into_iter()
-        .map(|(k, v)| format!("{k}={v}\n"))
-        .collect::<String>();
+    let legacy_metadata = pairs.into_iter().fold(String::new(), |mut output, (k, v)| {
+        let _ = writeln!(output, "{k}={v}");
+        output
+    });
     let modern_metadata = metadata.encode_to_vec();
 
     Ok((legacy_metadata, modern_metadata))
@@ -286,9 +382,9 @@ fn add_payload_metadata_entry(
 /// Add metadata files to the output OTA zip. `zip_entries` is the list of
 /// [`ZipEntry`] already written to `zip_writer`. `next_offset` is the current
 /// file offset (where the next zip entry's local header begins).
-/// `metadata_pb_raw` is the serialized OTA metadata protobuf message from the
-/// original OTA. `payload_metadata_size` is the size of the new payload's
-/// metadata and metadata signature regions.
+/// `metadata` is the OTA metadata protobuf message from the original OTA.
+/// `payload_metadata_size` is the size of the new payload's metadata and
+/// metadata signature regions.
 ///
 /// The zip file's backing file position MUST BE set to where the central
 /// directory would start.
@@ -296,10 +392,10 @@ pub fn add_metadata(
     zip_entries: &[ZipEntry],
     zip_writer: &mut ZipWriter<impl Write>,
     next_offset: u64,
-    metadata_pb_raw: &[u8],
+    metadata: &OtaMetadata,
     payload_metadata_size: u64,
 ) -> Result<OtaMetadata> {
-    let mut metadata = OtaMetadata::decode(metadata_pb_raw)?;
+    let mut metadata = metadata.clone();
     let options = FileOptions::default().compression_method(CompressionMethod::Stored);
 
     let mut zip_entries = zip_entries.to_owned();
