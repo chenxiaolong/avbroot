@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 2.3.0
 
 * Fix missing `--help` text for `avbroot avb unpack`'s `--ignore-invalid` option ([PR #183])
 * Group `avbroot ota patch --help` output into more readable sections ([PR #184])
