@@ -16,11 +16,10 @@ avbroot applies two patches to the boot images:
 
 ## Warnings and Caveats
 
-* The device must use (non-legacy-SAR) A/B partitioning. This is the case on newer Pixel and OnePlus devices. To check if a device uses this partitioning sceme, open the OTA zip file and check that:
+* The device must use modern (non-legacy-SAR) A/B partitioning. This is the case on newer Pixel and OnePlus devices. To check if a device uses this partitioning scheme, open the OTA zip file and check that:
 
   * `payload.bin` exists
-  * `META-INF/com/android/metadata.pb` exists
-  * `META-INF/com/android/metadata` contains the line: `ota-type=AB`
+  * `META-INF/com/android/metadata` (Android 11) or `META-INF/com/android/metadata.pb` (Android 12+) exists
 
 * The device must support using a custom public key for the bootloader's root of trust. This is normally done via the `fastboot flash avb_custom_key` command. All Pixel devices with unlockable bootloaders support this, as well as most OnePlus devices. Other devices may support it as well, but there's no easy way to check without just trying it.
 

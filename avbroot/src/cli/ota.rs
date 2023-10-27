@@ -734,12 +734,7 @@ fn patch_ota_zip(
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<(OtaMetadata, u64)> {
-    let mut missing = BTreeSet::from([
-        ota::PATH_METADATA_PB,
-        ota::PATH_OTACERT,
-        ota::PATH_PAYLOAD,
-        ota::PATH_PROPERTIES,
-    ]);
+    let mut missing = BTreeSet::from([ota::PATH_OTACERT, ota::PATH_PAYLOAD, ota::PATH_PROPERTIES]);
 
     // Keep in sorted order for reproducibility and to guarantee that the
     // payload is processed before its properties file.
@@ -754,9 +749,15 @@ fn patch_ota_zip(
 
     if !missing.is_empty() {
         bail!("Missing entries in OTA zip: {:?}", joined(missing));
+    } else if !paths.contains(ota::PATH_METADATA) && !paths.contains(ota::PATH_METADATA_PB) {
+        bail!(
+            "Neither legacy nor protobuf OTA metadata files exist: {:?}, {:?}",
+            ota::PATH_METADATA,
+            ota::PATH_METADATA_PB,
+        )
     }
 
-    let mut metadata_pb_raw = None;
+    let mut metadata = None;
     let mut properties = None;
     let mut payload_metadata_size = None;
     let mut entries = vec![];
@@ -777,19 +778,33 @@ fn patch_ota_zip(
             .compression_method(CompressionMethod::Stored)
             .large_file(use_zip64);
 
+        // Processed at the end after all other entries are written.
         match path.as_str() {
+            // Convert legacy metadata from Android 11 to the modern protobuf
+            // structure. Note that although we can read legacy-only OTAs, we
+            // always produce both the legacy and protobuf representations in
+            // the output.
             ota::PATH_METADATA => {
-                // Ignore because the plain-text legacy metadata file is
-                // regenerated from the new protobuf metadata.
+                let mut buf = String::new();
+                reader
+                    .read_to_string(&mut buf)
+                    .with_context(|| format!("Failed to read OTA metadata: {path}"))?;
+                metadata = Some(
+                    ota::parse_legacy_metadata(&buf)
+                        .with_context(|| format!("Failed to parse OTA metadata: {path}"))?,
+                );
                 continue;
             }
+            // This takes precedence due to sorted iteration order.
             ota::PATH_METADATA_PB => {
-                // Processed at the end after all other entries are written.
                 let mut buf = vec![];
                 reader
                     .read_to_end(&mut buf)
                     .with_context(|| format!("Failed to read OTA metadata: {path}"))?;
-                metadata_pb_raw = Some(buf);
+                metadata = Some(
+                    ota::parse_protobuf_metadata(&buf)
+                        .with_context(|| format!("Failed to parse OTA metadata: {path}"))?,
+                );
                 continue;
             }
             _ => {}
@@ -881,7 +896,7 @@ fn patch_ota_zip(
         zip_writer,
         // Offset where next entry would begin.
         entries.last().map(|e| e.offset + e.size).unwrap() + data_descriptor_size,
-        &metadata_pb_raw.unwrap(),
+        &metadata.unwrap(),
         payload_metadata_size.unwrap(),
     )
     .context("Failed to write new OTA metadata")?;
