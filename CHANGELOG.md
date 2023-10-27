@@ -19,7 +19,7 @@
 Behind-the-scenes changes:
 
 * Bump maximum payload manifest size to 4 MiB ([PR #182])
-* Reword file handle reopen functionality to use traits instead of callbacks ([PR #189])
+* Rework file handle reopen functionality to use traits instead of callbacks ([PR #189])
 * Don't set signature algorithm field for indirectly signed boot images ([PR #191])
 * Update dependencies ([PR #197])
 
