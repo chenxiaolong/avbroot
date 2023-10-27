@@ -14,6 +14,7 @@
 * Add more checks to ensure that the OTA has a secure AVB setup ([PR #188])
     * OTAs with blatantly insecure or missing AVB configuration are now more likely to be rejected by avbroot to avoid providing a false sense of security.
 * Allow `avbroot avb verify` and `avbroot ota verify` to work for dm-verity partitions that use insecure SHA1 hashes ([PR #190])
+* Add support for legacy Android 11 OTAs ([Discussion #195], [PR #196])
 
 Behind-the-scenes changes:
 
@@ -90,6 +91,7 @@ Behind-the-scenes changes:
 * Initial Rust release. The old Python implementation can be found in the `python` branch. ([PR #130])
 
 <!-- Do not manually edit the lines below. Use `cargo xtask update-changelog` to regenerate. -->
+[Discussion #195]: https://github.com/chenxiaolong/avbroot/discussions/195
 [Issue #138]: https://github.com/chenxiaolong/avbroot/issues/138
 [Issue #144]: https://github.com/chenxiaolong/avbroot/issues/144
 [Issue #145]: https://github.com/chenxiaolong/avbroot/issues/145
@@ -138,3 +140,4 @@ Behind-the-scenes changes:
 [PR #189]: https://github.com/chenxiaolong/avbroot/pull/189
 [PR #190]: https://github.com/chenxiaolong/avbroot/pull/190
 [PR #191]: https://github.com/chenxiaolong/avbroot/pull/191
+[PR #196]: https://github.com/chenxiaolong/avbroot/pull/196

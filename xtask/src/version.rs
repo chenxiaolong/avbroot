@@ -20,7 +20,7 @@ fn update_cargo_version(version: &str) -> Result<()> {
     let data = fs::read_to_string(&path)?;
 
     let mut document: Document = data.parse()?;
-    document["workspace"]["package"]["version"] = value(version.clone());
+    document["workspace"]["package"]["version"] = value(version);
 
     fs::write(path, document.to_string())?;
 

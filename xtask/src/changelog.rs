@@ -50,7 +50,7 @@ fn check_brackets(line: &str) -> Result<()> {
 
 fn update_changelog_links(path: &Path, base_url: &str) -> Result<()> {
     let re_standalone_link = Regex::new(r"\[([^\]]+)\]($|[^\(\[])")?;
-    let re_auto_link = Regex::new(r"^(Issue|PR) #([0-9]+)?$")?;
+    let re_auto_link = Regex::new(r"^(Discussion|Issue|PR) #([0-9]+)?$")?;
     let mut links = BTreeMap::<LinkRef, String>::new();
 
     let raw_reader = File::open(path)?;
@@ -82,6 +82,7 @@ fn update_changelog_links(path: &Path, base_url: &str) -> Result<()> {
                 let number: u32 = captures.get(2).unwrap().as_str().parse()?;
 
                 let link = match link_type {
+                    "Discussion" => format!("{base_url}/discussions/{number}"),
                     "Issue" => format!("{base_url}/issues/{number}"),
                     "PR" => format!("{base_url}/pull/{number}"),
                     t => bail!("Unknown link type in {link_ref:?}: {t:?}"),
