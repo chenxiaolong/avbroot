@@ -116,7 +116,13 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
     fastboot flash avb_custom_key /path/to/avb_pkmd.bin
     ```
 
-8. **[Initial setup only]** Run `dmesg | grep libfs_avb` as root to verify that AVB is working properly. A message similar to the following is expected:
+8. **[Initial setup only]** Reboot into Android and run:
+
+    ```bash
+    adb shell su -c 'dmesg | grep libfs_avb'
+    ```
+
+    If AVB is working properly, the following message should be printed out:
 
     ```bash
     init: [libfs_avb]Returning avb_handle with status: Success
