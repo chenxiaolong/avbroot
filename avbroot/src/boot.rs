@@ -117,7 +117,7 @@ impl MagiskRootPatcher {
     //   RULESDEVICE config option, which stored the writable block device as an
     //   rdev major/minor pair, which was not consistent across reboots and was
     //   replaced by PREINITDEVICE
-    const VERS_SUPPORTED: &[Range<u32>] = &[25102..25207, 25211..26400];
+    const VERS_SUPPORTED: &[Range<u32>] = &[25102..25207, 25211..26500];
     const VER_PREINIT_DEVICE: Range<u32> =
         25211..Self::VERS_SUPPORTED[Self::VERS_SUPPORTED.len() - 1].end;
     const VER_RANDOM_SEED: Range<u32> = 25211..26103;
