@@ -1,6 +1,6 @@
 id=com.chiller3.avbroot.oemunlockonboot
 name=oemunlockonboot
-version=v2.3.0
-versionCode=131840
+version=v2.3.1
+versionCode=131841
 author=chenxiaolong
 description=Enable OEM unlocking on every boot

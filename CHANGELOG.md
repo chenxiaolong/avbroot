@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 2.3.1
 
 * Mark Magisk 264xx as supported ([PR #199])
 
