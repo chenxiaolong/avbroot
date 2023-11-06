@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Mark Magisk 264xx as supported ([PR #199])
+
 ### Version 2.3.0
 
 * Fix missing `--help` text for `avbroot avb unpack`'s `--ignore-invalid` option ([PR #183])
@@ -143,3 +147,4 @@ Behind-the-scenes changes:
 [PR #191]: https://github.com/chenxiaolong/avbroot/pull/191
 [PR #196]: https://github.com/chenxiaolong/avbroot/pull/196
 [PR #197]: https://github.com/chenxiaolong/avbroot/pull/197
+[PR #199]: https://github.com/chenxiaolong/avbroot/pull/199
