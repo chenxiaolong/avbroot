@@ -449,6 +449,7 @@ fn update_vbmeta_headers(
             let reader = images.get_mut(dep).unwrap();
             let (header, _, _) = avb::load_image(reader)
                 .with_context(|| format!("Failed to load vbmeta footer from image: {dep}"))?;
+            let pd_type = parent_descriptor.type_name();
 
             if header.public_key.is_empty() {
                 // vbmeta is unsigned. Use the existing descriptor.
@@ -459,6 +460,7 @@ fn update_vbmeta_headers(
                 else {
                     bail!("{name} has no descriptor for itself");
                 };
+                let d_type = descriptor.type_name();
 
                 match (parent_descriptor, descriptor) {
                     (Descriptor::Hash(pd), Descriptor::Hash(d)) => {
@@ -468,7 +470,7 @@ fn update_vbmeta_headers(
                         *pd = d.clone();
                     }
                     _ => {
-                        bail!("{name}'s descriptor for {dep} must match {dep}'s self descriptor");
+                        bail!("{dep} descriptor ({d_type}) does not match entry in {name} ({pd_type})");
                     }
                 }
             } else {
@@ -478,7 +480,7 @@ fn update_vbmeta_headers(
                         d.public_key = header.public_key;
                     }
                     _ => {
-                        bail!("{name}'s descriptor for {dep} must be a chain descriptor");
+                        bail!("{dep} descriptor ({pd_type}) in {name} must be a chain descriptor");
                     }
                 }
             }
