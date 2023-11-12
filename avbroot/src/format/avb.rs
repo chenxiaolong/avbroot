@@ -1193,6 +1193,17 @@ pub enum Descriptor {
 }
 
 impl Descriptor {
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Property(_) => "Property",
+            Self::HashTree(_) => "HashTree",
+            Self::Hash(_) => "Hash",
+            Self::KernelCmdline(_) => "KernelCmdline",
+            Self::ChainPartition(_) => "ChainPartition",
+            Self::Unknown { .. } => "Unknown",
+        }
+    }
+
     pub fn partition_name(&self) -> Option<&str> {
         match self {
             Self::HashTree(d) => Some(&d.partition_name),
