@@ -28,7 +28,7 @@ use crate::{
     crypto::{self, PassphraseSource},
     format::avb::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
-        Header,
+        HashTreeDescriptor, Header, KernelCmdlineDescriptor,
     },
     stream::{self, PSeekFile, Reopen},
     util,
@@ -192,6 +192,121 @@ fn write_raw_and_update(
     }
 
     Ok(raw_file)
+}
+
+/// Compute the kernel command line arguments to allow the kernel to set up the
+/// dm-verity block device without dm-init or userspace helpers. This is handled
+/// by init/do_mounts_dm.c in older Pixel devices (and ChromiumOS).
+fn compute_dm_verity_cmdline(descriptor: &HashTreeDescriptor) -> String {
+    use std::fmt::Write;
+
+    let mut result = String::new();
+
+    // Number of device mapper devices.
+    result.push_str("dm=\"1");
+    // Block device name.
+    result.push_str(" vroot");
+    // Block device UUID.
+    result.push_str(" none");
+    // Block device write mode.
+    result.push_str(" ro");
+    // Number of device mapper targets.
+    result.push_str(" 1,");
+    // Starting sector.
+    result.push('0');
+    // Sector count.
+    write!(&mut result, " {}", descriptor.image_size / 512).unwrap();
+    // dm-verity version.
+    write!(&mut result, " verity {}", descriptor.dm_verity_version).unwrap();
+    // Data block device (replaced by bootloader at runtime).
+    result.push_str(" PARTUUID=$(ANDROID_SYSTEM_PARTUUID)");
+    // Hash block device (replaced by bootloader at runtime).
+    result.push_str(" PARTUUID=$(ANDROID_SYSTEM_PARTUUID)");
+    // Data block size.
+    write!(&mut result, " {}", descriptor.data_block_size).unwrap();
+    // Hash block size.
+    write!(&mut result, " {}", descriptor.hash_block_size).unwrap();
+    // Number of data blocks.
+    write!(
+        &mut result,
+        " {}",
+        descriptor.image_size / u64::from(descriptor.data_block_size),
+    )
+    .unwrap();
+    // Hash starting block (in units of the hash block size).
+    write!(
+        &mut result,
+        " {}",
+        descriptor.image_size / u64::from(descriptor.hash_block_size),
+    )
+    .unwrap();
+    // Hash algorithm.
+    write!(&mut result, " {}", descriptor.hash_algorithm).unwrap();
+    // Root digest.
+    write!(&mut result, " {}", &hex::encode(&descriptor.root_digest)).unwrap();
+    // Salt.
+    write!(&mut result, " {}", &hex::encode(&descriptor.salt)).unwrap();
+
+    // Number of optional arguments.
+    let num_optional_args = if descriptor.fec_num_roots != 0 { 10 } else { 2 }
+        + u8::from(descriptor.flags & HashTreeDescriptor::FLAG_CHECK_AT_MOST_ONCE != 0);
+    write!(&mut result, " {num_optional_args}").unwrap();
+
+    if descriptor.flags & HashTreeDescriptor::FLAG_CHECK_AT_MOST_ONCE != 0 {
+        // [n + 1] Only check blocks once instead of on each access.
+        result.push_str(" check_at_most_once");
+    }
+
+    // [0] Corruption handling mode (replaced by bootloader at runtime).
+    result.push_str(" $(ANDROID_VERITY_MODE)");
+    // [1] Force return zeros and skip validation for blocks expected to contain
+    // only zeros.
+    result.push_str(" ignore_zero_blocks");
+
+    if descriptor.fec_num_roots != 0 {
+        // [2-3] Enable FEC (replaced by bootloader at runtime).
+        result.push_str(" use_fec_from_device PARTUUID=$(ANDROID_SYSTEM_PARTUUID)");
+        // [4-5] Number of parity bytes per FEC codeword.
+        write!(&mut result, " fec_roots {}", descriptor.fec_num_roots).unwrap();
+
+        let fec_block_offset = descriptor.fec_offset / u64::from(descriptor.data_block_size);
+
+        // [6-7] Number of data blocks covered by FEC.
+        write!(&mut result, " fec_blocks {fec_block_offset}").unwrap();
+        // [8-9] Starting block (in data block size units) of FEC.
+        write!(&mut result, " fec_start {fec_block_offset}").unwrap();
+    }
+
+    // Root filesystem block device.
+    result.push_str("\" root=/dev/dm-0");
+
+    result
+}
+
+/// Update the dm-verity kernel command line descriptor to match the hash tree
+/// descriptor. This is a no-op if there's no matching existing kernel command
+/// line descriptor to update. Returns whether the descriptor was updated.
+fn update_dm_verity_cmdline(info: &mut AvbInfo) -> Result<bool> {
+    assert!(info.footer.is_some(), "Not an appended image");
+
+    let new_cmdline = match info.header.appended_descriptor()? {
+        AppendedDescriptorRef::HashTree(d) => compute_dm_verity_cmdline(d),
+        AppendedDescriptorRef::Hash(_) => return Ok(false),
+    };
+
+    for d in &mut info.header.descriptors {
+        if let Descriptor::KernelCmdline(d) = d {
+            if d.flags & KernelCmdlineDescriptor::FLAG_USE_ONLY_IF_HASHTREE_NOT_DISABLED != 0
+                && d.cmdline.starts_with("dm=")
+                && d.cmdline != new_cmdline
+            {
+                d.cmdline = new_cmdline;
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 /// Sign or clear header signatures based on whether the original header was
@@ -481,7 +596,11 @@ fn pack_subcommand(cli: &PackCli, cancel_signal: &AtomicBool) -> Result<()> {
                 format!("Failed to open raw image for reading: {:?}", cli.input_raw)
             })?;
 
-        write_raw_and_update(&cli.output, &mut reader, &mut info, cancel_signal)?
+        let file = write_raw_and_update(&cli.output, &mut reader, &mut info, cancel_signal)?;
+
+        update_dm_verity_cmdline(&mut info)?;
+
+        file
     } else {
         File::create(&cli.output)
             .map(PSeekFile::new)
@@ -511,6 +630,8 @@ fn repack_subcommand(cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> 
         if let AppendedDescriptorMut::HashTree(d) = info.header.appended_descriptor_mut()? {
             d.update(&file, &file, cancel_signal)?;
         }
+
+        update_dm_verity_cmdline(&mut info)?;
 
         file
     } else {

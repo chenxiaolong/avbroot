@@ -379,6 +379,9 @@ impl fmt::Debug for HashTreeDescriptor {
 }
 
 impl HashTreeDescriptor {
+    pub const FLAG_DO_NOT_USE_AB: u32 = 1 << 0;
+    pub const FLAG_CHECK_AT_MOST_ONCE: u32 = 1 << 1;
+
     /// Calculate the hash tree digests for a single level of the tree. If the
     /// reader's position is block-aligned and `image_size` is a multiple of the
     /// block size, then this function can also be used to calculate the digests
@@ -1051,6 +1054,11 @@ impl<W: Write> ToWriter<W> for HashDescriptor {
 pub struct KernelCmdlineDescriptor {
     pub flags: u32,
     pub cmdline: String,
+}
+
+impl KernelCmdlineDescriptor {
+    pub const FLAG_USE_ONLY_IF_HASHTREE_NOT_DISABLED: u32 = 1 << 0;
+    pub const FLAG_USE_ONLY_IF_HASHTREE_DISABLED: u32 = 1 << 1;
 }
 
 impl DescriptorTag for KernelCmdlineDescriptor {
