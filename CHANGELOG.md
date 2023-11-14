@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Improve error messages when using `--replace` with an image that has the wrong AVB descriptor type ([Issue #201], [PR #202])
+* Automatically update legacy `dm=` kernel command line descriptor when packing AVB images ([Issue #203], [PR #205])
 
 ### Version 2.3.1
 
@@ -109,6 +110,7 @@ Behind-the-scenes changes:
 [Issue #160]: https://github.com/chenxiaolong/avbroot/issues/160
 [Issue #166]: https://github.com/chenxiaolong/avbroot/issues/166
 [Issue #201]: https://github.com/chenxiaolong/avbroot/issues/201
+[Issue #203]: https://github.com/chenxiaolong/avbroot/issues/203
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -154,3 +156,4 @@ Behind-the-scenes changes:
 [PR #197]: https://github.com/chenxiaolong/avbroot/pull/197
 [PR #199]: https://github.com/chenxiaolong/avbroot/pull/199
 [PR #202]: https://github.com/chenxiaolong/avbroot/pull/202
+[PR #205]: https://github.com/chenxiaolong/avbroot/pull/205
