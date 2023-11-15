@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for XZ-compressed ramdisks ([Issue #203], [PR #207])
+
 ### Version 2.3.2
 
 * Improve error messages when using `--replace` with an image that has the wrong AVB descriptor type ([Issue #201], [PR #202])
@@ -159,3 +163,4 @@ Behind-the-scenes changes:
 [PR #202]: https://github.com/chenxiaolong/avbroot/pull/202
 [PR #205]: https://github.com/chenxiaolong/avbroot/pull/205
 [PR #206]: https://github.com/chenxiaolong/avbroot/pull/206
+[PR #207]: https://github.com/chenxiaolong/avbroot/pull/207
