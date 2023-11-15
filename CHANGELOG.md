@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Add support for XZ-compressed ramdisks ([Issue #203], [PR #207])
+* Merge property and kernel command line AVB descriptors when replacing partitions ([Issue #203], [PR #208])
 
 ### Version 2.3.2
 
@@ -164,3 +165,4 @@ Behind-the-scenes changes:
 [PR #205]: https://github.com/chenxiaolong/avbroot/pull/205
 [PR #206]: https://github.com/chenxiaolong/avbroot/pull/206
 [PR #207]: https://github.com/chenxiaolong/avbroot/pull/207
+[PR #208]: https://github.com/chenxiaolong/avbroot/pull/208
