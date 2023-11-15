@@ -11,6 +11,7 @@
 
 * Improve error messages when using `--replace` with an image that has the wrong AVB descriptor type ([Issue #201], [PR #202])
 * Automatically update legacy `dm=` kernel command line descriptor when packing AVB images ([Issue #203], [PR #205])
+* Automatically promote insecure hash algorithms (eg. sha1) to sha256 when packing AVB images ([Issue #203], [PR #206])
 
 ### Version 2.3.1
 
@@ -157,3 +158,4 @@ Behind-the-scenes changes:
 [PR #199]: https://github.com/chenxiaolong/avbroot/pull/199
 [PR #202]: https://github.com/chenxiaolong/avbroot/pull/202
 [PR #205]: https://github.com/chenxiaolong/avbroot/pull/205
+[PR #206]: https://github.com/chenxiaolong/avbroot/pull/206
