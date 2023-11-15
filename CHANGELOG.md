@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 2.3.3
 
 * Add support for XZ-compressed ramdisks ([Issue #203], [PR #207])
 * Merge property and kernel command line AVB descriptors when replacing partitions ([Issue #203], [PR #208])
