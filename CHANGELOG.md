@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 2.3.2
 
 * Improve error messages when using `--replace` with an image that has the wrong AVB descriptor type ([Issue #201], [PR #202])
 * Automatically update legacy `dm=` kernel command line descriptor when packing AVB images ([Issue #203], [PR #205])
