@@ -30,6 +30,8 @@ This subcommand packs a new AVB image from the `avb.toml` file and, for appended
 * To force an image to be signed, use `--key <path> --force`.
 * To force an image to be unsigned, use `--force` without specifying `--key`.
 
+Note that if the image is an appended image and its hash or hash tree descriptor uses an insecure algorithm, like `sha1`, then it will automatically be promoted to `sha256`.
+
 ### Repacking an AVB image
 
 ```bash

@@ -92,6 +92,20 @@ fn write_info(path: &Path, info: &AvbInfo) -> Result<()> {
     Ok(())
 }
 
+/// Packing with insecure algorithms is intentionally not supported, so promote
+/// to a secure algorithm if needed.
+fn promote_insecure_hash_algorithm(algorithm: &str) -> &str {
+    const INSECURE_ALGORITHMS: &[&str] = &["sha1"];
+    const NEW_ALGORITHM: &str = "sha256";
+
+    if INSECURE_ALGORITHMS.contains(&algorithm) {
+        warning!("Changing insecure hash algorithm {algorithm} to {NEW_ALGORITHM}");
+        NEW_ALGORITHM
+    } else {
+        algorithm
+    }
+}
+
 /// Copy `size` bytes from `reader` into a new file `path` that's opened as
 /// both readable and writable.
 fn write_raw(
@@ -179,11 +193,13 @@ fn write_raw_and_update(
 
     match info.header.appended_descriptor_mut()? {
         AppendedDescriptorMut::HashTree(d) => {
+            d.hash_algorithm = promote_insecure_hash_algorithm(&d.hash_algorithm).to_owned();
             d.image_size = image_size;
             d.update(&raw_file, &raw_file, cancel_signal)
                 .context("Failed to update hash tree descriptor")?;
         }
         AppendedDescriptorMut::Hash(d) => {
+            d.hash_algorithm = promote_insecure_hash_algorithm(&d.hash_algorithm).to_owned();
             d.image_size = image_size;
             raw_file.rewind()?;
             d.update(&mut raw_file, cancel_signal)
@@ -626,8 +642,9 @@ fn repack_subcommand(cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> 
         let file = write_raw_and_verify(&cli.output, &mut reader, &info, false, cancel_signal)?;
 
         // Write new hash tree and FEC data instead of copying the original.
-        // THere could have been errors in the original FEC data itself.
+        // There could have been errors in the original FEC data itself.
         if let AppendedDescriptorMut::HashTree(d) = info.header.appended_descriptor_mut()? {
+            d.hash_algorithm = promote_insecure_hash_algorithm(&d.hash_algorithm).to_owned();
             d.update(&file, &file, cancel_signal)?;
         }
 
