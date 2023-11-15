@@ -400,6 +400,128 @@ fn get_vbmeta_patch_order(
     Ok(order)
 }
 
+/// Copy the hash or hashtree descriptor from the child image header into the
+/// parent image header if the child is unsigned or update the parent's chain
+/// descriptor if the child is signed. The existing descriptor in the parent
+/// must have the same type as the child.
+fn update_security_descriptors(
+    parent_header: &mut Header,
+    child_header: &Header,
+    parent_name: &str,
+    child_name: &str,
+) -> Result<()> {
+    // This can't fail since the descriptor must have existed for the dependency
+    // to exist.
+    let parent_descriptor = parent_header
+        .descriptors
+        .iter_mut()
+        .find(|d| d.partition_name() == Some(child_name))
+        .unwrap();
+    let parent_type = parent_descriptor.type_name();
+
+    if child_header.public_key.is_empty() {
+        // vbmeta is unsigned. Copy the child's existing descriptor.
+        let Some(child_descriptor) = child_header
+            .descriptors
+            .iter()
+            .find(|d| d.partition_name() == Some(child_name))
+        else {
+            bail!("{child_name} has no descriptor for itself");
+        };
+        let child_type = child_descriptor.type_name();
+
+        match (parent_descriptor, child_descriptor) {
+            (Descriptor::Hash(pd), Descriptor::Hash(cd)) => {
+                *pd = cd.clone();
+            }
+            (Descriptor::HashTree(pd), Descriptor::HashTree(cd)) => {
+                *pd = cd.clone();
+            }
+            _ => {
+                bail!("{child_name} descriptor ({child_type}) does not match entry in {parent_name} ({parent_type})");
+            }
+        }
+    } else {
+        // vbmeta is signed; Use a chain descriptor.
+        match parent_descriptor {
+            Descriptor::ChainPartition(pd) => {
+                pd.public_key = child_header.public_key.clone();
+            }
+            _ => {
+                bail!("{child_name} descriptor ({parent_type}) in {parent_name} must be a chain descriptor");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Get the text before the first equal sign in the kernel command line if it is
+/// not empty.
+fn cmdline_prefix(cmdline: &str) -> Option<&str> {
+    let Some((prefix, _)) = cmdline.split_once('=') else {
+        return None;
+    };
+    if prefix.is_empty() {
+        return None;
+    }
+
+    Some(prefix)
+}
+
+/// Merge property descriptors and kernel command line descriptors from the
+/// child into the parent. The property descriptors are matched based on the
+/// entire property key. The kernel command line descriptors are matched based
+/// on the non-empty text left of the first equal sign (if it exists).
+///
+/// This is a no-op if the child is signed because it is expected to be chain
+/// loaded by the parent.
+fn update_metadata_descriptors(parent_header: &mut Header, child_header: &Header) {
+    if !child_header.public_key.is_empty() {
+        return;
+    }
+
+    for child_descriptor in &child_header.descriptors {
+        match child_descriptor {
+            Descriptor::Property(cd) => {
+                let parent_property = parent_header.descriptors.iter_mut().find_map(|d| match d {
+                    Descriptor::Property(p) if p.key == cd.key => Some(p),
+                    _ => None,
+                });
+
+                if let Some(pd) = parent_property {
+                    pd.value = cd.value.clone();
+                } else {
+                    parent_header
+                        .descriptors
+                        .push(Descriptor::Property(cd.clone()));
+                }
+            }
+            Descriptor::KernelCmdline(cd) => {
+                let Some(prefix) = cmdline_prefix(&cd.cmdline) else {
+                    continue;
+                };
+
+                let parent_property = parent_header.descriptors.iter_mut().find_map(|d| match d {
+                    Descriptor::KernelCmdline(p) if cmdline_prefix(&p.cmdline) == Some(prefix) => {
+                        Some(p)
+                    }
+                    _ => None,
+                });
+
+                if let Some(pd) = parent_property {
+                    pd.cmdline = cd.cmdline.clone();
+                } else {
+                    parent_header
+                        .descriptors
+                        .push(Descriptor::KernelCmdline(cd.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Update vbmeta headers.
 ///
 /// * If [`Header::flags`] is non-zero, then an error is returned because the
@@ -438,52 +560,12 @@ fn update_vbmeta_headers(
         }
 
         for dep in deps.iter() {
-            // This can't fail since the descriptor must have existed for the
-            // dependency to exist.
-            let parent_descriptor = parent_header
-                .descriptors
-                .iter_mut()
-                .find(|d| d.partition_name() == Some(dep))
-                .unwrap();
-
             let reader = images.get_mut(dep).unwrap();
             let (header, _, _) = avb::load_image(reader)
                 .with_context(|| format!("Failed to load vbmeta footer from image: {dep}"))?;
-            let pd_type = parent_descriptor.type_name();
 
-            if header.public_key.is_empty() {
-                // vbmeta is unsigned. Use the existing descriptor.
-                let Some(descriptor) = header
-                    .descriptors
-                    .iter()
-                    .find(|d| d.partition_name() == Some(dep))
-                else {
-                    bail!("{name} has no descriptor for itself");
-                };
-                let d_type = descriptor.type_name();
-
-                match (parent_descriptor, descriptor) {
-                    (Descriptor::Hash(pd), Descriptor::Hash(d)) => {
-                        *pd = d.clone();
-                    }
-                    (Descriptor::HashTree(pd), Descriptor::HashTree(d)) => {
-                        *pd = d.clone();
-                    }
-                    _ => {
-                        bail!("{dep} descriptor ({d_type}) does not match entry in {name} ({pd_type})");
-                    }
-                }
-            } else {
-                // vbmeta is signed; Use a chain descriptor.
-                match parent_descriptor {
-                    Descriptor::ChainPartition(d) => {
-                        d.public_key = header.public_key;
-                    }
-                    _ => {
-                        bail!("{dep} descriptor ({pd_type}) in {name} must be a chain descriptor");
-                    }
-                }
-            }
+            update_security_descriptors(parent_header, &header, name, dep)?;
+            update_metadata_descriptors(parent_header, &header);
         }
 
         // Only sign and rewrite the image if we need to. Some vbmeta images may
