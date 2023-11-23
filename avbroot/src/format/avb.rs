@@ -35,7 +35,7 @@ use crate::{
 };
 
 pub const VERSION_MAJOR: u32 = 1;
-pub const VERSION_MINOR: u32 = 2;
+pub const VERSION_MINOR: u32 = 3;
 pub const VERSION_SUB: u32 = 0;
 
 pub const FOOTER_VERSION_MAJOR: u32 = 1;
@@ -1109,8 +1109,13 @@ pub struct ChainPartitionDescriptor {
     pub partition_name: String,
     #[serde(with = "hex")]
     pub public_key: Vec<u8>,
+    pub flags: u32,
     #[serde(with = "hex")]
-    pub reserved: [u8; 64],
+    pub reserved: [u8; 60],
+}
+
+impl ChainPartitionDescriptor {
+    pub const FLAG_DO_NOT_USE_AB: u32 = 1 << 0;
 }
 
 impl fmt::Debug for ChainPartitionDescriptor {
@@ -1119,6 +1124,7 @@ impl fmt::Debug for ChainPartitionDescriptor {
             .field("rollback_index_location", &self.rollback_index_location)
             .field("partition_name", &self.partition_name)
             .field("public_key", &hex::encode(&self.public_key))
+            .field("flags", &self.flags)
             .field("reserved", &hex::encode(self.reserved))
             .finish()
     }
@@ -1142,7 +1148,9 @@ impl<R: Read> FromReader<R> for ChainPartitionDescriptor {
             return Err(Error::FieldOutOfBounds("public_key_len"));
         }
 
-        let mut reserved = [0u8; 64];
+        let flags = reader.read_u32::<BigEndian>()?;
+
+        let mut reserved = [0u8; 60];
         reader.read_exact(&mut reserved)?;
 
         // Not NULL-terminated.
@@ -1157,6 +1165,7 @@ impl<R: Read> FromReader<R> for ChainPartitionDescriptor {
             rollback_index_location,
             partition_name,
             public_key,
+            flags,
             reserved,
         };
 
@@ -1177,6 +1186,7 @@ impl<W: Write> ToWriter<W> for ChainPartitionDescriptor {
         writer.write_u32::<BigEndian>(self.rollback_index_location)?;
         writer.write_u32::<BigEndian>(self.partition_name.len() as u32)?;
         writer.write_u32::<BigEndian>(self.public_key.len() as u32)?;
+        writer.write_u32::<BigEndian>(self.flags)?;
         writer.write_all(&self.reserved)?;
         writer.write_all(self.partition_name.as_bytes())?;
         writer.write_all(&self.public_key)?;
