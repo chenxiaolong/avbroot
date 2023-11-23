@@ -117,7 +117,7 @@ impl MagiskRootPatcher {
     //   RULESDEVICE config option, which stored the writable block device as an
     //   rdev major/minor pair, which was not consistent across reboots and was
     //   replaced by PREINITDEVICE
-    const VERS_SUPPORTED: &[Range<u32>] = &[25102..25207, 25211..26500];
+    const VERS_SUPPORTED: &'static [Range<u32>] = &[25102..25207, 25211..26500];
     const VER_PREINIT_DEVICE: Range<u32> =
         25211..Self::VERS_SUPPORTED[Self::VERS_SUPPORTED.len() - 1].end;
     const VER_RANDOM_SEED: Range<u32> = 25211..26103;
@@ -407,7 +407,7 @@ pub struct OtaCertPatcher {
 }
 
 impl OtaCertPatcher {
-    const OTACERTS_PATH: &[u8] = b"system/etc/security/otacerts.zip";
+    const OTACERTS_PATH: &'static [u8] = b"system/etc/security/otacerts.zip";
 
     pub fn new(cert: Certificate) -> Self {
         Self { cert }
@@ -528,7 +528,7 @@ impl PrepatchedImagePatcher {
     const MAX_LEVEL: u8 = 2;
 
     // We compile without Unicode support so we have to use [0-9] instead of \d.
-    const VERSION_REGEX: &str = r"Linux version ([0-9]+\.[0-9]+).[0-9]+-(android[0-9]+)-([0-9]+)-";
+    const VERSION_REGEX: &'static str = r"Linux version ([0-9]+\.[0-9]+).[0-9]+-(android[0-9]+)-([0-9]+)-";
 
     pub fn new(
         prepatched: &Path,

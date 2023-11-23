@@ -148,7 +148,7 @@ fn download_range(
         .read_timeout(TIMEOUT)
         .header(
             "Range",
-            &format!("bytes={}-{}", initial_range.start, initial_range.end - 1),
+            format!("bytes={}-{}", initial_range.start, initial_range.end - 1),
         )
         .send()
         .and_then(|r| r.error_for_status())
