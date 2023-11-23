@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for AVB 2.0 format 1.3.0 (for Android 15) ([PR #210])
+
 ### Version 2.3.3
 
 * Add support for XZ-compressed ramdisks ([Issue #203], [PR #207])
@@ -166,3 +170,4 @@ Behind-the-scenes changes:
 [PR #206]: https://github.com/chenxiaolong/avbroot/pull/206
 [PR #207]: https://github.com/chenxiaolong/avbroot/pull/207
 [PR #208]: https://github.com/chenxiaolong/avbroot/pull/208
+[PR #210]: https://github.com/chenxiaolong/avbroot/pull/210
