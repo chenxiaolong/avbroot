@@ -14,6 +14,7 @@
 Behind-the-scenes changes:
 
 * Fix lint warnings introduced in Rust 1.74.0 ([PR #211])
+* Temporarily silence [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) warning in cargo-deny ([PR #214])
 
 ### Version 2.3.3
 
@@ -176,3 +177,4 @@ Behind-the-scenes changes:
 [PR #208]: https://github.com/chenxiaolong/avbroot/pull/208
 [PR #210]: https://github.com/chenxiaolong/avbroot/pull/210
 [PR #211]: https://github.com/chenxiaolong/avbroot/pull/211
+[PR #214]: https://github.com/chenxiaolong/avbroot/pull/214
