@@ -3,6 +3,30 @@ vulnerability = "deny"
 unmaintained = "deny"
 yanked = "deny"
 notice = "deny"
+ignore = [
+    # https://rustsec.org/advisories/RUSTSEC-2023-0071
+    #
+    # This is a side-channel vulnerability where secrets can be leaked to an
+    # attacker that is able to measure the timing of a large number of RSA
+    # operations. As of 2023-12-03, there is no released version of the rsa
+    # crate that contains a fix.
+    #
+    # For avbroot specifically, this vulnerability is not too critical for a
+    # couple reasons:
+    #
+    # 1. avbroot performs RSA signing only at the end of lengthy processes
+    #    that involve a lot of disk I/O. It's very expensive to run avbroot
+    #    the millions of times needed to capture a sufficient amount of timing
+    #    data.
+    # 2. During a single run of avbroot, it will only perform RSA signing a
+    #    handful of times. To get sufficient measurements, the attacker would
+    #    need to rerun avbroot. If they are able to rerun avbroot, then they
+    #    are also able to just read and steal the private key directly.
+    #
+    # avbroot has no network capabilities, so this is not inherently remotely
+    # exploitable.
+    "RUSTSEC-2023-0071",
+]
 
 [licenses]
 include-dev = true
