@@ -13,7 +13,9 @@ Having a good understanding of how AVB and A/B OTAs work is recommended prior to
   * `payload.bin` exists
   * `META-INF/com/android/metadata` (Android 10-11) or `META-INF/com/android/metadata.pb` (Android 12+) exists
 
-* The device must support using a custom public key for the bootloader's root of trust. This is normally done via the `fastboot flash avb_custom_key` command. All Pixel devices with unlockable bootloaders support this, as well as most OnePlus devices. Other devices may support it as well, but there's no easy way to check without just trying it.
+* The device must support using a custom public key for the bootloader's root of trust. This is normally done via the `fastboot flash avb_custom_key` command. All Pixel devices with unlockable bootloaders since the Pixel 2 support this. Other devices may support it as well, but there's no easy way to check without just trying it.
+
+  * NOTE: Some OnePlus devices have a broken implementation where a custom public key can be set, but the device won't boot despite having proper signatures. Downgrading the bootloader to the version shipped with Android 11 might potentially help. This problem has been reported across multiple OnePlus models ([#186](https://github.com/chenxiaolong/avbroot/issues/186), [#195](https://github.com/chenxiaolong/avbroot/discussions/195), [#212](https://github.com/chenxiaolong/avbroot/issues/212)).
 
 ## Patches
 
