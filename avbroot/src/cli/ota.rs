@@ -271,11 +271,12 @@ fn load_vbmeta_images(
 /// partitions may be equally important, but it's infeasible to list them all.
 fn is_critical_to_avb(name: &str) -> bool {
     name.ends_with("boot")
-        || name.starts_with("odm")
+        || name.ends_with("dlkm")
         || name.starts_with("system")
         || name.starts_with("vbmeta")
         || name.starts_with("vendor")
         || name == "dtbo"
+        || name == "odm"
         || name == "product"
         || name == "pvmfw"
         || name == "recovery"
