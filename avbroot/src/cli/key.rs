@@ -71,6 +71,16 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
             fs::write(&c.output, encoded)
                 .with_context(|| format!("Failed to write public key: {:?}", c.output))?;
         }
+        KeyCommand::DecodeAvb(c) => {
+            let encoded = fs::read(&c.key)
+                .with_context(|| format!("Failed to load AVB public key: {:?}", c.key))?;
+
+            let public_key = avb::decode_public_key(&encoded)
+                .context("Failed to decode public key as AVB format")?;
+
+            crypto::write_pem_public_key_file(&c.output, &public_key)
+                .with_context(|| format!("Failed to write public key: {:?}", c.output))?;
+        }
     }
 
     Ok(())
@@ -152,11 +162,24 @@ struct ExtractAvbCli {
     passphrase: PassphraseGroup,
 }
 
+/// Convert an AVB-encoded public key to a PKCS8-encoded public key.
+#[derive(Debug, Parser)]
+struct DecodeAvbCli {
+    /// Path to output PKCS8-encoded public key.
+    #[arg(short, long, value_name = "FILE", value_parser)]
+    output: PathBuf,
+
+    /// Path to AVB-encoded public key.
+    #[arg(short, long, value_name = "FILE", value_parser)]
+    key: PathBuf,
+}
+
 #[derive(Debug, Subcommand)]
 enum KeyCommand {
     GenerateKey(GenerateKeyCli),
     GenerateCert(GenerateCertCli),
     ExtractAvb(ExtractAvbCli),
+    DecodeAvb(DecodeAvbCli),
 }
 
 /// Generate and convert keys.

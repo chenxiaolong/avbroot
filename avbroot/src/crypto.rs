@@ -225,6 +225,23 @@ pub fn write_pem_cert_file(path: &Path, cert: &Certificate) -> Result<()> {
     write_pem_cert(writer, cert)
 }
 
+/// Write PEM-encoded PKCS8 public key to a writer.
+pub fn write_pem_public_key(mut writer: impl Write, key: &RsaPublicKey) -> Result<()> {
+    let data = key.to_public_key_pem(LineEnding::LF)?;
+
+    writer.write_all(data.as_bytes())?;
+
+    Ok(())
+}
+
+/// Write PEM-encoded PKCS8 public key to a file.
+pub fn write_pem_public_key_file(path: &Path, key: &RsaPublicKey) -> Result<()> {
+    let file = File::create(path)?;
+    let writer = BufWriter::new(file);
+
+    write_pem_public_key(writer, key)
+}
+
 /// Read PEM-encoded PKCS8 private key from a reader.
 pub fn read_pem_key(mut reader: impl Read, source: &PassphraseSource) -> Result<RsaPrivateKey> {
     let mut data = String::new();
