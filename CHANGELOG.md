@@ -11,6 +11,7 @@
 
 * Add support for AVB 2.0 format 1.3.0 (for Android 15) ([PR #210])
 * Add new `avbroot key decode-avb` command for converting AVB-encoded public keys to the standard PKCS8-encoded format ([PR #219])
+* Adjust AVB sanity check to validate `*_dlkm` and `odm` specifically because some devices have an unprotected `odm_ext` partition ([PR #220])
 
 Behind-the-scenes changes:
 
@@ -180,3 +181,4 @@ Behind-the-scenes changes:
 [PR #211]: https://github.com/chenxiaolong/avbroot/pull/211
 [PR #214]: https://github.com/chenxiaolong/avbroot/pull/214
 [PR #219]: https://github.com/chenxiaolong/avbroot/pull/219
+[PR #220]: https://github.com/chenxiaolong/avbroot/pull/220
