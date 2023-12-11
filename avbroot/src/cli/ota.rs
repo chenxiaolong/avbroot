@@ -115,8 +115,8 @@ pub fn get_partitions_by_type(manifest: &DeltaArchiveManifest) -> Result<HashMap
 /// partitions.
 pub fn get_required_images(
     manifest: &DeltaArchiveManifest,
-    boot_partition: &str,
-    with_root: bool,
+    rootpatch_partition: Option<&str>,
+    otacerts_partition: Option<&str>,
 ) -> Result<HashMap<String, String>> {
     let all_partitions = manifest
         .partitions
@@ -132,13 +132,18 @@ pub fn get_required_images(
         }
     }
 
-    if with_root {
-        if by_type.contains_key(boot_partition) {
-            images.insert("@rootpatch".to_owned(), by_type[boot_partition].clone());
-        } else if all_partitions.contains(boot_partition) {
-            images.insert("@rootpatch".to_owned(), boot_partition.to_owned());
-        } else {
-            bail!("Boot partition not found: {boot_partition}");
+    for (k, v) in [
+        ("@rootpatch", rootpatch_partition),
+        ("@otacerts", otacerts_partition),
+    ] {
+        if let Some(name) = v {
+            if by_type.contains_key(name) {
+                images.insert(k.to_owned(), by_type[name].clone());
+            } else if all_partitions.contains(name) {
+                images.insert(k.to_owned(), name.to_owned());
+            } else {
+                bail!("{k} partition not found: {name}");
+            }
         }
     }
 
@@ -634,7 +639,8 @@ fn patch_ota_payload(
     payload: &(dyn ReadSeekReopen + Sync),
     writer: impl Write,
     external_images: &HashMap<String, PathBuf>,
-    boot_partition: &str,
+    rootpatch_partition: Option<&str>,
+    otacerts_partition: Option<&str>,
     root_patcher: Option<Box<dyn BootImagePatcher + Send>>,
     clear_vbmeta_flags: bool,
     key_avb: &RsaPrivateKey,
@@ -670,8 +676,8 @@ fn patch_ota_payload(
     // don't need to be modified.
     let required_images = get_required_images(
         &header_locked.manifest,
-        boot_partition,
-        root_patcher.is_some(),
+        rootpatch_partition,
+        otacerts_partition,
     )?;
     let vbmeta_images = required_images
         .iter()
@@ -811,7 +817,8 @@ fn patch_ota_zip(
     zip_reader: &mut ZipArchive<impl Read + Seek>,
     mut zip_writer: &mut ZipWriter<impl Write>,
     external_images: &HashMap<String, PathBuf>,
-    boot_partition: &str,
+    rootpatch_partition: Option<&str>,
+    otacerts_partition: Option<&str>,
     mut root_patch: Option<Box<dyn BootImagePatcher + Send>>,
     clear_vbmeta_flags: bool,
     key_avb: &RsaPrivateKey,
@@ -931,7 +938,8 @@ fn patch_ota_zip(
                     &payload_reader,
                     &mut writer,
                     external_images,
-                    boot_partition,
+                    rootpatch_partition,
+                    otacerts_partition,
                     // There's only one payload in the OTA.
                     root_patch.take(),
                     clear_vbmeta_flags,
@@ -1138,7 +1146,8 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &mut zip_reader,
         &mut zip_writer,
         &external_images,
-        &cli.boot_partition,
+        Some(&cli.boot_partition),
+        cli.otacerts_partition.as_deref(),
         root_patcher,
         cli.clear_vbmeta_flags,
         &key_avb,
@@ -1239,7 +1248,11 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
                 .cloned(),
         );
     } else {
-        let images = get_required_images(&header.manifest, &cli.boot_partition, true)?;
+        let images = get_required_images(
+            &header.manifest,
+            Some(&cli.boot_partition),
+            cli.otacerts_partition.as_deref(),
+        )?;
 
         if cli.boot_only {
             unique_images.insert(images["@rootpatch"].clone());
@@ -1341,7 +1354,8 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     status!("Checking ramdisk's otacerts.zip");
 
     let boot_image = {
-        let partitions_by_type = get_partitions_by_type(&header.manifest)?;
+        let partitions_by_type =
+            get_required_images(&header.manifest, None, cli.otacerts_partition.as_deref())?;
         let path = format!("{}.img", partitions_by_type["@otacerts"]);
         let file = temp_dir
             .open(&path)
@@ -1559,6 +1573,14 @@ pub struct PatchCli {
         help_heading = HEADING_OTHER
     )]
     pub boot_partition: String,
+
+    /// OTA certificates partition name.
+    #[arg(
+        long,
+        value_name = "PARTITION",
+        help_heading = HEADING_OTHER
+    )]
+    pub otacerts_partition: Option<String>,
 }
 
 /// Extract partition images from an OTA zip's payload.
@@ -1583,6 +1605,10 @@ pub struct ExtractCli {
     /// Boot partition name.
     #[arg(long, value_name = "PARTITION", default_value = "@gki_ramdisk")]
     pub boot_partition: String,
+
+    /// OTA certificates partition name.
+    #[arg(long, value_name = "PARTITION")]
+    pub otacerts_partition: Option<String>,
 }
 
 /// Verify signatures of an OTA.
@@ -1607,6 +1633,10 @@ pub struct VerifyCli {
     /// valid, not that they are trusted.
     #[arg(long, value_name = "FILE", value_parser)]
     pub public_key_avb: Option<PathBuf>,
+
+    /// OTA certificates partition name.
+    #[arg(long, value_name = "PARTITION")]
+    pub otacerts_partition: Option<String>,
 }
 
 #[allow(clippy::large_enum_variant)]

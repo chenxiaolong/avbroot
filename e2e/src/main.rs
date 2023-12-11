@@ -117,7 +117,7 @@ fn strip_image(
         .context("Failed to load OTA payload header")?;
 
     let required_images =
-        avbroot::cli::ota::get_required_images(&header.manifest, "@gki_ramdisk", true)?
+        avbroot::cli::ota::get_required_images(&header.manifest, Some("@gki_ramdisk"), None)?
             .into_values()
             .collect::<HashSet<_>>();
     let mut data_holes = vec![];
