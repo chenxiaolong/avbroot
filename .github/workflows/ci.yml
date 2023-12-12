@@ -40,16 +40,14 @@ jobs:
               | sed -E "s/^v//g;s/([^-]*-g)/r\1/;s/-/./g" \
               >> "${GITHUB_OUTPUT}"
 
-      - name: Get Rust LLVM target triple
+      - name: Get Rust target triple
         id: get_target
         shell: bash
         env:
           RUSTC_BOOTSTRAP: '1'
         run: |
           echo -n 'name=' >> "${GITHUB_OUTPUT}"
-          rustc -Z unstable-options --print target-spec-json \
-              | jq -r '."llvm-target"' \
-              >> "${GITHUB_OUTPUT}"
+          rustc -vV | sed -n 's|host: ||p' >> "${GITHUB_OUTPUT}"
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
