@@ -16,7 +16,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_TERM_COLOR: always
-      RUSTFLAGS: -C strip=symbols
+      RUSTFLAGS: -C strip=symbols -C target-feature=+crt-static
     strategy:
       fail-fast: false
       matrix:
@@ -53,13 +53,22 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy
-        run: cargo clippy --release --workspace --features static
+        shell: bash
+        run: |
+          cargo clippy --release --workspace --features static \
+              --target ${{ steps.get_target.outputs.name }}
 
       - name: Build
-        run: cargo build --release --workspace --features static
+        shell: bash
+        run: |
+          cargo build --release --workspace --features static \
+              --target ${{ steps.get_target.outputs.name }}
 
       - name: Tests
-        run: cargo test --release --workspace --features static
+        shell: bash
+        run: |
+          cargo test --release --workspace --features static \
+              --target ${{ steps.get_target.outputs.name }}
 
       - name: Archive documentation
         uses: actions/upload-artifact@v3
@@ -69,22 +78,30 @@ jobs:
             LICENSE
             README.md
 
+      # Due to https://github.com/rust-lang/rust/issues/78210, we have to use
+      # the --target option, which puts all output files in a different path.
+      # Symlink that path to the normal output directory so that we don't need
+      # to specify the Rust triple everywhere.
+      - name: Symlink target directory
+        run: |
+          ln -sfn ${{ steps.get_target.outputs.name }}/release target/output
+
       # This is separate so we can have a flat directory structure.
       - name: Archive executable
         uses: actions/upload-artifact@v3
         with:
           name: avbroot-${{ steps.get_version.outputs.version }}-${{ steps.get_target.outputs.name }}
           path: |
-            target/release/avbroot
-            target/release/avbroot.exe
+            target/output/avbroot
+            target/output/avbroot.exe
 
       - name: Cache e2e executable
         uses: actions/cache@v3
         with:
           key: e2e-${{ github.sha }}-${{ runner.os }}
           path: |
-            target/release/e2e
-            target/release/e2e.exe
+            target/output/e2e
+            target/output/e2e.exe
 
   setup:
     name: Prepare workflow data
@@ -106,8 +123,8 @@ jobs:
           key: e2e-${{ github.sha }}-${{ runner.os }}
           fail-on-cache-miss: true
           path: |
-            target/release/e2e
-            target/release/e2e.exe
+            target/output/e2e
+            target/output/e2e.exe
 
       - name: Loading test config
         id: load-config
@@ -115,7 +132,7 @@ jobs:
         run: |
           echo 'config-path=e2e/e2e.toml' >> "${GITHUB_OUTPUT}"
           echo -n 'device-list=' >> "${GITHUB_OUTPUT}"
-          ../target/release/e2e list \
+          ../target/output/e2e list \
             | jq -cnR '[inputs | select(length > 0)]' \
             >> "${GITHUB_OUTPUT}"
 
@@ -207,10 +224,10 @@ jobs:
           key: e2e-${{ github.sha }}-${{ runner.os }}
           fail-on-cache-miss: true
           path: |
-            target/release/e2e
-            target/release/e2e.exe
+            target/output/e2e
+            target/output/e2e.exe
 
       # Finally run tests
       - name: Run test for ${{ matrix.device }}
         working-directory: e2e
-        run: ../target/release/e2e test --stripped -d ${{ matrix.device }}
+        run: ../target/output/e2e test --stripped -d ${{ matrix.device }}
