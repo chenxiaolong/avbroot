@@ -83,8 +83,10 @@ jobs:
       # Symlink that path to the normal output directory so that we don't need
       # to specify the Rust triple everywhere.
       - name: Symlink target directory
+        shell: bash
         run: |
-          ln -sfn ${{ steps.get_target.outputs.name }}/release target/output
+          rm -rf target/output
+          ln -s ${{ steps.get_target.outputs.name }}/release target/output
 
       # This is separate so we can have a flat directory structure.
       - name: Archive executable
