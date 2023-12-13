@@ -271,20 +271,12 @@ fn load_vbmeta_images(
     Ok(result)
 }
 
-/// Check if a partition is critical to AVB's chain of trust. This is not
-/// foolproof and uses a heuristic based on AOSP's boot process. OEM-specific
-/// partitions may be equally important, but it's infeasible to list them all.
+/// Check if a partition is critical to AVB's chain of trust and is meant to be
+/// validated by the bootloader instead of Android. dm-verity partitions cannot
+/// be statically checked without causing false positives because the fstab
+/// might be using the avb_keys=/path/to/pubkey option.
 fn is_critical_to_avb(name: &str) -> bool {
-    name.ends_with("boot")
-        || name.ends_with("dlkm")
-        || name.starts_with("system")
-        || name.starts_with("vbmeta")
-        || name.starts_with("vendor")
-        || name == "dtbo"
-        || name == "odm"
-        || name == "product"
-        || name == "pvmfw"
-        || name == "recovery"
+    name.ends_with("boot") || name.starts_with("vbmeta")
 }
 
 /// Check that all critical partitions within the payload are protected by a
