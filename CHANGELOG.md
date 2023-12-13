@@ -13,7 +13,7 @@
 * Add new `avbroot key decode-avb` command for converting AVB-encoded public keys to the standard PKCS8-encoded format ([PR #219])
 * Adjust AVB sanity check to validate `*_dlkm` and `odm` specifically because some devices have an unprotected `odm_ext` partition ([PR #220])
 * Add new `--otacerts-partition` option to override the autodetected partition for replacing `otacerts.zip` ([Issue #218], [PR #221])
-* Build precompiled executables as statically linked executables ([Issue #222], [PR #224])
+* Build precompiled executables as statically linked executables ([Issue #222], [PR #224], [PR #227])
 
 Behind-the-scenes changes:
 
@@ -188,3 +188,4 @@ Behind-the-scenes changes:
 [PR #220]: https://github.com/chenxiaolong/avbroot/pull/220
 [PR #221]: https://github.com/chenxiaolong/avbroot/pull/221
 [PR #224]: https://github.com/chenxiaolong/avbroot/pull/224
+[PR #227]: https://github.com/chenxiaolong/avbroot/pull/227
