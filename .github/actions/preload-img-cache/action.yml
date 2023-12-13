@@ -30,14 +30,14 @@ runs:
         key: e2e-${{ github.sha }}-${{ runner.os }}
         fail-on-cache-miss: true
         path: |
-          target/release/e2e
-          target/release/e2e.exe
+          target/output/e2e
+          target/output/e2e.exe
 
     - name: Downloading device image for ${{ inputs.device }}
       if: ${{ ! steps.cache-img.outputs.cache-hit }}
       shell: sh
       working-directory: e2e
-      run: ../target/release/e2e download --stripped -d ${{ inputs.device }}
+      run: ../target/output/e2e download --stripped -d ${{ inputs.device }}
 
     - if: ${{ ! steps.cache-img.outputs.cache-hit }}
       name: Creating sparse archive from image
