@@ -14,6 +14,7 @@
 * Adjust AVB sanity check to validate `*_dlkm` and `odm` specifically because some devices have an unprotected `odm_ext` partition ([PR #220])
 * Add new `--otacerts-partition` option to override the autodetected partition for replacing `otacerts.zip` ([Issue #218], [PR #221])
 * Build precompiled executables as statically linked executables ([Issue #222], [PR #224], [PR #227])
+* Limit critical partition check to bootloader-verified partitions ([Issue #223], [PR #226])
 
 Behind-the-scenes changes:
 
@@ -132,6 +133,7 @@ Behind-the-scenes changes:
 [Issue #203]: https://github.com/chenxiaolong/avbroot/issues/203
 [Issue #218]: https://github.com/chenxiaolong/avbroot/issues/218
 [Issue #222]: https://github.com/chenxiaolong/avbroot/issues/222
+[Issue #223]: https://github.com/chenxiaolong/avbroot/issues/223
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -188,4 +190,5 @@ Behind-the-scenes changes:
 [PR #220]: https://github.com/chenxiaolong/avbroot/pull/220
 [PR #221]: https://github.com/chenxiaolong/avbroot/pull/221
 [PR #224]: https://github.com/chenxiaolong/avbroot/pull/224
+[PR #226]: https://github.com/chenxiaolong/avbroot/pull/226
 [PR #227]: https://github.com/chenxiaolong/avbroot/pull/227
