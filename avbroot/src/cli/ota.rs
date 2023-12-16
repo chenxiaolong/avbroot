@@ -28,7 +28,7 @@ use x509_cert::Certificate;
 use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::{
-    boot::{self, BootImagePatcher, MagiskRootPatcher, OtaCertPatcher, PrepatchedImagePatcher},
+    boot::{self, BootImagePatcher, MagiskRootPatcher, OtaCertPatcher, PrepatchedImagePatcher, InitWrapperPatcher},
     cli::{self, status, warning},
     crypto::{self, PassphraseSource},
     format::{
@@ -127,7 +127,7 @@ pub fn get_required_images(
     let mut images = HashMap::new();
 
     for (k, v) in &by_type {
-        if k == "@otacerts" || k.starts_with("@vbmeta:") {
+        if k == "@otacerts" || k == "@gki_ramdisk" || k.starts_with("@vbmeta:") {
             images.insert(k.clone(), v.clone());
         }
     }
@@ -213,6 +213,12 @@ fn patch_boot_images(
             .or_default()
             .push(p);
     }
+
+    // We want our init wrapper to be the entry point, so do this last.
+    boot_patchers
+        .entry(&required_images["@gki_ramdisk"])
+        .or_default()
+        .push(Box::new(InitWrapperPatcher::new(cert_ota.clone())));
 
     status!(
         "Patching boot images: {}",

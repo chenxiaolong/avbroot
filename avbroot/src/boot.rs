@@ -452,25 +452,28 @@ impl OtaCertPatcher {
         Ok(certificates)
     }
 
+    /// Create a new otacerts archive. The old certs are ignored since flashing
+    /// a stock OTA will render the device unbootable.
+    fn create_zip(cert: &Certificate) -> Result<Vec<u8>> {
+        let raw_writer = Cursor::new(Vec::new());
+        let mut writer = ZipWriter::new(raw_writer);
+        let options = FileOptions::default().compression_method(CompressionMethod::Stored);
+        writer.start_file("ota.x509.pem", options)?;
+
+        crypto::write_pem_cert(&mut writer, cert)?;
+
+        let raw_writer = writer.finish()?;
+
+        Ok(raw_writer.into_inner())
+    }
+
     fn patch_ramdisk(&self, data: &mut Vec<u8>, cancel_signal: &AtomicBool) -> Result<bool> {
         let (mut entries, ramdisk_format) = load_ramdisk(data, cancel_signal)?;
         let Some(entry) = entries.iter_mut().find(|e| e.path == Self::OTACERTS_PATH) else {
             return Ok(false);
         };
 
-        // Create a new otacerts archive. The old certs are ignored since
-        // flashing a stock OTA will render the device unbootable.
-        {
-            let raw_writer = Cursor::new(Vec::new());
-            let mut writer = ZipWriter::new(raw_writer);
-            let options = FileOptions::default().compression_method(CompressionMethod::Stored);
-            writer.start_file("ota.x509.pem", options)?;
-
-            crypto::write_pem_cert(&mut writer, &self.cert)?;
-
-            let raw_writer = writer.finish()?;
-            entry.data = CpioEntryData::Data(raw_writer.into_inner());
-        }
+        entry.data = CpioEntryData::Data(Self::create_zip(&self.cert)?);
 
         // Repack ramdisk.
         *data = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
@@ -505,6 +508,70 @@ impl BootImagePatcher for OtaCertPatcher {
                 "No ramdisk contains {:?}",
                 Self::OTACERTS_PATH.as_bstr(),
             )));
+        }
+
+        Ok(())
+    }
+}
+
+/// Replace /init with a wrapper that will bind mount otacerts.zip containing
+/// the custom OTA certificate into the system partition.
+pub struct InitWrapperPatcher {
+    cert: Certificate,
+}
+
+impl InitWrapperPatcher {
+    pub fn new(cert: Certificate) -> Self {
+        Self { cert }
+    }
+
+    fn patch_ramdisk(&self, data: &mut Vec<u8>, cancel_signal: &AtomicBool) -> Result<bool> {
+        let (mut entries, ramdisk_format) = load_ramdisk(data, cancel_signal)?;
+
+        if let Some(entry) = entries.iter_mut().find(|e| e.path == b"init") {
+            entry.path = b"avbroot/init.orig".to_vec();
+        } else {
+            return Ok(false);
+        };
+
+        entries.push(CpioEntry::new_directory(b"avbroot", 0o755));
+        entries.push(CpioEntry::new_file(b"avbroot/otacerts.zip", 0o644,
+            CpioEntryData::Data(OtaCertPatcher::create_zip(&self.cert)?)));
+
+        // TODO
+        // How do we pick ABI
+        let init_data = std::fs::read("/home/chenxiaolong/git/github/avbroot/init/libs/arm64-v8a/init").unwrap();
+        entries.push(CpioEntry::new_file(b"init", 0o750, CpioEntryData::Data(init_data)));
+
+        cpio::sort(&mut entries);
+
+        *data = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
+
+        Ok(true)
+    }
+}
+
+impl BootImagePatcher for InitWrapperPatcher {
+    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
+        let patched_any = match boot_image {
+            BootImage::V0Through2(b) => self.patch_ramdisk(&mut b.ramdisk, cancel_signal)?,
+            BootImage::V3Through4(b) => self.patch_ramdisk(&mut b.ramdisk, cancel_signal)?,
+            BootImage::VendorV3Through4(b) => {
+                let mut patched = false;
+
+                for ramdisk in &mut b.ramdisks {
+                    if self.patch_ramdisk(ramdisk, cancel_signal)? {
+                        patched = true;
+                        break;
+                    }
+                }
+
+                patched
+            }
+        };
+
+        if !patched_any {
+            return Err(Error::Validation("No ramdisk contains init".to_owned()));
         }
 
         Ok(())
