@@ -17,7 +17,7 @@
 * Limit critical partition check to bootloader-verified partitions ([Issue #223], [PR #226])
 * Improve patching performance by spliiting new partition images into chunks and compressing them in parallel ([PR #228])
 * Also verify whole-partition hashes when running `avbroot ota verify` ([PR #229])
-* Add support for partially updating FEC data ([PR #230])
+* Add support for partially updating FEC data ([PR #230], [PR #231])
 
 Behind-the-scenes changes:
 
@@ -198,3 +198,4 @@ Behind-the-scenes changes:
 [PR #228]: https://github.com/chenxiaolong/avbroot/pull/228
 [PR #229]: https://github.com/chenxiaolong/avbroot/pull/229
 [PR #230]: https://github.com/chenxiaolong/avbroot/pull/230
+[PR #231]: https://github.com/chenxiaolong/avbroot/pull/231
