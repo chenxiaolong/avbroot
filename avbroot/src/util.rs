@@ -70,7 +70,9 @@ where
     let mut result = Vec::<Range<T>>::new();
 
     for section in sections {
-        if let Some(last) = result.last_mut() {
+        if section.start >= section.end {
+            continue;
+        } else if let Some(last) = result.last_mut() {
             if section.start <= last.end {
                 last.end = last.end.max(section.end);
                 continue;
