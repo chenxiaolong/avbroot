@@ -34,9 +34,10 @@ use crate::{
         InstallOperation, PartitionInfo, PartitionUpdate, Signatures,
     },
     stream::{
-        self, CountingReader, CountingWriter, FromReader, HashingWriter, ReadDiscardExt,
-        ReadSeekReopen, Reopen, SharedCursor, WriteSeek,
+        self, CountingReader, FromReader, HashingWriter, ReadDiscardExt, ReadSeekReopen, WriteSeek,
+        WriteSeekReopen,
     },
+    util,
 };
 
 const OTA_MAGIC: &[u8; 4] = b"CrAU";
@@ -535,98 +536,6 @@ impl<W: Write> Write for PayloadWriter<W> {
     }
 }
 
-/// A writer to produce a compressed partition image suitable for directly
-/// inserting into a `payload.bin`'s blob section. The data is XZ-compressed at
-/// a low compression level, primarily to collapse zeros, and the
-/// [`PartitionUpdate`] instance is updated with the final size and hash. The
-/// entire data will be represented as a single [`InstallOperation`] and
-/// [`InstallOperation::data_offset`] will be set to `None`.
-pub struct CompressedPartitionWriter<W: Write> {
-    inner: XzEncoder<HashingWriter<CountingWriter<W>>>,
-    block_size: u32,
-    h_uncompressed: Context,
-    written: u64,
-}
-
-impl<W: Write> CompressedPartitionWriter<W> {
-    pub fn new(writer: W, block_size: u32) -> Result<Self> {
-        let counting_writer = CountingWriter::new(writer);
-        let hashing_writer =
-            HashingWriter::new(counting_writer, Context::new(&ring::digest::SHA256));
-
-        // AOSP's payload_consumer does not support CRC during decompression.
-        // Also, we intentionally pick the lowest compression level since we
-        // primarily care about squishing zeros. The non-zero portions of boot
-        // images are usually already-compressed kernels and ramdisks.
-        let stream = Stream::new_easy_encoder(0, Check::None)?;
-        let xz_writer = XzEncoder::new_stream(hashing_writer, stream);
-
-        Ok(Self {
-            inner: xz_writer,
-            block_size,
-            h_uncompressed: Context::new(&ring::digest::SHA256),
-            written: 0,
-        })
-    }
-
-    /// Finish writing and update the [`PartitionUpdate`] instance with the new
-    /// size, hash, and install operation metadata.
-    pub fn finish(mut self, partition: &mut PartitionUpdate) -> Result<W> {
-        if self.written % u64::from(self.block_size) != 0 {
-            return Err(Error::InvalidPartitionSize {
-                name: partition.partition_name.clone(),
-                size: self.written,
-                block_size: self.block_size,
-            });
-        }
-
-        self.inner.flush()?;
-
-        let hashing_writer = self.inner.finish()?;
-        let digest_uncompressed = self.h_uncompressed.finish();
-        let (counting_writer, context_compressed) = hashing_writer.finish();
-        let digest_compressed = context_compressed.finish();
-        // XzEncoder::total_out() cannot be used for an exact byte count because
-        // XzEncoder::finish() writes data.
-        let (writer, size_compressed) = counting_writer.finish();
-
-        partition.new_partition_info = Some(PartitionInfo {
-            size: Some(self.written),
-            hash: Some(digest_uncompressed.as_ref().to_vec()),
-        });
-
-        let extent = Extent {
-            start_block: Some(0),
-            num_blocks: Some(self.written / u64::from(self.block_size)),
-        };
-
-        // data_offset must be manually updated by the caller.
-        let mut operation = InstallOperation::default();
-        operation.set_type(Type::ReplaceXz);
-        operation.data_length = Some(size_compressed);
-        operation.dst_extents.push(extent);
-        operation.data_sha256_hash = Some(digest_compressed.as_ref().to_vec());
-
-        partition.operations.clear();
-        partition.operations.push(operation);
-
-        Ok(writer)
-    }
-}
-
-impl<W: Write> Write for CompressedPartitionWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let n = self.inner.write(buf)?;
-        self.h_uncompressed.update(&buf[..n]);
-        self.written += n as u64;
-        Ok(n)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
 /// Verify the payload signatures using the specified certificate and check that
 /// the digests in `payload_properties.txt` are correct.
 pub fn verify_payload(
@@ -867,29 +776,29 @@ pub fn apply_operation(
     Ok(())
 }
 
-/// Extract the specified image from the payload into memory. This is done
-/// multithreaded and uses rayon's global thread pool. `open_payload` will be
-/// called from multiple threads.
-pub fn extract_image_to_memory(
+/// Extract the specified image from the payload. This is done multithreaded and
+/// uses rayon's global thread pool. Both the `payload` and `output` streams
+/// will be reopened from multiple threads.
+pub fn extract_image(
     payload: &(dyn ReadSeekReopen + Sync),
+    output: &(dyn WriteSeekReopen + Sync),
     header: &PayloadHeader,
     partition_name: &str,
     cancel_signal: &AtomicBool,
-) -> Result<SharedCursor> {
+) -> Result<()> {
     let partition = header
         .manifest
         .partitions
         .iter()
         .find(|p| p.partition_name == partition_name)
         .ok_or_else(|| Error::MissingPartition(partition_name.to_owned()))?;
-    let stream = SharedCursor::default();
 
     partition
         .operations
         .par_iter()
         .map(|op| -> Result<()> {
             let reader = payload.reopen_boxed()?;
-            let writer = stream.reopen()?;
+            let writer = output.reopen_boxed()?;
 
             apply_operation(
                 reader,
@@ -902,9 +811,7 @@ pub fn extract_image_to_memory(
 
             Ok(())
         })
-        .collect::<Result<_>>()?;
-
-    Ok(stream)
+        .collect::<Result<_>>()
 }
 
 /// Extract the specified partition images from the payload into writers. This
@@ -953,4 +860,136 @@ pub fn extract_images<'a>(
             Ok(())
         })
         .collect()
+}
+
+/// Compress the image and return the corresponding information to insert into
+/// the payload manifest's [`PartitionUpdate`] instance. The uncompressed data
+/// is split into 2 MiB chunks, which are read and compressed in parallel, and
+/// then written in parallel (but in order) to the output. Each chunk will have
+/// a corresponding [`InstallOperation`] in the return value. The caller must
+/// update [`InstallOperation::data_offset`] in each operation manually because
+/// the initial values are relative to 0.
+pub fn compress_image(
+    input: &(dyn ReadSeekReopen + Sync),
+    output: &(dyn WriteSeekReopen + Sync),
+    partition_name: &str,
+    block_size: u32,
+    cancel_signal: &AtomicBool,
+) -> Result<(PartitionInfo, Vec<InstallOperation>)> {
+    const CHUNK_SIZE: u64 = 2 * 1024 * 1024;
+    const CHUNK_GROUP: u64 = 32;
+
+    let file_size = input.reopen_boxed()?.seek(SeekFrom::End(0))?;
+    let final_chunk_different = file_size % CHUNK_SIZE != 0;
+
+    if file_size % u64::from(block_size) != 0 || CHUNK_SIZE % u64::from(block_size) != 0 {
+        return Err(Error::InvalidPartitionSize {
+            name: partition_name.to_owned(),
+            size: file_size,
+            block_size,
+        });
+    }
+
+    let chunks_total = util::div_ceil(file_size, CHUNK_SIZE);
+    let mut bytes_compressed = 0;
+    let mut context_uncompressed = Context::new(&ring::digest::SHA256);
+    let mut operations = vec![];
+
+    // Read the file one group at a time. This allows for some parallelization
+    // without reading the entire file into memory. This is necessary because we
+    // need to compute the checksum of the entire file.
+    while (operations.len() as u64) < chunks_total {
+        let chunks_done = operations.len() as u64;
+        let chunks_group = (chunks_total - chunks_done).min(CHUNK_GROUP);
+
+        let uncompressed_data_group = (chunks_done..chunks_done + chunks_group)
+            .into_par_iter()
+            .map(|chunk| -> Result<(u64, Vec<u8>)> {
+                let mut reader = input.reopen_boxed()?;
+                let offset = reader.seek(SeekFrom::Start(chunk * CHUNK_SIZE))?;
+
+                let chunk_size = if final_chunk_different && chunk == chunks_total - 1 {
+                    file_size % CHUNK_SIZE
+                } else {
+                    CHUNK_SIZE
+                };
+                let mut data = vec![0u8; chunk_size as usize];
+
+                stream::check_cancel(cancel_signal)?;
+                reader.read_exact(&mut data)?;
+
+                Ok((offset, data))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (_, data) in &uncompressed_data_group {
+            context_uncompressed.update(data);
+        }
+
+        let mut compressed_data_group = uncompressed_data_group
+            .into_par_iter()
+            .map(
+                |(raw_offset, raw_data)| -> Result<(Vec<u8>, InstallOperation)> {
+                    let reader = Cursor::new(raw_data.as_slice());
+                    let writer = Cursor::new(Vec::new());
+                    let hashing_writer =
+                        HashingWriter::new(writer, Context::new(&ring::digest::SHA256));
+
+                    // AOSP's payload_consumer does not support checking CRC during
+                    // decompression. Also, we intentionally pick the lowest
+                    // compression level since we primarily care about squishing
+                    // zeros. The non-zero portions of boot images are usually
+                    // already-compressed kernels and ramdisks.
+                    let stream = Stream::new_easy_encoder(0, Check::None)?;
+                    let mut xz_writer = XzEncoder::new_stream(hashing_writer, stream);
+
+                    stream::copy_n(reader, &mut xz_writer, raw_data.len() as u64, cancel_signal)?;
+
+                    let hashing_writer = xz_writer.finish()?;
+                    let (writer, context_compressed) = hashing_writer.finish();
+                    let digest_compressed = context_compressed.finish();
+                    let data = writer.into_inner();
+
+                    let extent = Extent {
+                        start_block: Some(raw_offset / u64::from(block_size)),
+                        num_blocks: Some(raw_data.len() as u64 / u64::from(block_size)),
+                    };
+
+                    let mut operation = InstallOperation::default();
+                    operation.set_type(Type::ReplaceXz);
+                    operation.data_length = Some(data.len() as u64);
+                    operation.dst_extents.push(extent);
+                    operation.data_sha256_hash = Some(digest_compressed.as_ref().to_vec());
+
+                    Ok((data, operation))
+                },
+            )
+            .collect::<Result<Vec<_>>>()?;
+
+        for (data, operation) in &mut compressed_data_group {
+            operation.data_offset = Some(bytes_compressed);
+            bytes_compressed += data.len() as u64;
+        }
+
+        let group_operations = compressed_data_group
+            .into_par_iter()
+            .map(|(data, operation)| -> Result<InstallOperation> {
+                let mut writer = output.reopen_boxed()?;
+                writer.seek(SeekFrom::Start(operation.data_offset.unwrap()))?;
+                writer.write_all(&data)?;
+
+                Ok(operation)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        operations.extend(group_operations.into_iter());
+    }
+
+    let digest_uncompressed = context_uncompressed.finish();
+    let partition_info = PartitionInfo {
+        size: Some(file_size),
+        hash: Some(digest_uncompressed.as_ref().to_vec()),
+    };
+
+    Ok((partition_info, operations))
 }

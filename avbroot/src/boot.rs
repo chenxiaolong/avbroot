@@ -528,7 +528,8 @@ impl PrepatchedImagePatcher {
     const MAX_LEVEL: u8 = 2;
 
     // We compile without Unicode support so we have to use [0-9] instead of \d.
-    const VERSION_REGEX: &'static str = r"Linux version ([0-9]+\.[0-9]+).[0-9]+-(android[0-9]+)-([0-9]+)-";
+    const VERSION_REGEX: &'static str =
+        r"Linux version ([0-9]+\.[0-9]+).[0-9]+-(android[0-9]+)-([0-9]+)-";
 
     pub fn new(
         prepatched: &Path,

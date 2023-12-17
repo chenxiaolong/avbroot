@@ -9,7 +9,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt::Display,
     fs::{self, File},
-    io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Mutex},
     time::Instant,
@@ -37,14 +37,14 @@ use crate::{
         bootimage::BootImage,
         ota::{self, SigningWriter, ZipEntry},
         padding,
-        payload::{self, CompressedPartitionWriter, PayloadHeader, PayloadWriter},
+        payload::{self, PayloadHeader, PayloadWriter},
     },
     protobuf::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
     },
     stream::{
-        self, CountingWriter, FromReader, HolePunchingWriter, PSeekFile, ReadSeek, ReadSeekReopen,
-        Reopen, SectionReader, ToWriter,
+        self, CountingWriter, FromReader, HolePunchingWriter, PSeekFile, ReadSeekReopen, Reopen,
+        SectionReader, ToWriter,
     },
     util,
 };
@@ -150,17 +150,18 @@ pub fn get_required_images(
     Ok(images)
 }
 
-/// Open all input streams listed in `required_images`. If an image has a path
-/// in `external_images`, the real file on the filesystem is opened. Otherwise,
-/// the image is extracted from the payload.
-fn open_input_streams(
+/// Open all input files listed in `required_images`. If an image has a path
+/// in `external_images`, that file is opened. Otherwise, the image is extracted
+/// from the payload into a temporary file (that is unnamed if supported by the
+/// operating system).
+fn open_input_files(
     payload: &(dyn ReadSeekReopen + Sync),
     required_images: &HashMap<String, String>,
     external_images: &HashMap<String, PathBuf>,
     header: &PayloadHeader,
     cancel_signal: &AtomicBool,
-) -> Result<HashMap<String, Box<dyn ReadSeek + Send>>> {
-    let mut input_streams = HashMap::<String, Box<dyn ReadSeek + Send>>::new();
+) -> Result<HashMap<String, PSeekFile>> {
+    let mut input_files = HashMap::<String, PSeekFile>::new();
 
     // We always include replacement images that the user specifies, even if
     // they don't need to be patched.
@@ -174,18 +175,23 @@ fn open_input_streams(
             status!("Opening external image: {name}: {path:?}");
 
             let file = File::open(path)
+                .map(PSeekFile::new)
                 .with_context(|| format!("Failed to open external image: {path:?}"))?;
-            input_streams.insert(name.clone(), Box::new(file));
+            input_files.insert(name.clone(), file);
         } else {
             status!("Extracting from original payload: {name}");
 
-            let stream = payload::extract_image_to_memory(payload, header, name, cancel_signal)
+            let file = tempfile::tempfile()
+                .map(PSeekFile::new)
+                .with_context(|| format!("Failed to create temp file for: {name}"))?;
+
+            payload::extract_image(payload, &file, header, name, cancel_signal)
                 .with_context(|| format!("Failed to extract from original payload: {name}"))?;
-            input_streams.insert(name.clone(), Box::new(stream));
+            input_files.insert(name.clone(), file);
         }
     }
 
-    Ok(input_streams)
+    Ok(input_files)
 }
 
 /// Patch the boot images listed in `required_images`. An [`OtaCertPatcher`] is
@@ -195,7 +201,7 @@ fn open_input_streams(
 /// be re-signed with `key_avb`.
 fn patch_boot_images(
     required_images: &HashMap<String, String>,
-    input_streams: &mut HashMap<String, Box<dyn ReadSeek + Send>>,
+    input_files: &mut HashMap<String, PSeekFile>,
     root_patcher: Option<Box<dyn BootImagePatcher + Send>>,
     key_avb: &RsaPrivateKey,
     cert_ota: &Certificate,
@@ -219,29 +225,31 @@ fn patch_boot_images(
         joined(sorted(boot_patchers.keys()))
     );
 
-    // Temporarily take the streams out of input_streams so we can easily
-    // run the patchers in parallel.
+    // Temporarily take the files out of input_files so we can easily run the
+    // patchers in parallel.
     let patchers_list = boot_patchers
         .into_iter()
-        .map(|(n, p)| (n, p, input_streams.remove(n).unwrap()))
+        .map(|(n, p)| (n, p, input_files.remove(n).unwrap()))
         .collect::<Vec<_>>();
 
     // Patch the boot images. The original readers are dropped.
     let patched = patchers_list
         .into_par_iter()
-        .map(|(n, p, s)| -> Result<(&str, Cursor<Vec<u8>>)> {
-            let mut writer = Cursor::new(Vec::new());
+        .map(|(n, p, f)| -> Result<(&str, PSeekFile)> {
+            let mut new_file = tempfile::tempfile()
+                .map(PSeekFile::new)
+                .with_context(|| format!("Failed to create temp file for: {n}"))?;
 
-            boot::patch_boot(s, &mut writer, key_avb, &p, cancel_signal)
+            boot::patch_boot(f, &mut new_file, key_avb, &p, cancel_signal)
                 .with_context(|| format!("Failed to patch boot image: {n}"))?;
 
-            Ok((n, writer))
+            Ok((n, new_file))
         })
         .collect::<Result<Vec<_>>>()?;
 
-    // Put the patched images back into input_streams.
-    for (name, stream) in patched {
-        input_streams.insert(name.to_owned(), Box::new(stream));
+    // Put the patched images back into input_files.
+    for (name, file) in patched {
+        input_files.insert(name.to_owned(), file);
     }
 
     Ok(())
@@ -251,7 +259,7 @@ fn patch_boot_images(
 /// then an error is returned because the vbmeta patching logic only ever writes
 /// root vbmeta images.
 fn load_vbmeta_images(
-    images: &mut HashMap<String, Box<dyn ReadSeek + Send>>,
+    images: &mut HashMap<String, PSeekFile>,
     vbmeta_images: &HashSet<String>,
 ) -> Result<HashMap<String, Header>> {
     let mut result = HashMap::new();
@@ -325,7 +333,7 @@ fn ensure_partitions_protected(
 /// determine the order to patch the vbmeta images so that it can be done in a
 /// single pass.
 fn get_vbmeta_patch_order(
-    images: &mut HashMap<String, Box<dyn ReadSeek + Send>>,
+    images: &mut HashMap<String, PSeekFile>,
     vbmeta_headers: &HashMap<String, Header>,
 ) -> Result<Vec<(String, HashSet<String>)>> {
     let mut dep_graph = HashMap::<&str, HashSet<String>>::new();
@@ -533,7 +541,7 @@ fn update_metadata_descriptors(parent_header: &mut Header, child_header: &Header
 /// replaced with a new in-memory reader containing the new image. Otherwise,
 /// the image is removed from `images` entirely to avoid needing to repack it.
 fn update_vbmeta_headers(
-    images: &mut HashMap<String, Box<dyn ReadSeek + Send>>,
+    images: &mut HashMap<String, PSeekFile>,
     headers: &mut HashMap<String, Header>,
     order: &mut [(String, HashSet<String>)],
     clear_vbmeta_flags: bool,
@@ -575,7 +583,9 @@ fn update_vbmeta_headers(
                 .sign(key)
                 .with_context(|| format!("Failed to sign vbmeta header for image: {name}"))?;
 
-            let mut writer = Cursor::new(Vec::new());
+            let mut writer = tempfile::tempfile()
+                .map(PSeekFile::new)
+                .with_context(|| format!("Failed to create temp file for: {name}"))?;
             parent_header
                 .to_writer(&mut writer)
                 .with_context(|| format!("Failed to write vbmeta image: {name}"))?;
@@ -583,7 +593,7 @@ fn update_vbmeta_headers(
             padding::write_zeros(&mut writer, block_size)
                 .with_context(|| format!("Failed to write vbmeta padding: {name}"))?;
 
-            *images.get_mut(name).unwrap() = Box::new(writer);
+            *images.get_mut(name).unwrap() = writer;
         } else {
             unchanged.insert(name.as_str());
         }
@@ -600,17 +610,19 @@ fn update_vbmeta_headers(
 /// Compress an image and update the OTA manifest partition entry appropriately.
 fn compress_image(
     name: &str,
-    mut stream: &mut Box<dyn ReadSeek + Send>,
+    file: &mut PSeekFile,
     header: &Mutex<PayloadHeader>,
     block_size: u32,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    stream.rewind()?;
+    file.rewind()?;
 
-    let writer = Cursor::new(Vec::new());
-    let mut compressed = CompressedPartitionWriter::new(writer, block_size)?;
+    let writer = tempfile::tempfile()
+        .map(PSeekFile::new)
+        .with_context(|| format!("Failed to create temp file for: {name}"))?;
 
-    stream::copy(&mut stream, &mut compressed, cancel_signal)?;
+    let (partition_info, operations) =
+        payload::compress_image(&*file, &writer, name, block_size, cancel_signal)?;
 
     let mut header_locked = header.lock().unwrap();
     let partition = header_locked
@@ -619,9 +631,11 @@ fn compress_image(
         .iter_mut()
         .find(|p| p.partition_name == name)
         .unwrap();
-    let writer = compressed.finish(partition)?;
 
-    *stream = Box::new(writer);
+    partition.new_partition_info = Some(partition_info);
+    partition.operations = operations;
+
+    *file = writer;
 
     Ok(())
 }
@@ -678,11 +692,11 @@ fn patch_ota_payload(
         .collect::<HashSet<_>>();
 
     // The set of source images to be inserted into the new payload, replacing
-    // what was in the original payload. Initially, this refers to either real
-    // files on the filesystem (--replace option) or in-memory files (extracted
-    // from the old payload). The values will be replaced later if the images
-    // need to be patched (eg. boot or vbmeta image).
-    let mut input_streams = open_input_streams(
+    // what was in the original payload. Initially, this refers to either user
+    // specified files (--replace option) or temporary files (extracted from the
+    // old payload). The values will be replaced later if the images need to be
+    // patched (eg. boot or vbmeta image).
+    let mut input_files = open_input_files(
         payload,
         &required_images,
         external_images,
@@ -692,18 +706,18 @@ fn patch_ota_payload(
 
     patch_boot_images(
         &required_images,
-        &mut input_streams,
+        &mut input_files,
         root_patcher,
         key_avb,
         cert_ota,
         cancel_signal,
     )?;
 
-    let mut vbmeta_headers = load_vbmeta_images(&mut input_streams, &vbmeta_images)?;
+    let mut vbmeta_headers = load_vbmeta_images(&mut input_files, &vbmeta_images)?;
 
     ensure_partitions_protected(&header_locked.manifest, &vbmeta_headers)?;
 
-    let mut vbmeta_order = get_vbmeta_patch_order(&mut input_streams, &vbmeta_headers)?;
+    let mut vbmeta_order = get_vbmeta_patch_order(&mut input_files, &vbmeta_headers)?;
 
     status!(
         "Patching vbmeta images: {}",
@@ -714,12 +728,12 @@ fn patch_ota_payload(
     for name in &vbmeta_images {
         // Linear search is fast enough.
         if !vbmeta_order.iter().any(|v| v.0 == *name) {
-            input_streams.remove(name);
+            input_files.remove(name);
         }
     }
 
     update_vbmeta_headers(
-        &mut input_streams,
+        &mut input_files,
         &mut vbmeta_headers,
         &mut vbmeta_order,
         clear_vbmeta_flags,
@@ -729,16 +743,16 @@ fn patch_ota_payload(
 
     status!(
         "Compressing replacement images: {}",
-        joined(sorted(input_streams.keys())),
+        joined(sorted(input_files.keys())),
     );
 
     let block_size = header_locked.manifest.block_size();
     drop(header_locked);
 
-    input_streams
+    input_files
         .par_iter_mut()
-        .map(|(name, stream)| -> Result<()> {
-            compress_image(name, stream, &header, block_size, cancel_signal)
+        .map(|(name, file)| -> Result<()> {
+            compress_image(name, file, &header, block_size, cancel_signal)
                 .with_context(|| format!("Failed to compress image: {name}"))
         })
         .collect::<Result<()>>()?;
@@ -762,25 +776,31 @@ fn patch_ota_payload(
             continue;
         };
 
-        if let Some(mut reader) = input_streams.remove(&name) {
-            // Copy from our replacement image.
+        let pi = payload_writer.partition_index().unwrap();
+        let oi = payload_writer.operation_index().unwrap();
+        let orig_partition = &header_locked.manifest.partitions[pi];
+        let orig_operation = &orig_partition.operations[oi];
+        let data_offset = orig_operation
+            .data_offset
+            .ok_or_else(|| anyhow!("Missing data_offset in partition #{pi} operation #{oi}"))?;
+
+        if let Some(reader) = input_files.get_mut(&name) {
+            // Copy from our replacement image. The compressed chunks are laid
+            // out sequentially and data_offset is set to the offset within that
+            // file.
             reader
-                .rewind()
+                .seek(SeekFrom::Start(data_offset))
                 .with_context(|| format!("Failed to seek image: {name}"))?;
 
-            stream::copy_n(&mut reader, &mut payload_writer, data_length, cancel_signal)
+            stream::copy_n(reader, &mut payload_writer, data_length, cancel_signal)
                 .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
         } else {
             // Copy from the original payload.
-            let pi = payload_writer.partition_index().unwrap();
-            let oi = payload_writer.operation_index().unwrap();
-            let orig_partition = &header_locked.manifest.partitions[pi];
-            let orig_operation = &orig_partition.operations[oi];
-
-            let data_offset = orig_operation
-                .data_offset
-                .and_then(|o| o.checked_add(header_locked.blob_offset))
-                .ok_or_else(|| anyhow!("Missing data_offset in partition #{pi} operation #{oi}"))?;
+            let data_offset = data_offset
+                .checked_add(header_locked.blob_offset)
+                .ok_or_else(|| {
+                    anyhow!("data_offset overflow in partition #{pi} operation #{oi}")
+                })?;
 
             orig_payload_reader
                 .seek(SeekFrom::Start(data_offset))
