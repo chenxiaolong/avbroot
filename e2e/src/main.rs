@@ -28,6 +28,7 @@ use avbroot::{
     format::{ota, payload::PayloadHeader},
     protobuf::chromeos_update_engine::install_operation::Type,
     stream::{self, FromReader, HashingReader, PSeekFile, Reopen, SectionReader},
+    util,
 };
 use clap::Parser;
 use tempfile::TempDir;
@@ -42,30 +43,9 @@ const DOWNLOAD_TASKS: usize = 4;
 const DOWNLOAD_RETRIES: u8 = 3;
 const DOWNLOAD_PROGRESS_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Sort and merge overlapping intervals.
-fn merge_overlapping(sections: &[Range<u64>]) -> Vec<Range<u64>> {
-    let mut sections = sections.to_vec();
-    sections.sort_by_key(|r| (r.start, r.end));
-
-    let mut result = Vec::<Range<u64>>::new();
-
-    for section in sections {
-        if let Some(last) = result.last_mut() {
-            if section.start <= last.end {
-                last.end = section.end;
-                continue;
-            }
-        }
-
-        result.push(section);
-    }
-
-    result
-}
-
 /// Convert an exclusion list into an inclusion list in the range [start, end).
 fn exclusion_to_inclusion(holes: &[Range<u64>], file_range: Range<u64>) -> Result<Vec<Range<u64>>> {
-    let exclusions = merge_overlapping(holes);
+    let exclusions = util::merge_overlapping(holes);
 
     if let (Some(first), Some(last)) = (exclusions.first(), exclusions.last()) {
         if first.start < file_range.start || last.end > file_range.end {
