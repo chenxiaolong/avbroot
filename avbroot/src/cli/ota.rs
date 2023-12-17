@@ -9,7 +9,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt::Display,
     fs::{self, File},
-    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Mutex},
     time::Instant,
@@ -20,7 +20,10 @@ use cap_std::{ambient_authority, fs::Dir};
 use cap_tempfile::TempDir;
 use clap::{value_parser, ArgAction, Args, Parser, Subcommand};
 use phf::phf_map;
-use rayon::prelude::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
+use rayon::{
+    iter::IntoParallelRefIterator,
+    prelude::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator},
+};
 use rsa::RsaPrivateKey;
 use tempfile::NamedTempFile;
 use topological_sort::TopologicalSort;
@@ -43,8 +46,8 @@ use crate::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
     },
     stream::{
-        self, CountingWriter, FromReader, HolePunchingWriter, PSeekFile, ReadSeekReopen, Reopen,
-        SectionReader, ToWriter,
+        self, CountingWriter, FromReader, HashingWriter, HolePunchingWriter, PSeekFile,
+        ReadSeekReopen, Reopen, SectionReader, ToWriter,
     },
     util,
 };
@@ -1060,6 +1063,54 @@ fn extract_ota_zip(
     Ok(())
 }
 
+fn verify_partition_hashes(
+    directory: &Dir,
+    header: &PayloadHeader,
+    images: &BTreeSet<String>,
+    cancel_signal: &AtomicBool,
+) -> Result<()> {
+    images
+        .par_iter()
+        .map(|name| -> Result<()> {
+            let partition = header
+                .manifest
+                .partitions
+                .iter()
+                .find(|p| p.partition_name == name.as_str())
+                .ok_or_else(|| anyhow!("Partition not found in header: {name}"))?;
+            let expected_digest = partition
+                .new_partition_info
+                .as_ref()
+                .and_then(|info| info.hash.as_ref())
+                .ok_or_else(|| anyhow!("Hash not found for partition: {name}"))?;
+
+            let path = format!("{name}.img");
+            let file = directory
+                .open(&path)
+                .with_context(|| format!("Failed to open for reading: {path:?}"))?;
+
+            let mut writer = HashingWriter::new(
+                io::sink(),
+                ring::digest::Context::new(&ring::digest::SHA256),
+            );
+
+            stream::copy(file, &mut writer, cancel_signal)?;
+
+            let digest = writer.finish().1.finish();
+
+            if digest.as_ref() != expected_digest {
+                bail!(
+                    "Expected sha256 {}, but have {} for partition {name}",
+                    hex::encode(expected_digest),
+                    hex::encode(digest),
+                );
+            }
+
+            Ok(())
+        })
+        .collect()
+}
+
 pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()> {
     let output = cli.output.as_ref().map_or_else(
         || {
@@ -1362,6 +1413,10 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         &unique_images,
         cancel_signal,
     )?;
+
+    status!("Verifying partition hashes");
+
+    verify_partition_hashes(&temp_dir, &header, &unique_images, cancel_signal)?;
 
     status!("Checking ramdisk's otacerts.zip");
 
