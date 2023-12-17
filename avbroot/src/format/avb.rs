@@ -475,7 +475,7 @@ impl HashTreeDescriptor {
         // Small files are hashed directly, exactly like a hash descriptor.
         if image_size <= u64::from(block_size) {
             let mut reader = input.reopen_boxed()?;
-            let mut buf = vec![0u8; block_size as usize];
+            let mut buf = vec![0u8; image_size as usize];
             reader.read_exact(&mut buf)?;
 
             let mut context = Context::new(algorithm);
