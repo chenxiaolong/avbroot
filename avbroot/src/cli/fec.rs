@@ -61,6 +61,24 @@ fn generate_subcommand(cli: &GenerateCli, cancel_signal: &AtomicBool) -> Result<
     Ok(())
 }
 
+fn update_subcommand(cli: &UpdateCli, cancel_signal: &AtomicBool) -> Result<()> {
+    let ranges = cli
+        .range
+        .chunks_exact(2)
+        .map(|w| w[0]..w[1])
+        .collect::<Vec<_>>();
+
+    let input = open_input(&cli.input, false)?;
+    let mut fec = read_fec(&cli.fec)?;
+
+    fec.update(&input, &ranges, cancel_signal)
+        .context("Failed to update FEC data")?;
+
+    write_fec(&cli.fec, &fec)?;
+
+    Ok(())
+}
+
 fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> {
     let input = open_input(&cli.input, false)?;
     let fec = read_fec(&cli.fec)?;
@@ -87,6 +105,7 @@ fn repair_subcommand(cli: &RepairCli, cancel_signal: &AtomicBool) -> Result<()> 
 pub fn fec_main(cli: &FecCli, cancel_signal: &AtomicBool) -> Result<()> {
     match &cli.command {
         FecCommand::Generate(c) => generate_subcommand(c, cancel_signal),
+        FecCommand::Update(c) => update_subcommand(c, cancel_signal),
         FecCommand::Verify(c) => verify_subcommand(c, cancel_signal),
         FecCommand::Repair(c) => repair_subcommand(c, cancel_signal),
     }
@@ -106,6 +125,26 @@ struct GenerateCli {
     /// Number of parity bytes per RS block (min 2, max 24).
     #[arg(short, long, value_name = "BYTES", default_value = "2")]
     parity: u8,
+}
+
+/// Update FEC data after a file is modified.
+#[derive(Debug, Parser)]
+struct UpdateCli {
+    /// Path to input data.
+    #[arg(short, long, value_name = "FILE", value_parser)]
+    input: PathBuf,
+
+    /// Path to FEC data.
+    ///
+    /// The file will be modified in place.
+    #[arg(short, long, value_name = "FILE", value_parser)]
+    fec: PathBuf,
+
+    /// Input file ranges that were updated.
+    ///
+    /// This is a half-open range and can be specified multiple times.
+    #[arg(short, long, value_names = ["START", "END"], num_args = 2)]
+    range: Vec<u64>,
 }
 
 /// Verify that a file contains no errors.
@@ -137,6 +176,7 @@ struct RepairCli {
 #[derive(Debug, Subcommand)]
 enum FecCommand {
     Generate(GenerateCli),
+    Update(UpdateCli),
     Verify(VerifyCli),
     Repair(RepairCli),
 }

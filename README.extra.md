@@ -175,6 +175,14 @@ The default behavior is to use 2 bytes of parity information per 253 bytes of in
 
 The number of parity bytes (between 2 and 24, inclusive) can be configured using `--parity`.
 
+### Updating FEC data
+
+```bash
+avbroot fec update -i <input data file> -f <output FEC file> [-r <start> <end>]...
+```
+
+This will update the FEC data corresponding to the specified regions. This can be significantly faster than generating new FEC data from scratch for large files if the regions where data was modified are known.
+
 ### Verifying a file
 
 ```bash

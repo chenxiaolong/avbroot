@@ -4,8 +4,10 @@
  */
 
 use std::{
+    collections::HashSet,
     fmt,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    ops::Range,
     sync::atomic::AtomicBool,
 };
 
@@ -204,6 +206,34 @@ impl Fec {
         let rs_k = u64::from(self.rs_k);
 
         offset / rs_k + offset % rs_k * self.rounds * u64::from(self.block_size)
+    }
+
+    /// Get the rounds that correspond to the specified ranges.
+    fn rounds_for_ranges(&self, ranges: &[Range<u64>]) -> Result<HashSet<u64>> {
+        let ranges = util::merge_overlapping(ranges);
+        if let Some(last) = ranges.last() {
+            if last.end > self.file_size {
+                return Err(Error::FieldOutOfBounds("ranges"));
+            }
+        }
+
+        let block_size = u64::from(self.block_size);
+        let mut result = HashSet::new();
+
+        for range in ranges {
+            let start_block = range.start / block_size;
+            let end_block = if range.end % block_size == 0 {
+                range.end / block_size
+            } else {
+                util::div_ceil(range.end, block_size)
+            };
+
+            for block in start_block..end_block {
+                result.insert(block % self.rounds);
+            }
+        }
+
+        Ok(result)
     }
 
     /// Read a raw sequential block from the backing file, starting at offset
@@ -433,6 +463,41 @@ impl Fec {
         Ok(fec)
     }
 
+    /// Update FEC data coreesponding to the specified file ranges.
+    ///
+    /// This function is multithreaded and uses rayon's global thread pool.
+    pub fn update(
+        &self,
+        input: &(dyn ReadSeekReopen + Sync),
+        fec: &mut [u8],
+        ranges: &[Range<u64>],
+        cancel_signal: &AtomicBool,
+    ) -> Result<()> {
+        let fec_size = self.fec_size();
+        if fec.len() != fec_size {
+            return Err(Error::InvalidFecSize {
+                input: self.file_size,
+                expected: fec_size,
+                actual: fec.len(),
+            });
+        }
+
+        let rounds_to_update = self.rounds_for_ranges(ranges)?;
+
+        fec.par_chunks_exact_mut(fec_size / self.rounds as usize)
+            .enumerate()
+            .filter(|(round, _)| rounds_to_update.contains(&(*round as u64)))
+            .map(|(round, buf)| -> Result<()> {
+                stream::check_cancel(cancel_signal)?;
+
+                let reader = input.reopen_boxed()?;
+                self.generate_one_round(reader, round as u64, buf)
+            })
+            .collect::<Result<()>>()?;
+
+        Ok(())
+    }
+
     /// Verify that the file contains no errors. This is significantly faster
     /// than [`Self::repair()`] if only error detection, not correction, is
     /// needed.
@@ -553,6 +618,17 @@ impl FecImage {
             data_size,
             parity,
         })
+    }
+
+    /// Update FEC data coreesponding to the specified file ranges.
+    pub fn update(
+        &mut self,
+        input: &(dyn ReadSeekReopen + Sync),
+        ranges: &[Range<u64>],
+        cancel_signal: &AtomicBool,
+    ) -> Result<()> {
+        let fec = Fec::new(self.data_size, FEC_BLOCK_SIZE as u32, self.parity)?;
+        fec.update(input, &mut self.fec, ranges, cancel_signal)
     }
 
     /// Check that a file contains no errors. This is significantly faster than
@@ -726,6 +802,31 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn rounds_for_ranges() {
+        let size = 2 * 253 * 4096;
+        let fec = Fec::new(size, 4096, 2).unwrap();
+
+        assert_eq!(fec.rounds_for_ranges(&[0..0]).unwrap(), HashSet::new(),);
+        assert_eq!(
+            fec.rounds_for_ranges(&[0..size]).unwrap(),
+            HashSet::from([0, 1]),
+        );
+        assert_eq!(fec.rounds_for_ranges(&[0..1]).unwrap(), HashSet::from([0]),);
+        assert_eq!(
+            fec.rounds_for_ranges(&[4095..4096]).unwrap(),
+            HashSet::from([0]),
+        );
+        assert_eq!(
+            fec.rounds_for_ranges(&[4095..4097]).unwrap(),
+            HashSet::from([0, 1]),
+        );
+        assert_eq!(
+            fec.rounds_for_ranges(&[size - 1..size]).unwrap(),
+            HashSet::from([1]),
+        );
+    }
+
     fn corrupt_byte(file: &mut SharedCursor, offset: u64) {
         let mut buf = [0u8; 1];
 
@@ -776,7 +877,9 @@ mod tests {
             corrupt_byte(&mut file, offset as u64);
         }
 
-        // Verify that all the single-byte errors can be fixed.
+        // Verify that all the single-byte errors can be fixed. We don't test
+        // for Error::TooManyErrors because of the chance of false positives due
+        // to the nature of RS.
         fec.repair(&file, &file, &fec_data, &cancel_signal).unwrap();
 
         let repaired_digest = {
@@ -787,12 +890,17 @@ mod tests {
         };
         assert_eq!(repaired_digest.as_ref(), orig_digest.as_ref());
 
-        // We don't test for Error::TooManyErrors because of the chance of false
-        // positives due to the nature of RS.
+        // Intentionally update some data.
+        corrupt_byte(&mut file, 0);
+        let mut fec_data_updated = fec_data.clone();
+        let fec_data = fec.generate(&file, &cancel_signal).unwrap();
+        fec.update(&file, &mut fec_data_updated, &[0..1], &cancel_signal)
+            .unwrap();
+        assert_eq!(fec_data_updated, fec_data);
     }
 
     #[test]
-    fn generate_verify_repair() {
+    fn generate_update_verify_repair() {
         for block_size in [1, 2, 4, 8, 16, 32, 64] {
             for rs_k in verityrs::FN_ENCODE.keys() {
                 println!("Testing block_size={block_size}, rs_k={rs_k}");

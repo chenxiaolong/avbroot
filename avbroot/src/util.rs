@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
-use std::{fmt, path::Path};
+use std::{fmt, ops::Range, path::Path};
 
 use num_traits::PrimInt;
 
@@ -57,4 +57,28 @@ pub fn div_ceil<T: PrimInt>(dividend: T, divisor: T) -> T {
         } else {
             T::zero()
         }
+}
+
+/// Sort and merge overlapping intervals.
+pub fn merge_overlapping<T>(sections: &[Range<T>]) -> Vec<Range<T>>
+where
+    T: Ord + Clone + Copy,
+{
+    let mut sections = sections.to_vec();
+    sections.sort_by_key(|r| (r.start, r.end));
+
+    let mut result = Vec::<Range<T>>::new();
+
+    for section in sections {
+        if let Some(last) = result.last_mut() {
+            if section.start <= last.end {
+                last.end = last.end.max(section.end);
+                continue;
+            }
+        }
+
+        result.push(section);
+    }
+
+    result
 }
