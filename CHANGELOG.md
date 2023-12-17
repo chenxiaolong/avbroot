@@ -18,6 +18,7 @@
 * Improve patching performance by spliiting new partition images into chunks and compressing them in parallel ([PR #228])
 * Also verify whole-partition hashes when running `avbroot ota verify` ([PR #229])
 * Add support for partially updating FEC data ([PR #230], [PR #231])
+* Fix hash tree calculation for images smaller than one block ([PR #232])
 
 Behind-the-scenes changes:
 
@@ -199,3 +200,4 @@ Behind-the-scenes changes:
 [PR #229]: https://github.com/chenxiaolong/avbroot/pull/229
 [PR #230]: https://github.com/chenxiaolong/avbroot/pull/230
 [PR #231]: https://github.com/chenxiaolong/avbroot/pull/231
+[PR #232]: https://github.com/chenxiaolong/avbroot/pull/232
