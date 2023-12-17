@@ -20,7 +20,7 @@ use thiserror::Error;
 use crate::{
     format::verityrs,
     stream::{self, FromReader, ReadSeekReopen, ToWriter, WriteSeekReopen, WriteZerosExt},
-    util::NumBytes,
+    util::{self, NumBytes},
 };
 
 // Not to be confused with the 255-byte RS block size.
@@ -111,11 +111,6 @@ impl Codeword {
     }
 }
 
-/// Since Rust's built-in .div_ceil() is still nightly-only.
-fn div_ceil(dividend: u64, divisor: u64) -> u64 {
-    dividend / divisor + u64::from(dividend % divisor != 0)
-}
-
 /// A type for performing FEC generation, verification, and error correction for
 /// a specific file size and Reed Solomon configuration. The implementation uses
 /// dm-verity's interleaving access pattern.
@@ -169,8 +164,8 @@ impl Fec {
             return Err(Error::UnsupportedParity(parity));
         }
 
-        let blocks = div_ceil(file_size, u64::from(block_size));
-        let rounds = div_ceil(blocks, u64::from(rs_k));
+        let blocks = util::div_ceil(file_size, u64::from(block_size));
+        let rounds = util::div_ceil(blocks, u64::from(rs_k));
 
         // Check upfront so we don't need to do checked multiplication later.
         rounds
