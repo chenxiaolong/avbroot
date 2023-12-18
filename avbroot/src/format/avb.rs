@@ -14,7 +14,6 @@ use bstr::ByteSlice;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use num_bigint_dig::{ModInverse, ToBigInt};
 use num_traits::{Pow, ToPrimitive};
-use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use ring::digest::{Algorithm, Context};
 use rsa::{traits::PublicKeyParts, BigUint, Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
@@ -25,6 +24,7 @@ use crate::{
     escape,
     format::{
         fec::{self, Fec},
+        hashtree::{self, HashTree},
         padding,
     },
     stream::{
@@ -92,10 +92,6 @@ pub enum Error {
     },
     #[error("RSA key size (0) is not compatible with any AVB signing algorithm")]
     UnsupportedKey(usize),
-    #[error("Expected root digest {expected}, but have {actual}")]
-    InvalidRootDigest { expected: String, actual: String },
-    #[error("Expected hash tree {expected}, but have {actual}")]
-    InvalidHashTree { expected: String, actual: String },
     #[error("Hash tree does not immediately follow image data")]
     HashTreeGap,
     #[error("FEC data does not immediately follow hash tree")]
@@ -112,6 +108,8 @@ pub enum Error {
     RsaVerify(#[source] rsa::Error),
     #[error("{0} byte image size is too small to fit header or footer")]
     ImageSizeTooSmall(u64),
+    #[error("Hash tree error")]
+    HashTree(#[from] hashtree::Error),
     #[error("FEC error")]
     Fec(#[from] fec::Error),
     #[error("I/O error")]
@@ -120,7 +118,7 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-fn ring_algorithm(name: &str, for_verify: bool) -> Result<&'static Algorithm> {
+pub(crate) fn ring_algorithm(name: &str, for_verify: bool) -> Result<&'static Algorithm> {
     match name {
         "sha1" if for_verify => Ok(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY),
         "sha256" => Ok(&ring::digest::SHA256),
@@ -382,156 +380,6 @@ impl HashTreeDescriptor {
     pub const FLAG_DO_NOT_USE_AB: u32 = 1 << 0;
     pub const FLAG_CHECK_AT_MOST_ONCE: u32 = 1 << 1;
 
-    /// Calculate the hash tree digests for a single level of the tree. If the
-    /// reader's position is block-aligned and `image_size` is a multiple of the
-    /// block size, then this function can also be used to calculate the digests
-    /// for a portion of a level.
-    ///
-    /// NOTE: The result is **not** padded to the block size.
-    fn hash_one_level(
-        mut reader: impl Read,
-        mut image_size: u64,
-        block_size: u32,
-        algorithm: &'static Algorithm,
-        salt: &[u8],
-        cancel_signal: &AtomicBool,
-    ) -> io::Result<Vec<u8>> {
-        // Each digest must be a power of 2.
-        let digest_padding = algorithm.output_len().next_power_of_two() - algorithm.output_len();
-        let mut buf = vec![0u8; block_size as usize];
-        let mut result = vec![];
-
-        while image_size > 0 {
-            stream::check_cancel(cancel_signal)?;
-
-            let n = image_size.min(buf.len() as u64) as usize;
-            reader.read_exact(&mut buf[..n])?;
-
-            // For undersized blocks, we still hash the whole buffer, except
-            // with padding.
-            buf[n..].fill(0);
-
-            let mut context = Context::new(algorithm);
-            context.update(salt);
-            context.update(&buf);
-
-            // Add the digest to the tree level. Each tree node must be a power
-            // of two.
-            let digest = context.finish();
-            result.extend(digest.as_ref());
-            result.resize(result.len() + digest_padding, 0);
-
-            image_size -= n as u64;
-        }
-
-        Ok(result)
-    }
-
-    /// Calls [`Self::hash_one_level()`] in parallel.
-    ///
-    /// NOTE: The result is **not** padded to the block size.
-    fn hash_one_level_parallel(
-        input: &(dyn ReadSeekReopen + Sync),
-        image_size: u64,
-        block_size: u32,
-        algorithm: &'static Algorithm,
-        salt: &[u8],
-        cancel_signal: &AtomicBool,
-    ) -> io::Result<Vec<u8>> {
-        assert!(
-            image_size > block_size as u64,
-            "Images smaller than block size must use a normal hash",
-        );
-
-        // Parallelize in 16 MiB chunks to avoid too much seek thrashing.
-        let chunk_size = padding::round(16 * 1024 * 1024, u64::from(block_size)).unwrap();
-        let chunk_count = image_size / chunk_size + u64::from(image_size % chunk_size != 0);
-
-        let pieces = (0..chunk_count)
-            .into_par_iter()
-            .map(|c| -> io::Result<Vec<u8>> {
-                let start = c * chunk_size;
-                let size = chunk_size.min(image_size - start);
-
-                let mut reader = input.reopen_boxed()?;
-                reader.seek(SeekFrom::Start(start))?;
-
-                Self::hash_one_level(reader, size, block_size, algorithm, salt, cancel_signal)
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-
-        Ok(pieces.into_iter().flatten().collect())
-    }
-
-    /// Calculate the hash tree for the given input in parallel.
-    fn calculate_hash_tree(
-        input: &(dyn ReadSeekReopen + Sync),
-        image_size: u64,
-        block_size: u32,
-        algorithm: &'static Algorithm,
-        salt: &[u8],
-        cancel_signal: &AtomicBool,
-    ) -> io::Result<(Vec<u8>, Vec<u8>)> {
-        // Small files are hashed directly, exactly like a hash descriptor.
-        if image_size <= u64::from(block_size) {
-            let mut reader = input.reopen_boxed()?;
-            let mut buf = vec![0u8; image_size as usize];
-            reader.read_exact(&mut buf)?;
-
-            let mut context = Context::new(algorithm);
-            context.update(salt);
-            context.update(&buf);
-            let digest = context.finish();
-
-            return Ok((digest.as_ref().to_vec(), vec![]));
-        }
-
-        // Large files use the hash tree.
-        let mut levels = Vec::<Vec<u8>>::new();
-        let mut level_size = image_size;
-
-        while level_size > u64::from(block_size) {
-            let mut level = if let Some(prev_level) = levels.last() {
-                // Hash the previous level.
-                Self::hash_one_level(
-                    Cursor::new(prev_level),
-                    level_size,
-                    block_size,
-                    algorithm,
-                    salt,
-                    cancel_signal,
-                )?
-            } else {
-                // Initially read from file.
-                Self::hash_one_level_parallel(
-                    input,
-                    level_size,
-                    block_size,
-                    algorithm,
-                    salt,
-                    cancel_signal,
-                )?
-            };
-
-            // Pad to the block size.
-            level.resize(padding::round(level.len(), block_size as usize).unwrap(), 0);
-
-            level_size = level.len() as u64;
-            levels.push(level);
-        }
-
-        // Calculate the root hash.
-        let mut context = Context::new(algorithm);
-        context.update(salt);
-        context.update(levels.last().unwrap());
-        let root_hash = context.finish().as_ref().to_vec();
-
-        // The tree is oriented such that the leaves are at the end.
-        let hash_tree = levels.into_iter().rev().flatten().collect();
-
-        Ok((root_hash, hash_tree))
-    }
-
     /// Ensure that the image data is immediately followed by the hash tree and
     /// then the FEC data.
     fn check_offsets(&self) -> Result<()> {
@@ -599,25 +447,20 @@ impl HashTreeDescriptor {
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         let algorithm = ring_algorithm(&self.hash_algorithm, false)?;
-        let (root_digest, hash_tree) = Self::calculate_hash_tree(
-            input,
-            self.image_size,
-            self.data_block_size,
-            algorithm,
-            &self.salt,
-            cancel_signal,
-        )?;
+        let hash_tree = HashTree::new(self.data_block_size, algorithm, &self.salt);
+        let (root_digest, hash_tree_data) =
+            hash_tree.generate(input, self.image_size, cancel_signal)?;
 
-        if hash_tree.len() > HASH_TREE_MAX_SIZE as usize {
+        if hash_tree_data.len() > HASH_TREE_MAX_SIZE as usize {
             return Err(Error::FieldOutOfBounds("tree_size"));
         }
 
-        let tree_size = hash_tree.len() as u64;
+        let tree_size = hash_tree_data.len() as u64;
 
         let mut writer = output.reopen_boxed()?;
         writer.seek(SeekFrom::Start(self.image_size))?;
         writer
-            .write_all(&hash_tree)
+            .write_all(&hash_tree_data)
             .map_err(|e| Error::WriteFieldError("hash_tree", e))?;
 
         // The FEC data section is optional.
@@ -675,40 +518,23 @@ impl HashTreeDescriptor {
             return Err(Error::FieldOutOfBounds("tree_size"));
         }
 
-        let (actual_root_digest, actual_hash_tree) = Self::calculate_hash_tree(
-            input,
-            self.image_size,
-            self.data_block_size,
-            algorithm,
-            &self.salt,
-            cancel_signal,
-        )?;
-
-        if self.root_digest != actual_root_digest {
-            return Err(Error::InvalidRootDigest {
-                expected: hex::encode(&self.root_digest),
-                actual: hex::encode(actual_root_digest),
-            });
-        }
-
         let mut reader = input.reopen_boxed()?;
         reader.seek(SeekFrom::Start(self.tree_offset))?;
 
-        let mut hash_tree = vec![0u8; self.tree_size as usize];
+        let mut hash_tree_data = vec![0u8; self.tree_size as usize];
         reader
-            .read_exact(&mut hash_tree)
+            .read_exact(&mut hash_tree_data)
             .map_err(|e| Error::ReadFieldError("hash_tree", e))?;
 
-        if hash_tree != actual_hash_tree {
-            // These are multiple megabytes, so only report the hashes.
-            let expected = ring::digest::digest(algorithm, &hash_tree);
-            let actual = ring::digest::digest(algorithm, &actual_hash_tree);
+        let hash_tree = HashTree::new(self.data_block_size, algorithm, &self.salt);
 
-            return Err(Error::InvalidHashTree {
-                expected: hex::encode(expected),
-                actual: hex::encode(actual),
-            });
-        }
+        hash_tree.verify(
+            input,
+            self.image_size,
+            &self.root_digest,
+            &hash_tree_data,
+            cancel_signal,
+        )?;
 
         // The FEC data section is optional.
         if self.fec_num_roots != 0 {
@@ -945,10 +771,11 @@ impl HashDescriptor {
         let digest = self.calculate(reader, true, cancel_signal)?;
 
         if self.root_digest != digest.as_ref() {
-            return Err(Error::InvalidRootDigest {
+            return Err(hashtree::Error::InvalidRootDigest {
                 expected: hex::encode(&self.root_digest),
                 actual: hex::encode(digest),
-            });
+            }
+            .into());
         }
 
         Ok(())

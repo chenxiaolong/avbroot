@@ -512,10 +512,7 @@ fn verify_and_repair(
             status!("Verifying hash tree descriptor{suffix}");
 
             match d.verify(&file, cancel_signal) {
-                Err(
-                    e @ avb::Error::InvalidRootDigest { .. }
-                    | e @ avb::Error::InvalidHashTree { .. },
-                ) if repair => {
+                Err(e @ avb::Error::HashTree(_)) if repair => {
                     warning!("Failed to verify hash tree descriptor{suffix}: {e}");
                     warning!("Attempting to repair using FEC data{suffix}");
 

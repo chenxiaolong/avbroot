@@ -178,7 +178,7 @@ The number of parity bytes (between 2 and 24, inclusive) can be configured using
 ### Updating FEC data
 
 ```bash
-avbroot fec update -i <input data file> -f <output FEC file> [-r <start> <end>]...
+avbroot fec update -i <input data file> -f <FEC file> [-r <start> <end>]...
 ```
 
 This will update the FEC data corresponding to the specified regions. This can be significantly faster than generating new FEC data from scratch for large files if the regions where data was modified are known.
@@ -202,3 +202,49 @@ avbroot fec repair -i <input/output data file> -f <input FEC file>
 This will repair the file in place. As described above, in each column, up to `parity / 2` bytes can be corrected.
 
 Note that FEC is **not** a replacement for checksums, like SHA-256. When there are too many errors, the file can potentially be "successfully repaired" to some incorrect data.
+
+## `avbroot hash-tree`
+
+This set of commands is for working with dm-verity hash tree data. They are not especially useful outside of debugging avbroot itself because the output format is custom. There is a custom header that sits in front of the standard dm-verity hash tree data.
+
+| Offsets    | Type   | Description                    |
+|------------|--------|--------------------------------|
+| 0..16      | ASCII  | `avbroot!hashtree` magic bytes |
+| 16..18     | U16LE  | Version (currently 1)          |
+| 18..26     | U64LE  | Image size                     |
+| 26..30     | U32LE  | Block size                     |
+| 30..46     | ASCII  | Hash algorithm                 |
+| 46..48     | U16LE  | Salt size                      |
+| 48..50     | U16LE  | Root digest size               |
+| 50..54     | U32LE  | Hash tree size                 |
+| (Variable) | BINARY | Salt                           |
+| (Variable) | BINARY | Root digest                    |
+| (Variable) | BINARY | Hash tree                      |
+
+For more information on the hash tree data, see the [Linux kernel documentation](https://docs.kernel.org/admin-guide/device-mapper/verity.html#hash-tree) or avbroot's implementation in [`hashtree.rs`](./avbroot/src/format/hashtree.rs).
+
+### Generating hash tree
+
+```bash
+avbroot hash-tree generate -i <input data file> -H <output hash tree file>
+```
+
+The default behavior is to use a block size of 4096, the `sha256` algorithm, and an empty salt. These can be changed with the `-b`, `-a`, and `-s` options, respectively.
+
+All parameters needed for verification are included in the hash tree file's header.
+
+### Updating hash tree
+
+```bash
+avbroot hash-tree update -i <input data file> -H <hash tree file> [-r <start> <end>]...
+```
+
+This will update the hash tree data corresponding to the specified regions. This can be significantly faster than generating new hash tree data from scratch for large files if the regions where data was modified are known.
+
+### Verifying a file
+
+```bash
+avbroot hash-tree verify -i <input data file> -H <input hash tree file>
+```
+
+This will check if the input file has any corrupted blocks. Currently, the command cannot report which specific blocks are corrupted, only whether the file is valid.
