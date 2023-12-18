@@ -22,7 +22,7 @@ Behind-the-scenes changes:
 
 * Fix lint warnings introduced in Rust 1.74.0 ([PR #211])
 * Temporarily silence [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) warning in cargo-deny ([PR #214])
-* Add support for partially updating FEC data ([PR #230], [PR #231])
+* Add support for partially updating FEC data ([PR #230], [PR #231], [PR #234])
 * Fix hash tree calculation for images smaller than one block ([PR #232])
 * Refactor hash tree code and add tests, CLI commands, and support for partial updates ([PR #233])
 
@@ -203,3 +203,4 @@ Behind-the-scenes changes:
 [PR #231]: https://github.com/chenxiaolong/avbroot/pull/231
 [PR #232]: https://github.com/chenxiaolong/avbroot/pull/232
 [PR #233]: https://github.com/chenxiaolong/avbroot/pull/233
+[PR #234]: https://github.com/chenxiaolong/avbroot/pull/234
