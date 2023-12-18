@@ -17,13 +17,14 @@
 * Limit critical partition check to bootloader-verified partitions ([Issue #223], [PR #226])
 * Improve patching performance by spliiting new partition images into chunks and compressing them in parallel ([PR #228])
 * Also verify whole-partition hashes when running `avbroot ota verify` ([PR #229])
-* Add support for partially updating FEC data ([PR #230], [PR #231])
-* Fix hash tree calculation for images smaller than one block ([PR #232])
 
 Behind-the-scenes changes:
 
 * Fix lint warnings introduced in Rust 1.74.0 ([PR #211])
 * Temporarily silence [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) warning in cargo-deny ([PR #214])
+* Add support for partially updating FEC data ([PR #230], [PR #231])
+* Fix hash tree calculation for images smaller than one block ([PR #232])
+* Refactor hash tree code and add tests, CLI commands, and support for partial updates ([PR #233])
 
 ### Version 2.3.3
 
@@ -201,3 +202,4 @@ Behind-the-scenes changes:
 [PR #230]: https://github.com/chenxiaolong/avbroot/pull/230
 [PR #231]: https://github.com/chenxiaolong/avbroot/pull/231
 [PR #232]: https://github.com/chenxiaolong/avbroot/pull/232
+[PR #233]: https://github.com/chenxiaolong/avbroot/pull/233
