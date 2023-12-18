@@ -469,8 +469,8 @@ impl Fec {
     pub fn update(
         &self,
         input: &(dyn ReadSeekReopen + Sync),
-        fec: &mut [u8],
         ranges: &[Range<u64>],
+        fec: &mut [u8],
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         let fec_size = self.fec_size();
@@ -628,7 +628,7 @@ impl FecImage {
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         let fec = Fec::new(self.data_size, FEC_BLOCK_SIZE as u32, self.parity)?;
-        fec.update(input, &mut self.fec, ranges, cancel_signal)
+        fec.update(input, ranges, &mut self.fec, cancel_signal)
     }
 
     /// Check that a file contains no errors. This is significantly faster than
@@ -894,7 +894,7 @@ mod tests {
         corrupt_byte(&mut file, 0);
         let mut fec_data_updated = fec_data.clone();
         let fec_data = fec.generate(&file, &cancel_signal).unwrap();
-        fec.update(&file, &mut fec_data_updated, &[0..1], &cancel_signal)
+        fec.update(&file, &[0..1], &mut fec_data_updated, &cancel_signal)
             .unwrap();
         assert_eq!(fec_data_updated, fec_data);
     }
