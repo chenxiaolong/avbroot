@@ -9,6 +9,7 @@ pub mod boot;
 pub mod completion;
 pub mod cpio;
 pub mod fec;
+pub mod hashtree;
 pub mod key;
 pub mod ota;
 

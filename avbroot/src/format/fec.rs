@@ -590,7 +590,7 @@ pub struct FecImage {
 
 impl fmt::Debug for FecImage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Fec")
+        f.debug_struct("FecImage")
             .field("fec", &NumBytes(self.fec.len()))
             .field("data_size", &self.data_size)
             .field("parity", &self.parity)
