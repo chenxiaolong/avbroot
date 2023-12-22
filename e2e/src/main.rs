@@ -24,7 +24,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use avbroot::{
-    cli::ota::{ExtractCli, PatchCli, VerifyCli},
+    cli::ota::{ExtractCli, PatchCli, RequiredImages, VerifyCli},
     format::{ota, payload::PayloadHeader},
     protobuf::chromeos_update_engine::install_operation::Type,
     stream::{self, FromReader, HashingReader, PSeekFile, Reopen, SectionReader},
@@ -96,14 +96,12 @@ fn strip_image(
     let header = PayloadHeader::from_reader(&mut payload_reader)
         .context("Failed to load OTA payload header")?;
 
-    let required_images =
-        avbroot::cli::ota::get_required_images(&header.manifest, Some("@gki_ramdisk"), None)?
-            .into_values()
-            .collect::<HashSet<_>>();
+    let required_images = RequiredImages::new(&header.manifest);
+    let required_images = required_images.iter().collect::<HashSet<_>>();
     let mut data_holes = vec![];
 
     for p in &header.manifest.partitions {
-        if !required_images.contains(&p.partition_name) {
+        if !required_images.contains(p.partition_name.as_str()) {
             for op in &p.operations {
                 match op.r#type() {
                     Type::Zero | Type::Discard => continue,
@@ -438,30 +436,6 @@ fn verify_image(input_file: &Path, cancel_signal: &AtomicBool) -> Result<()> {
     Ok(())
 }
 
-fn get_magisk_partition(path: &Path) -> Result<String> {
-    let raw_reader =
-        File::open(path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
-    let mut zip = ZipArchive::new(BufReader::new(raw_reader))
-        .with_context(|| format!("Failed to read zip: {path:?}"))?;
-    let payload_entry = zip
-        .by_name(ota::PATH_PAYLOAD)
-        .with_context(|| format!("Failed to open zip entry: {:?}", ota::PATH_PAYLOAD))?;
-    let payload_offset = payload_entry.data_start();
-    let payload_size = payload_entry.size();
-
-    drop(payload_entry);
-    let buf_reader = zip.into_inner();
-
-    // Open the payload data directly.
-    let mut payload_reader = SectionReader::new(buf_reader, payload_offset, payload_size)?;
-
-    let header = PayloadHeader::from_reader(&mut payload_reader)
-        .context("Failed to load OTA payload header")?;
-    let images = avbroot::cli::ota::get_partitions_by_type(&header.manifest)?;
-
-    Ok(images["@gki_ramdisk"].clone())
-}
-
 fn filter_devices<'a>(config: &'a Config, cli: &'a DeviceGroup) -> Result<BTreeSet<&'a str>> {
     let mut devices = config
         .device
@@ -711,13 +685,15 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
 
         // Patch again, but this time, use the previously patched boot image
         // instead of applying the Magisk patch.
-        let magisk_partition = get_magisk_partition(&patched_file)?;
+        let magisk_image = if info.hash.avb_images.contains_key("init_boot.img") {
+            "init_boot.img"
+        } else {
+            "boot.img"
+        };
+
         let prepatched_args = [
             OsStr::new("--prepatched").to_owned(),
-            temp_dir
-                .path()
-                .join(format!("{magisk_partition}.img"))
-                .into_os_string(),
+            temp_dir.path().join(magisk_image).into_os_string(),
         ];
 
         fs::remove_file(&patched_file)

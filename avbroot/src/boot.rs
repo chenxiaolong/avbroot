@@ -7,14 +7,19 @@ use std::{
     cmp::Ordering,
     collections::HashMap,
     fs::File,
-    io::{self, BufRead, BufReader, Cursor, Read, Seek, Write},
+    io::{self, BufRead, BufReader, Cursor, Read, Seek},
+    mem,
     num::ParseIntError,
     ops::Range,
     path::{Path, PathBuf},
+    slice,
     sync::atomic::AtomicBool,
 };
 
 use bstr::ByteSlice;
+use rayon::iter::{
+    IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
+};
 use regex::bytes::Regex;
 use ring::digest::Context;
 use rsa::RsaPrivateKey;
@@ -29,22 +34,22 @@ use zip::{result::ZipError, write::FileOptions, CompressionMethod, ZipArchive, Z
 use crate::{
     crypto,
     format::{
-        avb::{self, Descriptor},
+        avb::{self, AppendedDescriptorMut, Footer, Header},
         bootimage::{self, BootImage, BootImageExt, RamdiskMeta},
         compression::{self, CompressedFormat, CompressedReader, CompressedWriter},
         cpio::{self, CpioEntry, CpioEntryData},
     },
-    stream::{self, FromReader, HashingWriter, SectionReader, ToWriter},
+    stream::{self, FromReader, HashingWriter, ReadSeek, SectionReader, ToWriter, WriteSeek},
 };
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("No compatible boot image found for {0}")]
+    NoTargets(&'static str),
     #[error("Boot image has no vbmeta footer")]
     NoFooter,
     #[error("No hash descriptor found in vbmeta header")]
     NoHashDescriptor,
-    #[error("Found multiple hash descriptors in vbmeta header")]
-    MultipleHashDescriptors,
     #[error("Validation error: {0}")]
     Validation(String),
     #[error("Failed to parse Magisk version from line: {0:?}")]
@@ -97,8 +102,29 @@ fn save_ramdisk(
     Ok(raw_writer.into_inner())
 }
 
-pub trait BootImagePatcher {
-    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()>;
+pub struct BootImageInfo {
+    pub header: Header,
+    pub footer: Footer,
+    pub image_size: u64,
+    pub boot_image: BootImage,
+}
+
+pub trait BootImagePatch {
+    type Output;
+
+    fn patcher_name(&self) -> &'static str;
+
+    /// Inspect a set of possible candidate boot images and return a list of
+    /// image names that can be patched. Both the boot image and the AVB info
+    /// can be inspected, but during patching, only the boot image is available.
+    fn find_targets<'a>(
+        &self,
+        boot_images: &HashMap<&'a str, BootImageInfo>,
+        cancel_signal: &AtomicBool,
+    ) -> Result<Vec<&'a str>>;
+
+    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool)
+        -> Result<Self::Output>;
 }
 
 /// Root a boot image with Magisk.
@@ -260,8 +286,34 @@ impl MagiskRootPatcher {
     }
 }
 
-impl BootImagePatcher for MagiskRootPatcher {
-    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
+impl BootImagePatch for MagiskRootPatcher {
+    type Output = ();
+
+    fn patcher_name(&self) -> &'static str {
+        "MagiskRootPatcher"
+    }
+
+    fn find_targets<'a>(
+        &self,
+        boot_images: &HashMap<&'a str, BootImageInfo>,
+        _cancel_signal: &AtomicBool,
+    ) -> Result<Vec<&'a str>> {
+        let mut targets = vec![];
+
+        if boot_images.contains_key("init_boot") {
+            targets.push("init_boot");
+        } else if boot_images.contains_key("boot") {
+            targets.push("boot");
+        };
+
+        Ok(targets)
+    }
+
+    fn patch(
+        &self,
+        boot_image: &mut BootImage,
+        cancel_signal: &AtomicBool,
+    ) -> Result<Self::Output> {
         let zip_reader =
             File::open(&self.apk_path).map_err(|e| Error::File(self.apk_path.clone(), e))?;
         let mut zip = ZipArchive::new(BufReader::new(zip_reader))?;
@@ -428,6 +480,10 @@ impl OtaCertPatcher {
         let mut certificates = vec![];
 
         for ramdisk in ramdisks {
+            if ramdisk.is_empty() {
+                continue;
+            }
+
             let (entries, _) = load_ramdisk(ramdisk, cancel_signal)?;
             let Some(entry) = entries.iter().find(|e| e.path == Self::OTACERTS_PATH) else {
                 continue;
@@ -452,62 +508,110 @@ impl OtaCertPatcher {
         Ok(certificates)
     }
 
-    fn patch_ramdisk(&self, data: &mut Vec<u8>, cancel_signal: &AtomicBool) -> Result<bool> {
-        let (mut entries, ramdisk_format) = load_ramdisk(data, cancel_signal)?;
+    fn create_zip(&self) -> Result<Vec<u8>> {
+        let raw_writer = Cursor::new(Vec::new());
+        let mut writer = ZipWriter::new(raw_writer);
+        let options = FileOptions::default().compression_method(CompressionMethod::Stored);
+        writer.start_file("ota.x509.pem", options)?;
+
+        crypto::write_pem_cert(&mut writer, &self.cert)?;
+
+        let raw_writer = writer.finish()?;
+
+        Ok(raw_writer.into_inner())
+    }
+
+    fn patch_ramdisk(
+        &self,
+        ramdisk: &mut Vec<u8>,
+        zip: &[u8],
+        cancel_signal: &AtomicBool,
+    ) -> Result<Option<Vec<u8>>> {
+        let (mut entries, ramdisk_format) = load_ramdisk(ramdisk, cancel_signal)?;
         let Some(entry) = entries.iter_mut().find(|e| e.path == Self::OTACERTS_PATH) else {
-            return Ok(false);
+            return Ok(None);
         };
 
         // Create a new otacerts archive. The old certs are ignored since
         // flashing a stock OTA will render the device unbootable.
-        {
-            let raw_writer = Cursor::new(Vec::new());
-            let mut writer = ZipWriter::new(raw_writer);
-            let options = FileOptions::default().compression_method(CompressionMethod::Stored);
-            writer.start_file("ota.x509.pem", options)?;
-
-            crypto::write_pem_cert(&mut writer, &self.cert)?;
-
-            let raw_writer = writer.finish()?;
-            entry.data = CpioEntryData::Data(raw_writer.into_inner());
-        }
+        let new_data = CpioEntryData::Data(zip.to_vec());
+        let CpioEntryData::Data(old_data) = mem::replace(&mut entry.data, new_data) else {
+            unreachable!()
+        };
 
         // Repack ramdisk.
-        *data = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
+        *ramdisk = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
 
-        Ok(true)
+        Ok(Some(old_data))
     }
 }
 
-impl BootImagePatcher for OtaCertPatcher {
-    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
-        let patched_any = match boot_image {
-            BootImage::V0Through2(b) => self.patch_ramdisk(&mut b.ramdisk, cancel_signal)?,
-            BootImage::V3Through4(b) => self.patch_ramdisk(&mut b.ramdisk, cancel_signal)?,
-            BootImage::VendorV3Through4(b) => {
-                let mut patched = false;
+impl BootImagePatch for OtaCertPatcher {
+    type Output = (Vec<u8>, Vec<u8>);
 
-                for ramdisk in &mut b.ramdisks {
-                    if self.patch_ramdisk(ramdisk, cancel_signal)? {
-                        patched = true;
-                        break;
-                    }
+    fn patcher_name(&self) -> &'static str {
+        "OtaCertPatcher"
+    }
+
+    fn find_targets<'a>(
+        &self,
+        boot_images: &HashMap<&'a str, BootImageInfo>,
+        cancel_signal: &AtomicBool,
+    ) -> Result<Vec<&'a str>> {
+        let mut targets = vec![];
+
+        'outer: for (name, info) in boot_images {
+            let ramdisks = match &info.boot_image {
+                BootImage::V0Through2(b) => slice::from_ref(&b.ramdisk),
+                BootImage::V3Through4(b) => slice::from_ref(&b.ramdisk),
+                BootImage::VendorV3Through4(b) => &b.ramdisks,
+            };
+
+            for ramdisk in ramdisks {
+                if ramdisk.is_empty() {
+                    continue;
                 }
 
-                patched
+                let (entries, _) = load_ramdisk(ramdisk, cancel_signal)?;
+                if entries.iter().any(|e| e.path == Self::OTACERTS_PATH) {
+                    targets.push(*name);
+                    continue 'outer;
+                }
             }
+        }
+
+        Ok(targets)
+    }
+
+    fn patch(
+        &self,
+        boot_image: &mut BootImage,
+        cancel_signal: &AtomicBool,
+    ) -> Result<Self::Output> {
+        let ramdisks = match boot_image {
+            BootImage::V0Through2(b) => slice::from_mut(&mut b.ramdisk),
+            BootImage::V3Through4(b) => slice::from_mut(&mut b.ramdisk),
+            BootImage::VendorV3Through4(b) => &mut b.ramdisks,
         };
+
+        let new_zip = self.create_zip()?;
+
+        for ramdisk in ramdisks {
+            if ramdisk.is_empty() {
+                continue;
+            }
+
+            if let Some(old_zip) = self.patch_ramdisk(ramdisk, &new_zip, cancel_signal)? {
+                return Ok((old_zip, new_zip));
+            }
+        }
 
         // Fail hard if otacerts does not exist. We don't want to lock the user
         // out of future updates if the OTA certificate mechanism has changed.
-        if !patched_any {
-            return Err(Error::Validation(format!(
-                "No ramdisk contains {:?}",
-                Self::OTACERTS_PATH.as_bstr(),
-            )));
-        }
-
-        Ok(())
+        Err(Error::Validation(format!(
+            "No ramdisk contains {:?}",
+            Self::OTACERTS_PATH.as_bstr(),
+        )))
     }
 }
 
@@ -520,7 +624,7 @@ impl BootImagePatcher for OtaCertPatcher {
 pub struct PrepatchedImagePatcher {
     prepatched: PathBuf,
     fatal_level: u8,
-    warning_fn: Box<dyn Fn(&str) + Send>,
+    warning_fn: Box<dyn Fn(&str) + Send + Sync>,
 }
 
 impl PrepatchedImagePatcher {
@@ -534,13 +638,21 @@ impl PrepatchedImagePatcher {
     pub fn new(
         prepatched: &Path,
         fatal_level: u8,
-        warning_fn: impl Fn(&str) + Send + 'static,
+        warning_fn: impl Fn(&str) + Send + Sync + 'static,
     ) -> Self {
         Self {
             prepatched: prepatched.to_owned(),
             fatal_level,
             warning_fn: Box::new(warning_fn),
         }
+    }
+
+    fn load_prepatched_image(&self) -> Result<BootImage> {
+        let raw_reader =
+            File::open(&self.prepatched).map_err(|e| Error::File(self.prepatched.clone(), e))?;
+        let boot_image = BootImage::from_reader(BufReader::new(raw_reader))?;
+
+        Ok(boot_image)
     }
 
     fn get_kmi_version(kernel: &[u8]) -> Result<Option<String>> {
@@ -571,13 +683,43 @@ impl PrepatchedImagePatcher {
     }
 }
 
-impl BootImagePatcher for PrepatchedImagePatcher {
-    fn patch(&self, boot_image: &mut BootImage, _cancel_signal: &AtomicBool) -> Result<()> {
-        let prepatched_image = {
-            let raw_reader = File::open(&self.prepatched)
-                .map_err(|e| Error::File(self.prepatched.clone(), e))?;
-            BootImage::from_reader(BufReader::new(raw_reader))?
+impl BootImagePatch for PrepatchedImagePatcher {
+    type Output = ();
+
+    fn patcher_name(&self) -> &'static str {
+        "PrepatchedImagePatcher"
+    }
+
+    fn find_targets<'a>(
+        &self,
+        boot_images: &HashMap<&'a str, BootImageInfo>,
+        _cancel_signal: &AtomicBool,
+    ) -> Result<Vec<&'a str>> {
+        let prepatched_image = self.load_prepatched_image()?;
+
+        let has_kernel = match prepatched_image {
+            BootImage::V0Through2(b) => !b.kernel.is_empty(),
+            BootImage::V3Through4(b) => !b.kernel.is_empty(),
+            BootImage::VendorV3Through4(_) => false,
         };
+
+        let mut targets = vec![];
+
+        if !has_kernel && boot_images.contains_key("init_boot") {
+            targets.push("init_boot");
+        } else if boot_images.contains_key("boot") {
+            targets.push("boot");
+        };
+
+        Ok(targets)
+    }
+
+    fn patch(
+        &self,
+        boot_image: &mut BootImage,
+        _cancel_signal: &AtomicBool,
+    ) -> Result<Self::Output> {
+        let prepatched_image = self.load_prepatched_image()?;
 
         // Level 0: Warnings that don't affect booting
         // Level 1: Warnings that may affect booting
@@ -744,60 +886,181 @@ impl BootImagePatcher for PrepatchedImagePatcher {
     }
 }
 
-/// Run each patcher against the boot image with the vbmeta footer stripped off
-/// and then re-sign the image.
-pub fn patch_boot(
-    mut reader: impl Read + Seek,
-    writer: impl Write + Seek,
-    key: &RsaPrivateKey,
-    patchers: &[Box<dyn BootImagePatcher + Send>],
-    cancel_signal: &AtomicBool,
-) -> Result<()> {
-    let (mut header, footer, image_size) = avb::load_image(&mut reader)?;
-    let Some(mut footer) = footer else {
-        return Err(Error::NoFooter);
-    };
+pub enum BootImageOutput {
+    OtaCerts { old: Vec<u8>, new: Vec<u8> },
+    None,
+}
 
-    let section_reader = SectionReader::new(reader, 0, footer.original_image_size)?;
-    let mut boot_image = BootImage::from_reader(section_reader)?;
+#[allow(clippy::large_enum_variant)]
+pub enum BootImagePatcher {
+    MagiskRoot(MagiskRootPatcher),
+    OtaCert(OtaCertPatcher),
+    PrepatchedImage(PrepatchedImagePatcher),
+}
 
-    for patcher in patchers {
-        patcher.patch(&mut boot_image, cancel_signal)?;
-    }
+impl BootImagePatch for BootImagePatcher {
+    type Output = BootImageOutput;
 
-    let mut descriptor_iter = header.descriptors.iter_mut().filter_map(|d| {
-        if let Descriptor::Hash(h) = d {
-            Some(h)
-        } else {
-            None
+    fn patcher_name(&self) -> &'static str {
+        match self {
+            Self::MagiskRoot(p) => p.patcher_name(),
+            Self::OtaCert(p) => p.patcher_name(),
+            Self::PrepatchedImage(p) => p.patcher_name(),
         }
-    });
-
-    let Some(descriptor) = descriptor_iter.next() else {
-        return Err(Error::NoHashDescriptor);
-    };
-
-    // Write new boot image. We reuse the existing salt for the digest.
-    let mut context = Context::new(&ring::digest::SHA256);
-    context.update(&descriptor.salt);
-    let mut hashing_writer = HashingWriter::new(writer, context);
-    boot_image.to_writer(&mut hashing_writer)?;
-    let (mut writer, context) = hashing_writer.finish();
-
-    descriptor.image_size = writer.stream_position()?;
-    descriptor.hash_algorithm = "sha256".to_owned();
-    descriptor.root_digest = context.finish().as_ref().to_vec();
-
-    if descriptor_iter.next().is_some() {
-        return Err(Error::MultipleHashDescriptors);
     }
 
-    if !header.public_key.is_empty() {
-        header.set_algo_for_key(key)?;
-        header.sign(key)?;
+    fn find_targets<'a>(
+        &self,
+        boot_images: &HashMap<&'a str, BootImageInfo>,
+        cancel_signal: &AtomicBool,
+    ) -> Result<Vec<&'a str>> {
+        match self {
+            Self::MagiskRoot(p) => p.find_targets(boot_images, cancel_signal),
+            Self::OtaCert(p) => p.find_targets(boot_images, cancel_signal),
+            Self::PrepatchedImage(p) => p.find_targets(boot_images, cancel_signal),
+        }
     }
 
-    avb::write_appended_image(writer, &header, &mut footer, image_size)?;
+    fn patch(
+        &self,
+        boot_image: &mut BootImage,
+        cancel_signal: &AtomicBool,
+    ) -> Result<Self::Output> {
+        match self {
+            Self::MagiskRoot(p) => p
+                .patch(boot_image, cancel_signal)
+                .map(|_| BootImageOutput::None),
+            Self::OtaCert(p) => p
+                .patch(boot_image, cancel_signal)
+                .map(|(old, new)| BootImageOutput::OtaCerts { old, new }),
+            Self::PrepatchedImage(p) => p
+                .patch(boot_image, cancel_signal)
+                .map(|_| BootImageOutput::None),
+        }
+    }
+}
 
-    Ok(())
+pub fn load_boot_images<'a>(
+    names: &[&'a str],
+    open_input: impl Fn(&str) -> io::Result<Box<dyn ReadSeek>> + Sync,
+) -> Result<HashMap<&'a str, BootImageInfo>> {
+    names
+        .par_iter()
+        .map(|name| {
+            let mut reader = open_input(name)?;
+
+            let (header, footer, image_size) = avb::load_image(&mut reader)?;
+            let Some(footer) = footer else {
+                return Err(Error::NoFooter);
+            };
+
+            let section_reader = SectionReader::new(reader, 0, footer.original_image_size)?;
+            let boot_image = BootImage::from_reader(section_reader)?;
+
+            let info = BootImageInfo {
+                header,
+                footer,
+                image_size,
+                boot_image,
+            };
+
+            Ok((*name, info))
+        })
+        .collect()
+}
+
+/// Apply applicable patches to the list of specified boot images. For each
+/// image, the applicable patchers run in the same order as in `patchers`. All
+/// operations run in parallel where possible. Only the patcher execution for a
+/// given image is guaranteed to be sequential. The input and output files will
+/// be opened from multiple threads, but at most once each.
+pub fn patch_boot_images<'a>(
+    names: &[&'a str],
+    open_input: impl Fn(&str) -> io::Result<Box<dyn ReadSeek>> + Sync,
+    open_output: impl Fn(&str) -> io::Result<Box<dyn WriteSeek>> + Sync,
+    key: &RsaPrivateKey,
+    patchers: &[BootImagePatcher],
+    cancel_signal: &AtomicBool,
+) -> Result<HashMap<&'a str, Vec<BootImageOutput>>> {
+    // Preparse all images. Some patchers need to inspect every candidate.
+    let mut images = load_boot_images(names, open_input)?;
+
+    // Find the targets that each patcher wants to patch.
+    let all_targets = patchers
+        .par_iter()
+        .map(|p| {
+            p.find_targets(&images, cancel_signal).and_then(|targets| {
+                if targets.is_empty() {
+                    Err(Error::NoTargets(p.patcher_name()))
+                } else {
+                    Ok(targets)
+                }
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // Regroup data so we can parallelize by target.
+    let mut groups = HashMap::<&str, (BootImageInfo, Vec<&BootImagePatcher>)>::new();
+    for (patcher, targets) in patchers.iter().zip(all_targets.into_iter()) {
+        for target in targets {
+            groups
+                .entry(target)
+                .or_insert_with(|| (images.remove(target).unwrap(), vec![]))
+                .1
+                .push(patcher);
+        }
+    }
+
+    // Deallocate all untouched images.
+    drop(images);
+
+    // Apply all patches.
+    let outputs = groups
+        .par_iter_mut()
+        .map(
+            |(name, (info, patchers))| -> Result<(&str, Vec<BootImageOutput>)> {
+                let results = patchers
+                    .iter()
+                    .map(|p| p.patch(&mut info.boot_image, cancel_signal))
+                    .collect::<Result<Vec<_>>>()?;
+
+                Ok((name, results))
+            },
+        )
+        .collect::<Result<HashMap<_, _>>>()?;
+
+    // Resign and write new images.
+    groups
+        .into_par_iter()
+        .map(|(name, (mut info, _))| {
+            let AppendedDescriptorMut::Hash(descriptor) = info.header.appended_descriptor_mut()?
+            else {
+                return Err(Error::NoHashDescriptor);
+            };
+
+            let writer = open_output(name)?;
+
+            // Write new boot image. We reuse the existing salt for the digest.
+            let mut context = Context::new(&ring::digest::SHA256);
+            context.update(&descriptor.salt);
+            let mut hashing_writer = HashingWriter::new(writer, context);
+            info.boot_image.to_writer(&mut hashing_writer)?;
+            let (mut writer, context) = hashing_writer.finish();
+
+            descriptor.image_size = writer.stream_position()?;
+            descriptor.hash_algorithm = "sha256".to_owned();
+            descriptor.root_digest = context.finish().as_ref().to_vec();
+
+            if !info.header.public_key.is_empty() {
+                info.header.set_algo_for_key(key)?;
+                info.header.sign(key)?;
+            }
+
+            avb::write_appended_image(writer, &info.header, &mut info.footer, info.image_size)?;
+
+            Ok(())
+        })
+        .collect::<Result<()>>()?;
+
+    Ok(outputs)
 }

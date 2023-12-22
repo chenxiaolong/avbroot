@@ -19,10 +19,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use cap_std::{ambient_authority, fs::Dir};
 use cap_tempfile::TempDir;
 use clap::{value_parser, ArgAction, Args, Parser, Subcommand};
-use phf::phf_map;
 use rayon::{
     iter::IntoParallelRefIterator,
-    prelude::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator},
+    prelude::{IntoParallelRefMutIterator, ParallelIterator},
 };
 use rsa::RsaPrivateKey;
 use tempfile::NamedTempFile;
@@ -31,13 +30,15 @@ use x509_cert::Certificate;
 use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::{
-    boot::{self, BootImagePatcher, MagiskRootPatcher, OtaCertPatcher, PrepatchedImagePatcher},
+    boot::{
+        self, BootImagePatch, BootImagePatcher, MagiskRootPatcher, OtaCertPatcher,
+        PrepatchedImagePatcher,
+    },
     cli::{self, status, warning},
     crypto::{self, PassphraseSource},
     format::{
         avb::Header,
         avb::{self, Descriptor},
-        bootimage::BootImage,
         ota::{self, SigningWriter, ZipEntry},
         padding,
         payload::{self, PayloadHeader, PayloadWriter},
@@ -47,18 +48,9 @@ use crate::{
     },
     stream::{
         self, CountingWriter, FromReader, HashingWriter, HolePunchingWriter, PSeekFile,
-        ReadSeekReopen, Reopen, SectionReader, ToWriter,
+        ReadSeekReopen, Reopen, SectionReader, ToWriter, WriteSeekReopen,
     },
     util,
-};
-
-static PARTITION_PRIORITIES: phf::Map<&'static str, &[&'static str]> = phf_map! {
-    // The kernel is always in boot
-    "@gki_kernel" => &["boot"],
-    // Devices launching with Android 13 use a GKI init_boot ramdisk
-    "@gki_ramdisk" => &["init_boot", "boot"],
-    // OnePlus devices have a recovery image
-    "@otacerts" => &["recovery", "vendor_boot", "boot"],
 };
 
 fn joined(into_iter: impl IntoIterator<Item = impl Display>) -> String {
@@ -83,74 +75,51 @@ fn sorted<T: Ord>(iter: impl Iterator<Item = T>) -> Vec<T> {
     items
 }
 
-/// Get the set of partitions, grouped by type, based on the priorities listed
-/// in [`PARTITION_PRIORITIES`]. The result also includes every vbmeta partition
-/// prefixed with `@vbmeta:`.
-pub fn get_partitions_by_type(manifest: &DeltaArchiveManifest) -> Result<HashMap<String, String>> {
-    let all_partitions = manifest
-        .partitions
-        .iter()
-        .map(|p| p.partition_name.as_str())
-        .collect::<HashSet<_>>();
-    let mut by_type = HashMap::new();
+pub struct RequiredImages(HashSet<String>);
 
-    for (&t, candidates) in &PARTITION_PRIORITIES {
-        let &partition = candidates
+impl RequiredImages {
+    pub fn new(manifest: &DeltaArchiveManifest) -> Self {
+        let partitions = manifest
+            .partitions
             .iter()
-            .find(|p| all_partitions.contains(*p))
-            .ok_or_else(|| anyhow!("Cannot find partition of type: {t}"))?;
+            .map(|p| p.partition_name.as_str())
+            .filter(|n| Self::is_required(n))
+            .map(|n| n.to_owned())
+            .collect();
 
-        by_type.insert(t.to_owned(), partition.to_owned());
+        Self(partitions)
     }
 
-    for &partition in &all_partitions {
-        if partition.contains("vbmeta") {
-            by_type.insert(format!("@vbmeta:{partition}"), partition.to_owned());
-        }
+    fn is_required(name: &str) -> bool {
+        Self::is_boot(name) || Self::is_vbmeta(name)
     }
 
-    Ok(by_type)
+    fn is_boot(name: &str) -> bool {
+        name == "boot" || name == "init_boot" || name == "recovery" || name == "vendor_boot"
+    }
+
+    fn is_vbmeta(name: &str) -> bool {
+        name.starts_with("vbmeta")
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|n| n.as_str())
+    }
+
+    pub fn boot_partitions(&self) -> impl Iterator<Item = &str> {
+        self.iter().filter(|n| Self::is_boot(n))
+    }
+
+    pub fn vbmeta_partitions(&self) -> impl Iterator<Item = &str> {
+        self.iter().filter(|n| Self::is_vbmeta(n))
+    }
 }
 
-/// Get the list of partitions, grouped by type, that need to be patched. For
-/// the @vbmeta: type, this may include more partitions than necessary because
-/// it's not yet known which vbmeta partitions cover the contents of the other
-/// partitions.
-pub fn get_required_images(
-    manifest: &DeltaArchiveManifest,
-    rootpatch_partition: Option<&str>,
-    otacerts_partition: Option<&str>,
-) -> Result<HashMap<String, String>> {
-    let all_partitions = manifest
-        .partitions
-        .iter()
-        .map(|p| p.partition_name.as_str())
-        .collect::<HashSet<_>>();
-    let by_type = get_partitions_by_type(manifest)?;
-    let mut images = HashMap::new();
-
-    for (k, v) in &by_type {
-        if k == "@otacerts" || k.starts_with("@vbmeta:") {
-            images.insert(k.clone(), v.clone());
-        }
-    }
-
-    for (k, v) in [
-        ("@rootpatch", rootpatch_partition),
-        ("@otacerts", otacerts_partition),
-    ] {
-        if let Some(name) = v {
-            if by_type.contains_key(name) {
-                images.insert(k.to_owned(), by_type[name].clone());
-            } else if all_partitions.contains(name) {
-                images.insert(k.to_owned(), name.to_owned());
-            } else {
-                bail!("{k} partition not found: {name}");
-            }
-        }
-    }
-
-    Ok(images)
+struct InputFile {
+    file: PSeekFile,
+    /// Whether this input can be pruned if it's not directly needed for the
+    /// patching operation.
+    can_prune: bool,
 }
 
 /// Open all input files listed in `required_images`. If an image has a path
@@ -159,18 +128,18 @@ pub fn get_required_images(
 /// operating system).
 fn open_input_files(
     payload: &(dyn ReadSeekReopen + Sync),
-    required_images: &HashMap<String, String>,
+    required_images: &RequiredImages,
     external_images: &HashMap<String, PathBuf>,
     header: &PayloadHeader,
     cancel_signal: &AtomicBool,
-) -> Result<HashMap<String, PSeekFile>> {
-    let mut input_files = HashMap::<String, PSeekFile>::new();
+) -> Result<HashMap<String, InputFile>> {
+    let mut input_files = HashMap::<String, InputFile>::new();
 
     // We always include replacement images that the user specifies, even if
     // they don't need to be patched.
     let all_images = required_images
-        .values()
-        .chain(external_images.keys())
+        .iter()
+        .chain(external_images.keys().map(|k| k.as_str()))
         .collect::<HashSet<_>>();
 
     for name in all_images {
@@ -180,7 +149,13 @@ fn open_input_files(
             let file = File::open(path)
                 .map(PSeekFile::new)
                 .with_context(|| format!("Failed to open external image: {path:?}"))?;
-            input_files.insert(name.clone(), file);
+            input_files.insert(
+                name.to_owned(),
+                InputFile {
+                    file,
+                    can_prune: false,
+                },
+            );
         } else {
             status!("Extracting from original payload: {name}");
 
@@ -190,70 +165,71 @@ fn open_input_files(
 
             payload::extract_image(payload, &file, header, name, cancel_signal)
                 .with_context(|| format!("Failed to extract from original payload: {name}"))?;
-            input_files.insert(name.clone(), file);
+            input_files.insert(
+                name.to_owned(),
+                InputFile {
+                    file,
+                    can_prune: true,
+                },
+            );
         }
     }
 
     Ok(input_files)
 }
 
-/// Patch the boot images listed in `required_images`. An [`OtaCertPatcher`] is
-/// always applied to the `@otacerts` image to insert `cert_ota` into the
-/// trusted certificate list. If `root_patcher` is specified, then it is used to
-/// patch the `@rootpatch` image. If the original image is signed, then it will
-/// be re-signed with `key_avb`.
-fn patch_boot_images(
-    required_images: &HashMap<String, String>,
-    input_files: &mut HashMap<String, PSeekFile>,
-    root_patcher: Option<Box<dyn BootImagePatcher + Send>>,
+/// Patch the boot images listed in `required_images`. Not every image is
+/// necessarily patched. An [`OtaCertPatcher`] is always applied to the boot
+/// image that contains the trusted OTA certificate list. If `root_patcher` is
+/// specified, then it is used to patch the boot image for root access. If the
+/// original image is signed, then it will be re-signed with `key_avb`.
+fn patch_boot_images<'a, 'b: 'a>(
+    required_images: &'b RequiredImages,
+    input_files: &mut HashMap<String, InputFile>,
+    root_patcher: Option<BootImagePatcher>,
     key_avb: &RsaPrivateKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let mut boot_patchers = HashMap::<&str, Vec<Box<dyn BootImagePatcher + Send>>>::new();
-    boot_patchers
-        .entry(&required_images["@otacerts"])
-        .or_default()
-        .push(Box::new(OtaCertPatcher::new(cert_ota.clone())));
+    let input_files = Mutex::new(input_files);
+    let mut boot_patchers = vec![BootImagePatcher::OtaCert(OtaCertPatcher::new(
+        cert_ota.clone(),
+    ))];
 
     if let Some(p) = root_patcher {
-        boot_patchers
-            .entry(&required_images["@rootpatch"])
-            .or_default()
-            .push(p);
+        boot_patchers.push(p);
     }
+
+    let boot_partitions = required_images.boot_partitions().collect::<Vec<_>>();
 
     status!(
         "Patching boot images: {}",
-        joined(sorted(boot_patchers.keys()))
+        joined(sorted(boot_partitions.iter())),
     );
 
-    // Temporarily take the files out of input_files so we can easily run the
-    // patchers in parallel.
-    let patchers_list = boot_patchers
-        .into_iter()
-        .map(|(n, p)| (n, p, input_files.remove(n).unwrap()))
-        .collect::<Vec<_>>();
-
-    // Patch the boot images. The original readers are dropped.
-    let patched = patchers_list
-        .into_par_iter()
-        .map(|(n, p, f)| -> Result<(&str, PSeekFile)> {
-            let mut new_file = tempfile::tempfile()
-                .map(PSeekFile::new)
-                .with_context(|| format!("Failed to create temp file for: {n}"))?;
-
-            boot::patch_boot(f, &mut new_file, key_avb, &p, cancel_signal)
-                .with_context(|| format!("Failed to patch boot image: {n}"))?;
-
-            Ok((n, new_file))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    // Put the patched images back into input_files.
-    for (name, file) in patched {
-        input_files.insert(name.to_owned(), file);
-    }
+    boot::patch_boot_images(
+        &boot_partitions,
+        |name| {
+            let locked = input_files.lock().unwrap();
+            ReadSeekReopen::reopen_boxed(&locked[name].file)
+        },
+        |name| {
+            let mut locked = input_files.lock().unwrap();
+            let input_file = locked.get_mut(name).unwrap();
+            input_file.file = tempfile::tempfile().map(PSeekFile::new)?;
+            input_file.can_prune = false;
+            WriteSeekReopen::reopen_boxed(&input_file.file)
+        },
+        key_avb,
+        &boot_patchers,
+        cancel_signal,
+    )
+    .with_context(|| {
+        format!(
+            "Failed to patch boot images: {}",
+            joined(sorted(boot_partitions.iter())),
+        )
+    })?;
 
     Ok(())
 }
@@ -262,21 +238,21 @@ fn patch_boot_images(
 /// then an error is returned because the vbmeta patching logic only ever writes
 /// root vbmeta images.
 fn load_vbmeta_images(
-    images: &mut HashMap<String, PSeekFile>,
-    vbmeta_images: &HashSet<String>,
+    images: &mut HashMap<String, InputFile>,
+    vbmeta_images: &HashSet<&str>,
 ) -> Result<HashMap<String, Header>> {
     let mut result = HashMap::new();
 
-    for name in vbmeta_images {
-        let reader = images.get_mut(name).unwrap();
-        let (header, footer, _) = avb::load_image(reader)
+    for &name in vbmeta_images {
+        let input_file = images.get_mut(name).unwrap();
+        let (header, footer, _) = avb::load_image(&mut input_file.file)
             .with_context(|| format!("Failed to load vbmeta image: {name}"))?;
 
         if let Some(f) = footer {
             bail!("{name} is a vbmeta partition, but has a footer: {f:?}");
         }
 
-        result.insert(name.clone(), header);
+        result.insert(name.to_owned(), header);
     }
 
     Ok(result)
@@ -336,25 +312,29 @@ fn ensure_partitions_protected(
 /// determine the order to patch the vbmeta images so that it can be done in a
 /// single pass.
 fn get_vbmeta_patch_order(
-    images: &mut HashMap<String, PSeekFile>,
+    images: &mut HashMap<String, InputFile>,
     vbmeta_headers: &HashMap<String, Header>,
 ) -> Result<Vec<(String, HashSet<String>)>> {
     let mut dep_graph = HashMap::<&str, HashSet<String>>::new();
     let mut missing = images.keys().cloned().collect::<BTreeSet<_>>();
 
-    for (name, header) in vbmeta_headers {
-        dep_graph.insert(name, HashSet::new());
-        missing.remove(name);
+    for (vbmeta_name, header) in vbmeta_headers {
+        dep_graph.insert(vbmeta_name, HashSet::new());
+        missing.remove(vbmeta_name);
 
         for descriptor in &header.descriptors {
             let Some(partition_name) = descriptor.partition_name() else {
                 continue;
             };
 
-            // Ignore partitions that are guaranteed to not be modified.
-            if images.contains_key(partition_name) {
+            // Only consider (chained) vbmeta partitions and other partitions
+            // that were modified during patching.
+            if images.contains_key(partition_name)
+                && (vbmeta_headers.contains_key(partition_name)
+                    || !images[partition_name].can_prune)
+            {
                 dep_graph
-                    .get_mut(name.as_str())
+                    .get_mut(vbmeta_name.as_str())
                     .unwrap()
                     .insert(partition_name.to_owned());
                 missing.remove(partition_name);
@@ -544,15 +524,13 @@ fn update_metadata_descriptors(parent_header: &mut Header, child_header: &Header
 /// replaced with a new in-memory reader containing the new image. Otherwise,
 /// the image is removed from `images` entirely to avoid needing to repack it.
 fn update_vbmeta_headers(
-    images: &mut HashMap<String, PSeekFile>,
+    images: &mut HashMap<String, InputFile>,
     headers: &mut HashMap<String, Header>,
     order: &mut [(String, HashSet<String>)],
     clear_vbmeta_flags: bool,
     key: &RsaPrivateKey,
     block_size: u64,
 ) -> Result<()> {
-    let mut unchanged = HashSet::new();
-
     for (name, deps) in order {
         let parent_header = headers.get_mut(name).unwrap();
         let orig_parent_header = parent_header.clone();
@@ -569,8 +547,8 @@ fn update_vbmeta_headers(
         }
 
         for dep in deps.iter() {
-            let reader = images.get_mut(dep).unwrap();
-            let (header, _, _) = avb::load_image(reader)
+            let input_file = images.get_mut(dep).unwrap();
+            let (header, _, _) = avb::load_image(&mut input_file.file)
                 .with_context(|| format!("Failed to load vbmeta footer from image: {dep}"))?;
 
             update_security_descriptors(parent_header, &header, name, dep)?;
@@ -596,15 +574,10 @@ fn update_vbmeta_headers(
             padding::write_zeros(&mut writer, block_size)
                 .with_context(|| format!("Failed to write vbmeta padding: {name}"))?;
 
-            *images.get_mut(name).unwrap() = writer;
-        } else {
-            unchanged.insert(name.as_str());
+            let input_file = images.get_mut(name).unwrap();
+            input_file.file = writer;
+            input_file.can_prune = false;
         }
-    }
-
-    // No need to package a replacement image if it's unchanged.
-    for name in unchanged {
-        images.remove(name);
     }
 
     Ok(())
@@ -648,9 +621,7 @@ fn patch_ota_payload(
     payload: &(dyn ReadSeekReopen + Sync),
     writer: impl Write,
     external_images: &HashMap<String, PathBuf>,
-    rootpatch_partition: Option<&str>,
-    otacerts_partition: Option<&str>,
-    root_patcher: Option<Box<dyn BootImagePatcher + Send>>,
+    root_patcher: Option<BootImagePatcher>,
     clear_vbmeta_flags: bool,
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
@@ -683,16 +654,8 @@ fn patch_ota_payload(
     // Determine what images need to be patched. For simplicity, we pre-read all
     // vbmeta images since they're tiny. They're discarded later if the they
     // don't need to be modified.
-    let required_images = get_required_images(
-        &header_locked.manifest,
-        rootpatch_partition,
-        otacerts_partition,
-    )?;
-    let vbmeta_images = required_images
-        .iter()
-        .filter(|(n, _)| n.starts_with("@vbmeta:"))
-        .map(|(_, p)| p.clone())
-        .collect::<HashSet<_>>();
+    let required_images = RequiredImages::new(&header_locked.manifest);
+    let vbmeta_images = required_images.vbmeta_partitions().collect::<HashSet<_>>();
 
     // The set of source images to be inserted into the new payload, replacing
     // what was in the original payload. Initially, this refers to either user
@@ -716,6 +679,10 @@ fn patch_ota_payload(
         cancel_signal,
     )?;
 
+    // Main patching operation is done. Unmodified boot images no longer need to
+    // be kept around.
+    input_files.retain(|n, f| !f.can_prune || vbmeta_images.contains(n.as_str()));
+
     let mut vbmeta_headers = load_vbmeta_images(&mut input_files, &vbmeta_images)?;
 
     ensure_partitions_protected(&header_locked.manifest, &vbmeta_headers)?;
@@ -727,14 +694,6 @@ fn patch_ota_payload(
         joined(vbmeta_order.iter().map(|(n, _)| n)),
     );
 
-    // Get rid of input readers for vbmeta partitions we don't need to modify.
-    for name in &vbmeta_images {
-        // Linear search is fast enough.
-        if !vbmeta_order.iter().any(|v| v.0 == *name) {
-            input_files.remove(name);
-        }
-    }
-
     update_vbmeta_headers(
         &mut input_files,
         &mut vbmeta_headers,
@@ -743,6 +702,9 @@ fn patch_ota_payload(
         key_avb,
         header_locked.manifest.block_size().into(),
     )?;
+
+    // Unmodified vbmeta images no longer need to be kept around either.
+    input_files.retain(|_, f| !f.can_prune);
 
     status!(
         "Compressing replacement images: {}",
@@ -754,9 +716,15 @@ fn patch_ota_payload(
 
     input_files
         .par_iter_mut()
-        .map(|(name, file)| -> Result<()> {
-            compress_image(name, file, &header, block_size, cancel_signal)
-                .with_context(|| format!("Failed to compress image: {name}"))
+        .map(|(name, input_file)| -> Result<()> {
+            compress_image(
+                name,
+                &mut input_file.file,
+                &header,
+                block_size,
+                cancel_signal,
+            )
+            .with_context(|| format!("Failed to compress image: {name}"))
         })
         .collect::<Result<()>>()?;
 
@@ -787,16 +755,22 @@ fn patch_ota_payload(
             .data_offset
             .ok_or_else(|| anyhow!("Missing data_offset in partition #{pi} operation #{oi}"))?;
 
-        if let Some(reader) = input_files.get_mut(&name) {
+        if let Some(input_file) = input_files.get_mut(&name) {
             // Copy from our replacement image. The compressed chunks are laid
             // out sequentially and data_offset is set to the offset within that
             // file.
-            reader
+            input_file
+                .file
                 .seek(SeekFrom::Start(data_offset))
                 .with_context(|| format!("Failed to seek image: {name}"))?;
 
-            stream::copy_n(reader, &mut payload_writer, data_length, cancel_signal)
-                .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
+            stream::copy_n(
+                &mut input_file.file,
+                &mut payload_writer,
+                data_length,
+                cancel_signal,
+            )
+            .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
         } else {
             // Copy from the original payload.
             let data_offset = data_offset
@@ -832,9 +806,7 @@ fn patch_ota_zip(
     zip_reader: &mut ZipArchive<impl Read + Seek>,
     mut zip_writer: &mut ZipWriter<impl Write>,
     external_images: &HashMap<String, PathBuf>,
-    rootpatch_partition: Option<&str>,
-    otacerts_partition: Option<&str>,
-    mut root_patch: Option<Box<dyn BootImagePatcher + Send>>,
+    mut root_patch: Option<BootImagePatcher>,
     clear_vbmeta_flags: bool,
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
@@ -953,8 +925,6 @@ fn patch_ota_zip(
                     &payload_reader,
                     &mut writer,
                     external_images,
-                    rootpatch_partition,
-                    otacerts_partition,
                     // There's only one payload in the OTA.
                     root_patch.take(),
                     clear_vbmeta_flags,
@@ -1112,6 +1082,10 @@ fn verify_partition_hashes(
 }
 
 pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()> {
+    if cli.boot_partition.is_some() {
+        warning!("Ignoring --boot-partition: deprecated and no longer needed");
+    }
+
     let output = cli.output.as_ref().map_or_else(
         || {
             let mut s = cli.input.clone().into_os_string();
@@ -1158,26 +1132,31 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         external_images.insert(name.to_owned(), path.to_owned());
     }
 
-    let root_patcher: Option<Box<dyn BootImagePatcher + Send>> = if cli.root.rootless {
+    let root_patcher = if cli.root.rootless {
         None
     } else if let Some(magisk) = &cli.root.magisk {
-        let patcher = MagiskRootPatcher::new(
-            magisk,
-            cli.magisk_preinit_device.as_deref(),
-            cli.magisk_random_seed,
-            cli.ignore_magisk_warnings,
-            move |s| warning!("{s}"),
-        )
-        .context("Failed to create Magisk boot image patcher")?;
+        let patcher = BootImagePatcher::MagiskRoot(
+            MagiskRootPatcher::new(
+                magisk,
+                cli.magisk_preinit_device.as_deref(),
+                cli.magisk_random_seed,
+                cli.ignore_magisk_warnings,
+                move |s| warning!("{s}"),
+            )
+            .context("Failed to create Magisk boot image patcher")?,
+        );
 
-        Some(Box::new(patcher))
+        Some(patcher)
     } else if let Some(prepatched) = &cli.root.prepatched {
-        let patcher =
-            PrepatchedImagePatcher::new(prepatched, cli.ignore_prepatched_compat + 1, move |s| {
+        let patcher = BootImagePatcher::PrepatchedImage(PrepatchedImagePatcher::new(
+            prepatched,
+            cli.ignore_prepatched_compat + 1,
+            move |s| {
                 warning!("{s}");
-            });
+            },
+        ));
 
-        Some(Box::new(patcher))
+        Some(patcher)
     } else {
         unreachable!()
     };
@@ -1209,8 +1188,6 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &mut zip_reader,
         &mut zip_writer,
         &external_images,
-        Some(&cli.boot_partition),
-        cli.otacerts_partition.as_deref(),
         root_patcher,
         cli.clear_vbmeta_flags,
         &key_avb,
@@ -1274,6 +1251,10 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
 }
 
 pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Result<()> {
+    if cli.boot_partition.is_some() {
+        warning!("Ignoring --boot-partition: deprecated and no longer needed");
+    }
+
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
@@ -1311,16 +1292,12 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
                 .cloned(),
         );
     } else {
-        let images = get_required_images(
-            &header.manifest,
-            Some(&cli.boot_partition),
-            cli.otacerts_partition.as_deref(),
-        )?;
+        let images = RequiredImages::new(&header.manifest);
 
         if cli.boot_only {
-            unique_images.insert(images["@rootpatch"].clone());
+            unique_images.extend(images.boot_partitions().map(|n| n.to_owned()));
         } else {
-            unique_images.extend(images.into_values());
+            unique_images.extend(images.iter().map(|n| n.to_owned()));
         }
     }
 
@@ -1420,21 +1397,36 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     status!("Checking ramdisk's otacerts.zip");
 
-    let boot_image = {
-        let partitions_by_type =
-            get_required_images(&header.manifest, None, cli.otacerts_partition.as_deref())?;
-        let path = format!("{}.img", partitions_by_type["@otacerts"]);
-        let file = temp_dir
-            .open(&path)
-            .with_context(|| format!("Failed to open for reading: {path:?}"))?;
-        BootImage::from_reader(BufReader::new(file))
-            .with_context(|| format!("Failed to read boot image: {path:?}"))?
-    };
+    {
+        let required_images = RequiredImages::new(&header.manifest);
+        let boot_images = boot::load_boot_images(
+            &required_images.boot_partitions().collect::<Vec<_>>(),
+            |name| {
+                Ok(Box::new(
+                    temp_dir
+                        .open(format!("{name}.img"))
+                        .map(|f| PSeekFile::new(f.into_std()))?,
+                ))
+            },
+        )
+        .context("Failed to load all boot images")?;
+        let targets = OtaCertPatcher::new(ota_cert.clone())
+            .find_targets(&boot_images, cancel_signal)
+            .context("Failed to find boot image containing otacerts.zip")?;
 
-    let ramdisk_certs = OtaCertPatcher::get_certificates(&boot_image, cancel_signal)
-        .context("Failed to read ramdisk's otacerts.zip")?;
-    if !ramdisk_certs.contains(&ota_cert) {
-        bail!("Ramdisk's otacerts.zip does not contain OTA certificate");
+        if targets.is_empty() {
+            bail!("No boot image contains otacerts.zip");
+        }
+
+        for target in targets {
+            let boot_image = &boot_images[target].boot_image;
+            let ramdisk_certs = OtaCertPatcher::get_certificates(boot_image, cancel_signal)
+                .context("Failed to read {target}'s otacerts.zip")?;
+
+            if !ramdisk_certs.contains(&ota_cert) {
+                bail!("{target}'s otacerts.zip does not contain OTA certificate");
+            }
+        }
     }
 
     status!("Verifying AVB signatures");
@@ -1632,22 +1624,13 @@ pub struct PatchCli {
     #[arg(long, help_heading = HEADING_OTHER)]
     pub clear_vbmeta_flags: bool,
 
-    /// Boot partition name.
-    #[arg(
-        long,
-        value_name = "PARTITION",
-        default_value = "@gki_ramdisk",
-        help_heading = HEADING_OTHER
-    )]
-    pub boot_partition: String,
-
-    /// OTA certificates partition name.
+    /// (Deprecated: no longer needed)
     #[arg(
         long,
         value_name = "PARTITION",
         help_heading = HEADING_OTHER
     )]
-    pub otacerts_partition: Option<String>,
+    pub boot_partition: Option<String>,
 }
 
 /// Extract partition images from an OTA zip's payload.
@@ -1669,13 +1652,9 @@ pub struct ExtractCli {
     #[arg(long, group = "extract")]
     pub boot_only: bool,
 
-    /// Boot partition name.
-    #[arg(long, value_name = "PARTITION", default_value = "@gki_ramdisk")]
-    pub boot_partition: String,
-
-    /// OTA certificates partition name.
+    /// (Deprecated: no longer needed)
     #[arg(long, value_name = "PARTITION")]
-    pub otacerts_partition: Option<String>,
+    pub boot_partition: Option<String>,
 }
 
 /// Verify signatures of an OTA.
@@ -1700,10 +1679,6 @@ pub struct VerifyCli {
     /// valid, not that they are trusted.
     #[arg(long, value_name = "FILE", value_parser)]
     pub public_key_avb: Option<PathBuf>,
-
-    /// OTA certificates partition name.
-    #[arg(long, value_name = "PARTITION")]
-    pub otacerts_partition: Option<String>,
 }
 
 #[allow(clippy::large_enum_variant)]

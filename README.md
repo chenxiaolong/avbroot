@@ -79,8 +79,7 @@ avbroot applies two patches to the boot images:
     * To enable root access with KernelSU:
 
         ```bash
-        --prepatched /path/to/kernelsu/boot.img \
-        --boot-partition @gki_kernel
+        --prepatched /path/to/kernelsu/boot.img
         ```
 
     * To leave the OS unrooted:
@@ -144,8 +143,6 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
         --input /path/to/ota.zip.patched \
         --directory extracted
     ```
-
-    If you are using KernelSU, also add `--boot-partition @gki_kernel` to the command.
 
 4. Flash the partition images that were extracted.
 
@@ -333,9 +330,7 @@ Invoke-Expression (& avbroot completion -s powershell)
 
 ### Using a prepatched boot image
 
-avbroot can replace the boot image with a prepatched image instead of applying the root patch itself. This is useful for using a boot image patched by the Magisk app or for KernelSU. To use a prepatched Magisk boot image, pass in `--prepatched <boot image>` instead of `--magisk <apk>`. When using `--prepatched`, avbroot will skip applying the Magisk root patch, but will still apply the OTA certificate patch.
-
-For KernelSU, also pass in `--boot-partition @gki_kernel` for both the `patch` and `extract` commands. avbroot defaults to Magisk's semantics where the boot image containing the GKI ramdisk is needed, whereas KernelSU requires the boot image containing the GKI kernel. This only affects devices launching with Android 13+, where the GKI kernel and ramdisk are in different partitions (`boot` vs. `init_boot`), but it is safe and recommended to always use this option for KernelSU.
+avbroot can replace the boot image with a prepatched image instead of applying the root patch itself. This is useful for using a boot image patched by the Magisk app or for KernelSU. To use a prepatched Magisk boot image or a KernelSU boot image, pass in `--prepatched <boot image>` instead of `--magisk <apk>`. When using `--prepatched`, avbroot will skip applying the Magisk root patch, but will still apply the OTA certificate patch.
 
 Note that avbroot will validate that the prepatched image is compatible with the original. If, for example, the header fields do not match or a boot image section is missing, then the patching process will abort. The checks are not foolproof, but should help protect against accidental use of the wrong boot image. To bypass a somewhat "safe" subset of the checks, use `--ignore-prepatched-compat`. To ignore all checks (strongly discouraged!), pass it in twice.
 
