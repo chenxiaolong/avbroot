@@ -8,15 +8,17 @@
 url = "https://dl.google.com/dl/android/aosp/cheetah-ota-tq3a.230901.001-6b881553.zip"
 sections = [
     { start = 0, end = 152523 },
+    { start = 966043, end = 21581869 },
     { start = 21750700, end = 23251455 },
     { start = 2044485458, end = 2044493782 },
     { start = 2316042420, end = 2333812318 },
     { start = 2344911202, end = 2344916318 },
 ]
 hash.original.full = "6b881553f012d582080642d660e1cf5c9e6fe41e9f1c6ab12ae87fab7894e307"
-hash.original.stripped = "9befd7887a125ebd8e9ae0555469dababe6bc04b0aa41aa2562036782a6d87e0"
+hash.original.stripped = "9a14c7b648041a9277057c11abfcc1c1b0175859bf9c69517bac5dea6fdeb477"
 hash.patched.full = "8de1892395be6173687ce6333d926394ca486c61856dd7585c6a7fc4feb0624e"
-hash.patched.stripped = "d24efed2dd68625fa8f4b44149dd07fcb5597f925e16b62a9e968edd15115fea"
+hash.patched.stripped = "7f8ac42b35b1d607f5b029b66cf5ed9cc9fc612a4382f84efee5a7ac1a4e0b53"
+hash.avb_images."boot.img" = "0270eb3d61e0e58598e2597a8d59bc8c0f45b458be7826d1961bfb201c0788d8"
 hash.avb_images."init_boot.img" = "3bedb41be98c46241f11219021dfbb799a6d5c89e6e00d45a66f9a5b42e7dfbc"
 hash.avb_images."vbmeta.img" = "e8e6e898ca73807edb43af0a0e86d4a94b14256def89581970287a9b1bf7a3ee"
 hash.avb_images."vbmeta_system.img" = "dbb63e08f26f46ccda501d99058d513ff71e3d6302c14d587442b666ff08862a"
@@ -100,17 +102,18 @@ sections = [
     { start = 0, end = 204048 },
     { start = 19105432, end = 34966775 },
     { start = 2657405750, end = 2657407254 },
-    { start = 4984045446, end = 5006377281 },
+    { start = 4984045446, end = 5019718276 },
     { start = 5114504441, end = 5114507197 },
     { start = 5138158449, end = 5138159817 },
     { start = 5140101511, end = 5140105324 },
 ]
 hash.original.full = "929f892fbd70699cf7f118a119aac1ae1b86351e1ada17715666fa4401e63472"
-hash.original.stripped = "4eabaf79b6c2b5df305e3ecdc2b9570c0dd27350b4e8d6434584000c4989ff3d"
+hash.original.stripped = "93773852fe037c75d7091a0d483b089a0f644d74a49a47859bc7d22261de2bcf"
 hash.patched.full = "fb61ac143024dd9c01d3af45fdeacde078c46c4c7f1d6d2d6da24561d555ad46"
-hash.patched.stripped = "a222904445c2d17c203f34a113da1c4657c622b38d32cde21487ab5ad6b8afb3"
+hash.patched.stripped = "fbe223669b31f1451b9e56fbb54145f80ec7a49ad42e1296dbeb8b4be18d3236"
 hash.avb_images."boot.img" = "480d7cf519326fcaa5106ecfbbeb907309068635f7f6a25e5e4571d525c4926a"
 hash.avb_images."recovery.img" = "eeb0f67e2084174fced510f4b59a82022559ffbe1c20d2c0ea4757fcd989a3af"
 hash.avb_images."vbmeta.img" = "c022cf79da301a8430af5c49704944c490707fa0306031fe3ea22c39ce4734f6"
 hash.avb_images."vbmeta_system.img" = "749616b7f04487c05e9e363ad2071a0ab3bae29d497daf1f1a7695f7c8cfa82a"
 hash.avb_images."vbmeta_vendor.img" = "a6037fce745384425fb12745b8568386b84fb57ca6f94f6e47bcf754de341ae4"
+hash.avb_images."vendor_boot.img" = "a9296b623da5f2cfcbaa34172629f93ba3f4341655d9e9c1f018f1b1f006aa45"
