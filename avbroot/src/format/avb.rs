@@ -6,6 +6,7 @@
 use std::{
     cmp, fmt,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    ops::Range,
     str,
     sync::atomic::AtomicBool,
 };
@@ -433,9 +434,14 @@ impl HashTreeDescriptor {
     /// the same file. It is guaranteed that every thread will read and write
     /// disjoint file offsets.
     ///
-    /// Due to the nature of the file access patterns needed to generate the
-    /// hash tree and FEC data, the entire file will be read twice. However, if
+    /// If `ranges` is [`Option::None`], then the hash tree and FEC data are
+    /// updated for the whole while. Due to the nature of the file access
+    /// patterns, the entire file will be read twice. However, if
     /// [`Self::fec_num_roots`] is 0, no FEC data will be computed nor written.
+    ///
+    /// If `ranges` is specified, only the hash tree and FEC data corresponding
+    /// to those ranges are updated. It may be necessary read a bit more data
+    /// that what is specified in order to perform the computations.
     ///
     /// The fields in this instance are updated atomically. No fields are
     /// updated if an error occurs. The input file can be restored back to its
@@ -444,12 +450,33 @@ impl HashTreeDescriptor {
         &mut self,
         input: &(dyn ReadSeekReopen + Sync),
         output: &(dyn WriteSeekReopen + Sync),
+        ranges: Option<&[Range<u64>]>,
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         let algorithm = ring_algorithm(&self.hash_algorithm, false)?;
         let hash_tree = HashTree::new(self.data_block_size, algorithm, &self.salt);
-        let (root_digest, hash_tree_data) =
-            hash_tree.generate(input, self.image_size, cancel_signal)?;
+        let (root_digest, hash_tree_data) = match ranges {
+            Some(r) => {
+                let mut reader = input.reopen_boxed()?;
+                reader.seek(SeekFrom::Start(self.tree_offset))?;
+
+                let mut hash_tree_data = vec![0u8; self.tree_size as usize];
+                reader
+                    .read_exact(&mut hash_tree_data)
+                    .map_err(|e| Error::ReadFieldError("hash_tree", e))?;
+
+                let root_digest = hash_tree.update(
+                    input,
+                    self.image_size,
+                    r,
+                    &mut hash_tree_data,
+                    cancel_signal,
+                )?;
+
+                (root_digest, hash_tree_data)
+            }
+            None => hash_tree.generate(input, self.image_size, cancel_signal)?,
+        };
 
         if hash_tree_data.len() > HASH_TREE_MAX_SIZE as usize {
             return Err(Error::FieldOutOfBounds("tree_size"));
@@ -477,10 +504,31 @@ impl HashTreeDescriptor {
                 .to_u8()
                 .ok_or_else(|| Error::FieldOutOfBounds("fec_num_roots"))?;
 
-            // The FEC covers the hash tree as well.
-            let fec = Fec::new(self.image_size + tree_size, self.data_block_size, parity)?;
+            let fec_data = match ranges {
+                Some(r) => {
+                    let mut r_with_hash_tree = r.to_vec();
+                    r_with_hash_tree.push(self.tree_offset..self.tree_offset + tree_size);
 
-            let fec_data = fec.generate(input, cancel_signal)?;
+                    let (fec, fec_size) = self.get_fec()?;
+
+                    let mut reader = input.reopen_boxed()?;
+                    reader.seek(SeekFrom::Start(self.fec_offset))?;
+
+                    let mut fec_data = vec![0u8; fec_size];
+                    reader
+                        .read_exact(&mut fec_data)
+                        .map_err(|e| Error::ReadFieldError("fec_data", e))?;
+
+                    fec.update(input, &r_with_hash_tree, &mut fec_data, cancel_signal)?;
+
+                    fec_data
+                }
+                None => {
+                    // The FEC covers the hash tree as well.
+                    let fec = Fec::new(self.image_size + tree_size, self.data_block_size, parity)?;
+                    fec.generate(input, cancel_signal)?
+                }
+            };
             let fec_size = fec_data
                 .len()
                 .to_u64()
@@ -1799,7 +1847,20 @@ fn write_image_internal(
     image_size: Option<u64>,
     block_size: u64,
 ) -> Result<()> {
-    let eof_image_size = writer.seek(SeekFrom::End(0))?;
+    let eof_image_size = if footer.is_some() {
+        match header.appended_descriptor()? {
+            AppendedDescriptorRef::HashTree(d) => d
+                .image_size
+                .checked_add(d.tree_size)
+                .and_then(|s| s.checked_add(d.fec_size))
+                .ok_or_else(|| Error::FieldOutOfBounds("eof_image_size"))?,
+            AppendedDescriptorRef::Hash(d) => d.image_size,
+        }
+    } else {
+        0
+    };
+
+    writer.seek(SeekFrom::Start(eof_image_size))?;
 
     // The header must be block-aligned.
     let vbmeta_offset = if block_size > 0 {

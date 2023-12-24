@@ -13,12 +13,12 @@
 // We use pb-rs' nostd mode. See build.rs.
 extern crate alloc;
 
-pub mod boot;
 pub mod cli;
 pub mod crypto;
 pub mod escape;
 pub mod format;
 pub mod octal;
+pub mod patch;
 pub mod protobuf;
 pub mod stream;
 pub mod util;

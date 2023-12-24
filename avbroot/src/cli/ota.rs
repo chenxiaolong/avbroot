@@ -30,10 +30,6 @@ use x509_cert::Certificate;
 use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::{
-    boot::{
-        self, BootImagePatch, BootImagePatcher, MagiskRootPatcher, OtaCertPatcher,
-        PrepatchedImagePatcher,
-    },
     cli::{self, status, warning},
     crypto::{self, PassphraseSource},
     format::{
@@ -42,6 +38,10 @@ use crate::{
         ota::{self, SigningWriter, ZipEntry},
         padding,
         payload::{self, PayloadHeader, PayloadWriter},
+    },
+    patch::{
+        boot::{self, BootImagePatch, MagiskRootPatcher, OtaCertPatcher, PrepatchedImagePatcher},
+        system,
     },
     protobuf::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
@@ -78,27 +78,28 @@ fn sorted<T: Ord>(iter: impl Iterator<Item = T>) -> Vec<T> {
 pub struct RequiredImages(HashSet<String>);
 
 impl RequiredImages {
-    pub fn new(manifest: &DeltaArchiveManifest) -> Self {
+    pub fn new(manifest: &DeltaArchiveManifest, want_system: bool) -> Self {
         let partitions = manifest
             .partitions
             .iter()
-            .map(|p| p.partition_name.as_str())
-            .filter(|n| Self::is_required(n))
-            .map(|n| n.to_owned())
+            .map(|p| p.partition_name.clone())
+            .filter(|n| {
+                Self::is_boot(n) || Self::is_vbmeta(n) || (want_system && Self::is_system(n))
+            })
             .collect();
 
         Self(partitions)
     }
 
-    fn is_required(name: &str) -> bool {
-        Self::is_boot(name) || Self::is_vbmeta(name)
-    }
-
-    fn is_boot(name: &str) -> bool {
+    pub fn is_boot(name: &str) -> bool {
         name == "boot" || name == "init_boot" || name == "recovery" || name == "vendor_boot"
     }
 
-    fn is_vbmeta(name: &str) -> bool {
+    pub fn is_system(name: &str) -> bool {
+        name == "system"
+    }
+
+    pub fn is_vbmeta(name: &str) -> bool {
         name.starts_with("vbmeta")
     }
 
@@ -106,11 +107,15 @@ impl RequiredImages {
         self.0.iter().map(|n| n.as_str())
     }
 
-    pub fn boot_partitions(&self) -> impl Iterator<Item = &str> {
+    pub fn iter_boot(&self) -> impl Iterator<Item = &str> {
         self.iter().filter(|n| Self::is_boot(n))
     }
 
-    pub fn vbmeta_partitions(&self) -> impl Iterator<Item = &str> {
+    pub fn iter_system(&self) -> impl Iterator<Item = &str> {
+        self.iter().filter(|n| Self::is_system(n))
+    }
+
+    pub fn iter_vbmeta(&self) -> impl Iterator<Item = &str> {
         self.iter().filter(|n| Self::is_vbmeta(n))
     }
 }
@@ -186,21 +191,20 @@ fn open_input_files(
 fn patch_boot_images<'a, 'b: 'a>(
     required_images: &'b RequiredImages,
     input_files: &mut HashMap<String, InputFile>,
-    root_patcher: Option<BootImagePatcher>,
+    root_patcher: Option<Box<dyn BootImagePatch + Sync>>,
     key_avb: &RsaPrivateKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let input_files = Mutex::new(input_files);
-    let mut boot_patchers = vec![BootImagePatcher::OtaCert(OtaCertPatcher::new(
-        cert_ota.clone(),
-    ))];
+    let mut boot_patchers = Vec::<Box<dyn BootImagePatch + Sync>>::new();
+    boot_patchers.push(Box::new(OtaCertPatcher::new(cert_ota.clone())));
 
     if let Some(p) = root_patcher {
         boot_patchers.push(p);
     }
 
-    let boot_partitions = required_images.boot_partitions().collect::<Vec<_>>();
+    let boot_partitions = required_images.iter_boot().collect::<Vec<_>>();
 
     status!(
         "Patching boot images: {}",
@@ -234,6 +238,37 @@ fn patch_boot_images<'a, 'b: 'a>(
     Ok(())
 }
 
+/// Patch the single system image listed in `required_images` to replace the
+/// `otacerts.zip` contents.
+fn patch_system_image<'a, 'b: 'a>(
+    required_images: &'b RequiredImages,
+    input_files: &mut HashMap<String, InputFile>,
+    cert_ota: &Certificate,
+    key_avb: &RsaPrivateKey,
+    cancel_signal: &AtomicBool,
+) -> Result<()> {
+    let Some(target) = required_images.iter_system().next() else {
+        bail!("No system partition found");
+    };
+
+    status!("Patching system image: {target}");
+
+    let ranges = system::patch_system_image(
+        &input_files[target].file,
+        &input_files[target].file,
+        cert_ota,
+        key_avb,
+        cancel_signal,
+    )
+    .with_context(|| format!("Failed to patch system image: {target}"))?;
+
+    input_files.get_mut(target).unwrap().can_prune = false;
+
+    status!("Patched otacerts.zip offsets in {target}: {ranges:?}");
+
+    Ok(())
+}
+
 /// Load the specified vbmeta image headers. If an image has a vbmeta footer,
 /// then an error is returned because the vbmeta patching logic only ever writes
 /// root vbmeta images.
@@ -258,38 +293,26 @@ fn load_vbmeta_images(
     Ok(result)
 }
 
-/// Check if a partition is critical to AVB's chain of trust and is meant to be
-/// validated by the bootloader instead of Android. dm-verity partitions cannot
-/// be statically checked without causing false positives because the fstab
-/// might be using the avb_keys=/path/to/pubkey option.
-fn is_critical_to_avb(name: &str) -> bool {
-    name.ends_with("boot") || name.starts_with("vbmeta")
-}
-
 /// Check that all critical partitions within the payload are protected by a
 /// vbmeta image in `vbmeta_headers`.
 fn ensure_partitions_protected(
-    manifest: &DeltaArchiveManifest,
+    required_images: &RequiredImages,
     vbmeta_headers: &HashMap<String, Header>,
 ) -> Result<()> {
-    let critical_partitions = manifest
-        .partitions
-        .iter()
-        .map(|p| &p.partition_name)
-        .filter(|n| is_critical_to_avb(n))
-        .cloned()
+    let critical_partitions = required_images
+        .iter_boot()
+        .chain(required_images.iter_vbmeta())
         .collect::<BTreeSet<_>>();
 
     // vbmeta partitions first.
-    let mut avb_partitions = vbmeta_headers.keys().cloned().collect::<BTreeSet<_>>();
+    let mut avb_partitions = vbmeta_headers
+        .keys()
+        .map(|n| n.as_str())
+        .collect::<BTreeSet<_>>();
 
     // Then, everything referred to by the descriptors.
     for header in vbmeta_headers.values() {
-        let partition_names = header
-            .descriptors
-            .iter()
-            .filter_map(|d| d.partition_name())
-            .map(|n| n.to_owned());
+        let partition_names = header.descriptors.iter().filter_map(|d| d.partition_name());
 
         avb_partitions.extend(partition_names);
     }
@@ -621,8 +644,9 @@ fn patch_ota_payload(
     payload: &(dyn ReadSeekReopen + Sync),
     writer: impl Write,
     external_images: &HashMap<String, PathBuf>,
-    root_patcher: Option<BootImagePatcher>,
+    root_patcher: Option<Box<dyn BootImagePatch + Sync>>,
     clear_vbmeta_flags: bool,
+    skip_system_otacerts: bool,
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
     cert_ota: &Certificate,
@@ -654,8 +678,8 @@ fn patch_ota_payload(
     // Determine what images need to be patched. For simplicity, we pre-read all
     // vbmeta images since they're tiny. They're discarded later if the they
     // don't need to be modified.
-    let required_images = RequiredImages::new(&header_locked.manifest);
-    let vbmeta_images = required_images.vbmeta_partitions().collect::<HashSet<_>>();
+    let required_images = RequiredImages::new(&header_locked.manifest, !skip_system_otacerts);
+    let vbmeta_images = required_images.iter_vbmeta().collect::<HashSet<_>>();
 
     // The set of source images to be inserted into the new payload, replacing
     // what was in the original payload. Initially, this refers to either user
@@ -681,11 +705,21 @@ fn patch_ota_payload(
 
     // Main patching operation is done. Unmodified boot images no longer need to
     // be kept around.
-    input_files.retain(|n, f| !f.can_prune || vbmeta_images.contains(n.as_str()));
+    input_files.retain(|n, f| !(f.can_prune && RequiredImages::is_boot(n)));
+
+    if !skip_system_otacerts {
+        patch_system_image(
+            &required_images,
+            &mut input_files,
+            cert_ota,
+            key_avb,
+            cancel_signal,
+        )?;
+    }
 
     let mut vbmeta_headers = load_vbmeta_images(&mut input_files, &vbmeta_images)?;
 
-    ensure_partitions_protected(&header_locked.manifest, &vbmeta_headers)?;
+    ensure_partitions_protected(&required_images, &vbmeta_headers)?;
 
     let mut vbmeta_order = get_vbmeta_patch_order(&mut input_files, &vbmeta_headers)?;
 
@@ -806,8 +840,9 @@ fn patch_ota_zip(
     zip_reader: &mut ZipArchive<impl Read + Seek>,
     mut zip_writer: &mut ZipWriter<impl Write>,
     external_images: &HashMap<String, PathBuf>,
-    mut root_patch: Option<BootImagePatcher>,
+    mut root_patch: Option<Box<dyn BootImagePatch + Sync>>,
     clear_vbmeta_flags: bool,
+    skip_system_otacerts: bool,
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
     cert_ota: &Certificate,
@@ -928,6 +963,7 @@ fn patch_ota_zip(
                     // There's only one payload in the OTA.
                     root_patch.take(),
                     clear_vbmeta_flags,
+                    skip_system_otacerts,
                     key_avb,
                     key_ota,
                     cert_ota,
@@ -1132,10 +1168,8 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         external_images.insert(name.to_owned(), path.to_owned());
     }
 
-    let root_patcher = if cli.root.rootless {
-        None
-    } else if let Some(magisk) = &cli.root.magisk {
-        let patcher = BootImagePatcher::MagiskRoot(
+    let root_patcher = if let Some(magisk) = &cli.root.magisk {
+        let patcher: Box<dyn BootImagePatch + Sync> = Box::new(
             MagiskRootPatcher::new(
                 magisk,
                 cli.magisk_preinit_device.as_deref(),
@@ -1148,7 +1182,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
 
         Some(patcher)
     } else if let Some(prepatched) = &cli.root.prepatched {
-        let patcher = BootImagePatcher::PrepatchedImage(PrepatchedImagePatcher::new(
+        let patcher: Box<dyn BootImagePatch + Sync> = Box::new(PrepatchedImagePatcher::new(
             prepatched,
             cli.ignore_prepatched_compat + 1,
             move |s| {
@@ -1158,7 +1192,8 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
 
         Some(patcher)
     } else {
-        unreachable!()
+        assert!(cli.root.rootless);
+        None
     };
 
     let start = Instant::now();
@@ -1190,6 +1225,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &external_images,
         root_patcher,
         cli.clear_vbmeta_flags,
+        cli.skip_system_otacerts,
         &key_avb,
         &key_ota,
         &cert_ota,
@@ -1292,10 +1328,10 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
                 .cloned(),
         );
     } else {
-        let images = RequiredImages::new(&header.manifest);
+        let images = RequiredImages::new(&header.manifest, !cli.skip_system);
 
         if cli.boot_only {
-            unique_images.extend(images.boot_partitions().map(|n| n.to_owned()));
+            unique_images.extend(images.iter_boot().map(|n| n.to_owned()));
         } else {
             unique_images.extend(images.iter().map(|n| n.to_owned()));
         }
@@ -1398,18 +1434,16 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     status!("Checking ramdisk's otacerts.zip");
 
     {
-        let required_images = RequiredImages::new(&header.manifest);
-        let boot_images = boot::load_boot_images(
-            &required_images.boot_partitions().collect::<Vec<_>>(),
-            |name| {
+        let required_images = RequiredImages::new(&header.manifest, true);
+        let boot_images =
+            boot::load_boot_images(&required_images.iter_boot().collect::<Vec<_>>(), |name| {
                 Ok(Box::new(
                     temp_dir
                         .open(format!("{name}.img"))
                         .map(|f| PSeekFile::new(f.into_std()))?,
                 ))
-            },
-        )
-        .context("Failed to load all boot images")?;
+            })
+            .context("Failed to load all boot images")?;
         let targets = OtaCertPatcher::new(ota_cert.clone())
             .find_targets(&boot_images, cancel_signal)
             .context("Failed to find boot image containing otacerts.zip")?;
@@ -1631,6 +1665,12 @@ pub struct PatchCli {
         help_heading = HEADING_OTHER
     )]
     pub boot_partition: Option<String>,
+
+    /// Skip patching otacerts.zip in the system partition.
+    ///
+    /// (Testing only. May be removed in the future.)
+    #[arg(long, hide = true)]
+    pub skip_system_otacerts: bool,
 }
 
 /// Extract partition images from an OTA zip's payload.
@@ -1655,6 +1695,10 @@ pub struct ExtractCli {
     /// (Deprecated: no longer needed)
     #[arg(long, value_name = "PARTITION")]
     pub boot_partition: Option<String>,
+
+    /// (Testing only. May be removed in the future.)
+    #[arg(long, hide = true)]
+    pub skip_system: bool,
 }
 
 /// Verify signatures of an OTA.

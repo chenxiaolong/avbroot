@@ -126,6 +126,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "base64",
+ "bitflags 2.4.1",
  "bstr",
  "byteorder",
  "bzip2",

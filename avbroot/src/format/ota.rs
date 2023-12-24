@@ -40,7 +40,7 @@ const NAME_PAYLOAD_METADATA: &str = "payload_metadata.bin";
 pub const PF_NAME: &str = "ota-property-files";
 pub const PF_STREAMING_NAME: &str = "ota-streaming-property-files";
 
-const ZIP_EOCD_MAGIC: &[u8; 4] = b"PK\x05\x06";
+pub const ZIP_EOCD_MAGIC: &[u8; 4] = b"PK\x05\x06";
 
 const COMMENT_MESSAGE: &[u8] = b"signed by avbroot\0";
 

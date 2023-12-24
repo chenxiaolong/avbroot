@@ -195,7 +195,7 @@ fn write_raw_and_update(
         AppendedDescriptorMut::HashTree(d) => {
             d.hash_algorithm = promote_insecure_hash_algorithm(&d.hash_algorithm).to_owned();
             d.image_size = image_size;
-            d.update(&raw_file, &raw_file, cancel_signal)
+            d.update(&raw_file, &raw_file, None, cancel_signal)
                 .context("Failed to update hash tree descriptor")?;
         }
         AppendedDescriptorMut::Hash(d) => {
@@ -642,7 +642,7 @@ fn repack_subcommand(cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> 
         // There could have been errors in the original FEC data itself.
         if let AppendedDescriptorMut::HashTree(d) = info.header.appended_descriptor_mut()? {
             d.hash_algorithm = promote_insecure_hash_algorithm(&d.hash_algorithm).to_owned();
-            d.update(&file, &file, cancel_signal)?;
+            d.update(&file, &file, None, cancel_signal)?;
         }
 
         update_dm_verity_cmdline(&mut info)?;

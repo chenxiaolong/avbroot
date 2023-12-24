@@ -163,7 +163,7 @@ fn round_trip_appended_hash_tree_image() {
             d.fec_offset = 0;
             d.fec_size = 0;
 
-            d.update(&writer, &writer, &cancel_signal).unwrap();
+            d.update(&writer, &writer, None, &cancel_signal).unwrap();
         }
         AppendedDescriptorMut::Hash(_) => panic!("Expected hash tree descriptor"),
     }
