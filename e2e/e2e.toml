@@ -1,119 +1,148 @@
-[magisk]
-"url" = "https://github.com/topjohnwu/Magisk/releases/download/v26.3/Magisk.v26.3.apk"
-"hash" = "30ff6ec0709412adfcd0b735c0eb1f61cd9d589af4bdef4cf03c09b986b5acce"
+# Metadata used when generating OTAs. These values don't affect behavior at all.
+[ota_info]
+# Make sure generated OTAs aren't flashable on real devices.
+device = "avbroot_fake_device"
+fingerprint = "avbroot/avbroot_fake_device:14/UQ1A.240101.000/12345678:user/release-keys"
+build_number = "UQ1A.240101.000"
+incremental_version = "12345678"
+android_version = "14"
+sdk_version = "34"
+security_patch_level = "2024-01-01"
 
 # Google Pixel 7 Pro
 # What's unique: init_boot (boot v4) + vendor_boot (vendor v4)
-[device.cheetah]
-url = "https://dl.google.com/dl/android/aosp/cheetah-ota-tq3a.230901.001-6b881553.zip"
-sections = [
-    { start = 0, end = 152523 },
-    { start = 966043, end = 21581869 },
-    { start = 21750700, end = 23251455 },
-    { start = 2044485458, end = 2044493782 },
-    { start = 2316042420, end = 2333812318 },
-    { start = 2344911202, end = 2344916318 },
-]
-hash.original.full = "6b881553f012d582080642d660e1cf5c9e6fe41e9f1c6ab12ae87fab7894e307"
-hash.original.stripped = "9a14c7b648041a9277057c11abfcc1c1b0175859bf9c69517bac5dea6fdeb477"
-hash.patched.full = "8de1892395be6173687ce6333d926394ca486c61856dd7585c6a7fc4feb0624e"
-hash.patched.stripped = "7f8ac42b35b1d607f5b029b66cf5ed9cc9fc612a4382f84efee5a7ac1a4e0b53"
-hash.avb_images."boot.img" = "0270eb3d61e0e58598e2597a8d59bc8c0f45b458be7826d1961bfb201c0788d8"
-hash.avb_images."init_boot.img" = "3bedb41be98c46241f11219021dfbb799a6d5c89e6e00d45a66f9a5b42e7dfbc"
-hash.avb_images."vbmeta.img" = "e8e6e898ca73807edb43af0a0e86d4a94b14256def89581970287a9b1bf7a3ee"
-hash.avb_images."vbmeta_system.img" = "dbb63e08f26f46ccda501d99058d513ff71e3d6302c14d587442b666ff08862a"
-hash.avb_images."vbmeta_vendor.img" = "6ffa0a10e72c3371653be80de1380832b4d7f8bbf38a2bd861d44a4097a57117"
-hash.avb_images."vendor_boot.img" = "dd58e8d46dd26198edf14f72d17a3315ff4c2aeb65b98dbd06369ca2a6e365a3"
+
+[profile.pixel_v4_gki.partitions.boot]
+avb.signed = true
+data.type = "boot"
+data.version = "v4"
+data.kernel = true
+
+[profile.pixel_v4_gki.partitions.init_boot]
+avb.signed = true
+data.type = "boot"
+data.version = "v4"
+data.ramdisks = ["init"]
+
+[profile.pixel_v4_gki.partitions.system]
+avb.signed = false
+data.type = "dm_verity"
+data.content = "system_otacerts"
+
+[profile.pixel_v4_gki.partitions.vbmeta]
+avb.signed = true
+data.type = "vbmeta"
+data.deps = ["boot", "init_boot", "vendor_boot", "vbmeta_system"]
+
+[profile.pixel_v4_gki.partitions.vbmeta_system]
+avb.signed = true
+data.type = "vbmeta"
+data.deps = ["system"]
+
+[profile.pixel_v4_gki.partitions.vendor_boot]
+avb.signed = false
+data.type = "boot"
+data.version = "vendor_v4"
+data.ramdisks = ["otacerts"]
+
+[profile.pixel_v4_gki.hashes]
+original = "f9477a35e3b60a495e49431c61e3897f11775f453a6a9897ead568357c963618"
+patched = "eb045799a514300727357a5ec471f9b04b276991daf4fd72f17f840b2a7dd1b8"
 
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
-[device.bluejay]
-url = "https://dl.google.com/dl/android/aosp/bluejay-ota-tq3a.230901.001-1f1f0abe.zip"
-sections = [
-    { start = 0, end = 142587 },
-    { start = 1062619, end = 21678441 },
-    { start = 1920893927, end = 1920902079 },
-    { start = 2103596124, end = 2126776858 },
-    { start = 2133324030, end = 2133329146 },
-]
-hash.original.full = "1f1f0abe67a6f6f47287be6dafec2c12628de6a715b82ca7beddaf67ad22aca5"
-hash.original.stripped = "38b15f5efdc7e056bc799859ba72ef9a73e93c61292c59f85fb4b9c31acc5f82"
-hash.patched.full = "6916e91351e464339f63be311f8debc9a54d2e3c5509a6fe9c886f0ee63a556c"
-hash.patched.stripped = "be40b24c23cefb5ab5704420a6d93dc4f168d38124aee3c663ebe9e2f9a345f0"
-hash.avb_images."boot.img" = "a19cb4d4fcc7f3e7d3046c3d19e2f243fb02513ca848ff92ad70d1ada55c4e65"
-hash.avb_images."vbmeta.img" = "2d817e35f7b6cdc2edce58ef249a966fc677085b70a4aced4c829320aeef0be2"
-hash.avb_images."vbmeta_system.img" = "98a050f0d53a016fbb78147b1b4a9bca3fde615aa4da34bf62c2e07a395104b5"
-hash.avb_images."vbmeta_vendor.img" = "fac530f47f237e76f3c7c3cdfe96308170dd8e8f0b227d81114a489c69ba763c"
-hash.avb_images."vendor_boot.img" = "b3c596360f38cd0d6212341571acf3c2d977921f8bf163d7da27978a353da9f7"
+
+[profile.pixel_v4_non_gki.partitions.boot]
+avb.signed = true
+data.type = "boot"
+data.version = "v4"
+data.kernel = true
+
+[profile.pixel_v4_non_gki.partitions.system]
+avb.signed = false
+data.type = "dm_verity"
+data.content = "system_otacerts"
+
+[profile.pixel_v4_non_gki.partitions.vbmeta]
+avb.signed = true
+data.type = "vbmeta"
+data.deps = ["boot", "vendor_boot", "vbmeta_system"]
+
+[profile.pixel_v4_non_gki.partitions.vbmeta_system]
+avb.signed = true
+data.type = "vbmeta"
+data.deps = ["system"]
+
+[profile.pixel_v4_non_gki.partitions.vendor_boot]
+avb.signed = false
+data.type = "boot"
+data.version = "vendor_v4"
+data.ramdisks = ["init_and_otacerts", "dlkm"]
+
+[profile.pixel_v4_non_gki.hashes]
+original = "021b4510bc244f5f686fbff89eb2058ec9c96a2949c2fe8caa7750a78d593225"
+patched = "5d1a36e2eb18d9d905ab397d4eaf2d7e7c94da6e7573afe3d4e4367841171fe3"
 
 # Google Pixel 4a 5G
 # What's unique: boot (boot v3) + vendor_boot (vendor v3)
-[device.bramble]
-url = "https://dl.google.com/dl/android/aosp/bramble-ota-tq3a.230901.001-6d107ffa.zip"
-sections = [
-    { start = 0, end = 142225 },
-    { start = 497945, end = 11647087 },
-    { start = 1683478307, end = 1683482723 },
-    { start = 1917281683, end = 1940628772 },
-    { start = 1943442548, end = 1943447665 },
-]
-hash.original.full = "6d107ffac1cd3da2c972112acc75957ed725e5c13d57ca724d9bcca5404fcebd"
-hash.original.stripped = "5b889bdab3bb12ddcd3c243a56e1c58bedada8831069f49d56fe5098fb141e35"
-hash.patched.full = "67e1fbc5b1c189cb856d9fd9d846a780ba42e398c5d2e161f4ca89ffccecc32f"
-hash.patched.stripped = "37280d66e316b72f223fb06a2a004902bbf8a28c0da3d9115af12b0d8aea5186"
-hash.avb_images."boot.img" = "8e7278a2e8ae44ffc5475717eb0e1aa56bfb7650aef34375b0fe92f790835f95"
-hash.avb_images."vbmeta.img" = "b036132b867f52a86eef79716261f35b1eb50e843dc4fe42f72cce67b24ae2db"
-hash.avb_images."vbmeta_system.img" = "9a7c6fd654e7a92aeffbdbd55ea0d87eee36f4c235e1b505423ad8a13a751a00"
-hash.avb_images."vendor_boot.img" = "6e83d22371af4a26aef2c64cc4235f83b03978b91aef69c34eec1985e9942139"
+
+[profile.pixel_v3.partitions.boot]
+avb.signed = true
+data.type = "boot"
+data.version = "v3"
+data.kernel = true
+data.ramdisks = ["init"]
+
+[profile.pixel_v3.partitions.system]
+avb.signed = false
+data.type = "dm_verity"
+data.content = "system_otacerts"
+
+[profile.pixel_v3.partitions.vbmeta]
+avb.signed = true
+data.type = "vbmeta"
+data.deps = ["boot", "vendor_boot", "vbmeta_system"]
+
+[profile.pixel_v3.partitions.vbmeta_system]
+avb.signed = true
+data.type = "vbmeta"
+data.deps = ["system"]
+
+[profile.pixel_v3.partitions.vendor_boot]
+avb.signed = false
+data.type = "boot"
+data.version = "vendor_v3"
+data.ramdisks = ["otacerts"]
+
+[profile.pixel_v3.hashes]
+original = "12221a69ff32e137d5f19b61f576fc6b33f0973c4a81da7722c640554ff4bc4e"
+patched = "e2049c6eba6990fc5ce30130af470c134a5ccc42947dcdd398f737fbca7ae44a"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)
-[device.sunfish]
-url = "https://dl.google.com/dl/android/aosp/sunfish-ota-tq3a.230805.001-01fd34b2.zip"
-sections = [
-    { start = 0, end = 131325 },
-    { start = 478553, end = 34014760 },
-    { start = 1658403115, end = 1658407531 },
-    { start = 1855778567, end = 1855783585 },
-]
-hash.original.full = "01fd34b206152a3559039161c9874ab03df37da4268b86a9e0be899de5fc0af7"
-hash.original.stripped = "cc311b5bd46e06cfdefbade794d33aa9bc3ceda4ad4f38bfe9f0dfc17033d207"
-hash.patched.full = "dc56c61170c0de6e2bb2cf8c7c0b6aa810f0aaea1eb045b3d4b1643482bb27fd"
-hash.patched.stripped = "1b6b1818ff72d79e9a1a3f376beca5d62ea2715cbd97a3997f58ca636b588bb4"
-hash.avb_images."boot.img" = "506a955080b6cfa2039ef85923e8a4e717ef6c1dc478538599c7ba26ee21e525"
-hash.avb_images."vbmeta.img" = "3679c7224e3e3e0793b4d1a031e116098460a6b4c5f3f88d5a3a0a4c65b21582"
-hash.avb_images."vbmeta_system.img" = "1d3efa00fd1d44a594c7317072468fa95c23d83d2759d6d6e757783ceeabc594"
 
-# OnePlus 10 Pro
-# Build NE2215_11_C.26
-# What's unique:
-# - boot (boot v4) + recovery (boot v4)
-# - boot images have VTS signature block filled with all 0s
-# - payload.bin uses ZERO blocks
-# Build info:
-# - Unofficial list of full OTAs: https://forum.xda-developers.com/t/oneplus-10-pro-rom-ota-oxygen-os-repo-of-oxygen-os-builds.4572593/
-# - The North American builds are used because they're the only ones hosted on
-#   a well known domain
-# - The build number can be found in <my_manifest>/build.prop since it's not
-#   obvious from the filename
-[device.ossi]
-url = "https://android.googleapis.com/packages/ota-api/package/4cacbe5e6a3ab6a6fade68cc40f44d0fa6a2928a.zip"
-sections = [
-    { start = 0, end = 204048 },
-    { start = 19105432, end = 34966775 },
-    { start = 2657405750, end = 2657407254 },
-    { start = 4984045446, end = 5019718276 },
-    { start = 5114504441, end = 5114507197 },
-    { start = 5138158449, end = 5138159817 },
-    { start = 5140101511, end = 5140105324 },
-]
-hash.original.full = "929f892fbd70699cf7f118a119aac1ae1b86351e1ada17715666fa4401e63472"
-hash.original.stripped = "93773852fe037c75d7091a0d483b089a0f644d74a49a47859bc7d22261de2bcf"
-hash.patched.full = "fb61ac143024dd9c01d3af45fdeacde078c46c4c7f1d6d2d6da24561d555ad46"
-hash.patched.stripped = "fbe223669b31f1451b9e56fbb54145f80ec7a49ad42e1296dbeb8b4be18d3236"
-hash.avb_images."boot.img" = "480d7cf519326fcaa5106ecfbbeb907309068635f7f6a25e5e4571d525c4926a"
-hash.avb_images."recovery.img" = "eeb0f67e2084174fced510f4b59a82022559ffbe1c20d2c0ea4757fcd989a3af"
-hash.avb_images."vbmeta.img" = "c022cf79da301a8430af5c49704944c490707fa0306031fe3ea22c39ce4734f6"
-hash.avb_images."vbmeta_system.img" = "749616b7f04487c05e9e363ad2071a0ab3bae29d497daf1f1a7695f7c8cfa82a"
-hash.avb_images."vbmeta_vendor.img" = "a6037fce745384425fb12745b8568386b84fb57ca6f94f6e47bcf754de341ae4"
-hash.avb_images."vendor_boot.img" = "a9296b623da5f2cfcbaa34172629f93ba3f4341655d9e9c1f018f1b1f006aa45"
+[profile.pixel_v2.partitions.boot]
+avb.signed = false
+data.type = "boot"
+data.version = "v2"
+data.kernel = true
+data.ramdisks = ["init_and_otacerts"]
+
+[profile.pixel_v2.partitions.system]
+avb.signed = false
+data.type = "dm_verity"
+data.content = "system_otacerts"
+
+[profile.pixel_v2.partitions.vbmeta]
+avb.signed = true
+data.type = "vbmeta"
+data.deps = ["boot", "vbmeta_system"]
+
+[profile.pixel_v2.partitions.vbmeta_system]
+avb.signed = true
+data.type = "vbmeta"
+data.deps = ["system"]
+
+[profile.pixel_v2.hashes]
+original = "8b38d2d999b5b6e240e894f669e9e2643b3764c108d53bb7b02447da725e7c18"
+patched = "16f56e3d02c08bb646d8d0694ce77a6edb02a613bbcff14b10ead4a448c3dc00"

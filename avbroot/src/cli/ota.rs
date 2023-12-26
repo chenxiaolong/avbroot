@@ -76,14 +76,12 @@ fn sorted<T: Ord>(iter: impl Iterator<Item = T>) -> Vec<T> {
 pub struct RequiredImages(HashSet<String>);
 
 impl RequiredImages {
-    pub fn new(manifest: &DeltaArchiveManifest, want_system: bool) -> Self {
+    pub fn new(manifest: &DeltaArchiveManifest) -> Self {
         let partitions = manifest
             .partitions
             .iter()
             .map(|p| p.partition_name.clone())
-            .filter(|n| {
-                Self::is_boot(n) || Self::is_vbmeta(n) || (want_system && Self::is_system(n))
-            })
+            .filter(|n| Self::is_boot(n) || Self::is_system(n) || Self::is_vbmeta(n))
             .collect();
 
         Self(partitions)
@@ -652,6 +650,8 @@ fn compress_image(
         .unwrap();
 
     if let Some(r) = ranges {
+        status!("Compressing partial image: {name}: {r:?}");
+
         match payload::compress_modified_image(
             &*file,
             &writer,
@@ -667,10 +667,14 @@ fn compress_image(
             }
             // If we can't take advantage of the optimization, we can still
             // compress the whole image.
-            Err(payload::Error::ExtentsNotInOrder) => {}
+            Err(payload::Error::ExtentsNotInOrder) => {
+                warning!("Cannot use optimization for {name}: extents not in order");
+            }
             Err(e) => return Err(e.into()),
         }
     }
+
+    status!("Compressing full image: {name}");
 
     // Otherwise, compress the entire image.
     let (partition_info, operations) =
@@ -692,7 +696,6 @@ fn patch_ota_payload(
     external_images: &HashMap<String, PathBuf>,
     root_patcher: Option<Box<dyn BootImagePatch + Sync>>,
     clear_vbmeta_flags: bool,
-    skip_system_otacerts: bool,
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
     cert_ota: &Certificate,
@@ -724,7 +727,7 @@ fn patch_ota_payload(
     // Determine what images need to be patched. For simplicity, we pre-read all
     // vbmeta images since they're tiny. They're discarded later if the they
     // don't need to be modified.
-    let required_images = RequiredImages::new(&header_locked.manifest, !skip_system_otacerts);
+    let required_images = RequiredImages::new(&header_locked.manifest);
     let vbmeta_images = required_images.iter_vbmeta().collect::<HashSet<_>>();
 
     // The set of source images to be inserted into the new payload, replacing
@@ -754,26 +757,13 @@ fn patch_ota_payload(
     input_files
         .retain(|n, f| !(f.state == InputFileState::Extracted && RequiredImages::is_boot(n)));
 
-    let mut system_target = None;
-    let mut system_ranges = None;
-
-    if !skip_system_otacerts {
-        let (target, ranges) = patch_system_image(
-            &required_images,
-            &mut input_files,
-            cert_ota,
-            key_avb,
-            cancel_signal,
-        )?;
-
-        system_target = Some(target);
-
-        if !external_images.contains_key(target) {
-            // We can only perform the optimization of avoiding recompression
-            // if the image came from the original payload.
-            system_ranges = Some(ranges);
-        }
-    }
+    let (system_target, system_ranges) = patch_system_image(
+        &required_images,
+        &mut input_files,
+        cert_ota,
+        key_avb,
+        cancel_signal,
+    )?;
 
     let mut vbmeta_headers = load_vbmeta_images(&mut input_files, &vbmeta_images)?;
 
@@ -801,14 +791,14 @@ fn patch_ota_payload(
     let mut compressed_files = input_files
         .into_iter()
         .map(|(name, mut input_file)| {
-            status!("Compressing replacement image: {name}");
-
             let modified_operations = compress_image(
                 &name,
                 &mut input_file.file,
                 &mut header_locked,
-                if Some(name.as_str()) == system_target {
-                    system_ranges.as_deref()
+                // We can only perform the optimization of avoiding
+                // recompression if the image came from the original payload.
+                if name == system_target && !external_images.contains_key(&name) {
+                    Some(&system_ranges)
                 } else {
                     None
                 },
@@ -901,7 +891,6 @@ fn patch_ota_zip(
     external_images: &HashMap<String, PathBuf>,
     mut root_patch: Option<Box<dyn BootImagePatch + Sync>>,
     clear_vbmeta_flags: bool,
-    skip_system_otacerts: bool,
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
     cert_ota: &Certificate,
@@ -1022,7 +1011,6 @@ fn patch_ota_zip(
                     // There's only one payload in the OTA.
                     root_patch.take(),
                     clear_vbmeta_flags,
-                    skip_system_otacerts,
                     key_avb,
                     key_ota,
                     cert_ota,
@@ -1284,7 +1272,6 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &external_images,
         root_patcher,
         cli.clear_vbmeta_flags,
-        cli.skip_system_otacerts,
         &key_avb,
         &key_ota,
         &cert_ota,
@@ -1387,7 +1374,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
                 .cloned(),
         );
     } else {
-        let images = RequiredImages::new(&header.manifest, !cli.skip_system);
+        let images = RequiredImages::new(&header.manifest);
 
         if cli.boot_only {
             unique_images.extend(images.iter_boot().map(|n| n.to_owned()));
@@ -1493,7 +1480,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     status!("Checking ramdisk's otacerts.zip");
 
     {
-        let required_images = RequiredImages::new(&header.manifest, true);
+        let required_images = RequiredImages::new(&header.manifest);
         let boot_images =
             boot::load_boot_images(&required_images.iter_boot().collect::<Vec<_>>(), |name| {
                 Ok(Box::new(
@@ -1724,12 +1711,6 @@ pub struct PatchCli {
         help_heading = HEADING_OTHER
     )]
     pub boot_partition: Option<String>,
-
-    /// Skip patching otacerts.zip in the system partition.
-    ///
-    /// (Testing only. May be removed in the future.)
-    #[arg(long, hide = true)]
-    pub skip_system_otacerts: bool,
 }
 
 /// Extract partition images from an OTA zip's payload.
@@ -1754,10 +1735,6 @@ pub struct ExtractCli {
     /// (Deprecated: no longer needed)
     #[arg(long, value_name = "PARTITION")]
     pub boot_partition: Option<String>,
-
-    /// (Testing only. May be removed in the future.)
-    #[arg(long, hide = true)]
-    pub skip_system: bool,
 }
 
 /// Verify signatures of an OTA.

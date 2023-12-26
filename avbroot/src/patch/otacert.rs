@@ -30,7 +30,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 /// Pad a non-zip64 zip file to the specified size by adding null bytes to the
 /// archive comment field.
-fn pad_zip(data: &mut Vec<u8>, size: usize) -> Result<()> {
+pub fn pad_zip(data: &mut Vec<u8>, size: usize) -> Result<()> {
     match size.cmp(&data.len()) {
         Ordering::Equal => Ok(()),
         Ordering::Less => Err(Error::ZipTooLarge(size)),
