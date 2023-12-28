@@ -5,10 +5,9 @@
 
 use std::{
     cmp::Ordering,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::File,
     io::{self, BufRead, BufReader, Cursor, Read, Seek},
-    mem,
     num::ParseIntError,
     ops::Range,
     path::{Path, PathBuf},
@@ -17,9 +16,7 @@ use std::{
 };
 
 use bstr::ByteSlice;
-use rayon::iter::{
-    IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
-};
+use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use regex::bytes::Regex;
 use ring::digest::Context;
 use rsa::RsaPrivateKey;
@@ -29,7 +26,7 @@ use xz2::{
     stream::{Check, Stream},
     write::XzEncoder,
 };
-use zip::{result::ZipError, write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
+use zip::{result::ZipError, ZipArchive};
 
 use crate::{
     crypto,
@@ -39,6 +36,7 @@ use crate::{
         compression::{self, CompressedFormat, CompressedReader, CompressedWriter},
         cpio::{self, CpioEntry, CpioEntryData},
     },
+    patch::otacert::{self, OtaCertBuildFlags},
     stream::{self, FromReader, HashingWriter, ReadSeek, SectionReader, ToWriter, WriteSeek},
 };
 
@@ -66,6 +64,8 @@ pub enum Error {
     Crypto(#[from] crypto::Error),
     #[error("CPIO error")]
     Cpio(#[from] cpio::Error),
+    #[error("OTA certificate error")]
+    OtaCert(#[from] otacert::Error),
     #[error("XZ stream error")]
     XzStream(#[from] xz2::stream::Error),
     #[error("Zip error")]
@@ -110,8 +110,6 @@ pub struct BootImageInfo {
 }
 
 pub trait BootImagePatch {
-    type Output;
-
     fn patcher_name(&self) -> &'static str;
 
     /// Inspect a set of possible candidate boot images and return a list of
@@ -123,8 +121,7 @@ pub trait BootImagePatch {
         cancel_signal: &AtomicBool,
     ) -> Result<Vec<&'a str>>;
 
-    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool)
-        -> Result<Self::Output>;
+    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()>;
 }
 
 /// Root a boot image with Magisk.
@@ -287,8 +284,6 @@ impl MagiskRootPatcher {
 }
 
 impl BootImagePatch for MagiskRootPatcher {
-    type Output = ();
-
     fn patcher_name(&self) -> &'static str {
         "MagiskRootPatcher"
     }
@@ -309,11 +304,7 @@ impl BootImagePatch for MagiskRootPatcher {
         Ok(targets)
     }
 
-    fn patch(
-        &self,
-        boot_image: &mut BootImage,
-        cancel_signal: &AtomicBool,
-    ) -> Result<Self::Output> {
+    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
         let zip_reader =
             File::open(&self.apk_path).map_err(|e| Error::File(self.apk_path.clone(), e))?;
         let mut zip = ZipArchive::new(BufReader::new(zip_reader))?;
@@ -508,47 +499,29 @@ impl OtaCertPatcher {
         Ok(certificates)
     }
 
-    fn create_zip(&self) -> Result<Vec<u8>> {
-        let raw_writer = Cursor::new(Vec::new());
-        let mut writer = ZipWriter::new(raw_writer);
-        let options = FileOptions::default().compression_method(CompressionMethod::Stored);
-        writer.start_file("ota.x509.pem", options)?;
-
-        crypto::write_pem_cert(&mut writer, &self.cert)?;
-
-        let raw_writer = writer.finish()?;
-
-        Ok(raw_writer.into_inner())
-    }
-
     fn patch_ramdisk(
         &self,
         ramdisk: &mut Vec<u8>,
         zip: &[u8],
         cancel_signal: &AtomicBool,
-    ) -> Result<Option<Vec<u8>>> {
+    ) -> Result<bool> {
         let (mut entries, ramdisk_format) = load_ramdisk(ramdisk, cancel_signal)?;
         let Some(entry) = entries.iter_mut().find(|e| e.path == Self::OTACERTS_PATH) else {
-            return Ok(None);
+            return Ok(false);
         };
 
         // Create a new otacerts archive. The old certs are ignored since
         // flashing a stock OTA will render the device unbootable.
-        let new_data = CpioEntryData::Data(zip.to_vec());
-        let CpioEntryData::Data(old_data) = mem::replace(&mut entry.data, new_data) else {
-            unreachable!()
-        };
+        entry.data = CpioEntryData::Data(zip.to_vec());
 
         // Repack ramdisk.
         *ramdisk = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
 
-        Ok(Some(old_data))
+        Ok(true)
     }
 }
 
 impl BootImagePatch for OtaCertPatcher {
-    type Output = (Vec<u8>, Vec<u8>);
-
     fn patcher_name(&self) -> &'static str {
         "OtaCertPatcher"
     }
@@ -583,26 +556,22 @@ impl BootImagePatch for OtaCertPatcher {
         Ok(targets)
     }
 
-    fn patch(
-        &self,
-        boot_image: &mut BootImage,
-        cancel_signal: &AtomicBool,
-    ) -> Result<Self::Output> {
+    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
         let ramdisks = match boot_image {
             BootImage::V0Through2(b) => slice::from_mut(&mut b.ramdisk),
             BootImage::V3Through4(b) => slice::from_mut(&mut b.ramdisk),
             BootImage::VendorV3Through4(b) => &mut b.ramdisks,
         };
 
-        let new_zip = self.create_zip()?;
+        let new_zip = otacert::create_zip(&self.cert, OtaCertBuildFlags::empty())?;
 
         for ramdisk in ramdisks {
             if ramdisk.is_empty() {
                 continue;
             }
 
-            if let Some(old_zip) = self.patch_ramdisk(ramdisk, &new_zip, cancel_signal)? {
-                return Ok((old_zip, new_zip));
+            if self.patch_ramdisk(ramdisk, &new_zip, cancel_signal)? {
+                return Ok(());
             }
         }
 
@@ -684,8 +653,6 @@ impl PrepatchedImagePatcher {
 }
 
 impl BootImagePatch for PrepatchedImagePatcher {
-    type Output = ();
-
     fn patcher_name(&self) -> &'static str {
         "PrepatchedImagePatcher"
     }
@@ -714,11 +681,7 @@ impl BootImagePatch for PrepatchedImagePatcher {
         Ok(targets)
     }
 
-    fn patch(
-        &self,
-        boot_image: &mut BootImage,
-        _cancel_signal: &AtomicBool,
-    ) -> Result<Self::Output> {
+    fn patch(&self, boot_image: &mut BootImage, _cancel_signal: &AtomicBool) -> Result<()> {
         let prepatched_image = self.load_prepatched_image()?;
 
         // Level 0: Warnings that don't affect booting
@@ -886,60 +849,6 @@ impl BootImagePatch for PrepatchedImagePatcher {
     }
 }
 
-pub enum BootImageOutput {
-    OtaCerts { old: Vec<u8>, new: Vec<u8> },
-    None,
-}
-
-#[allow(clippy::large_enum_variant)]
-pub enum BootImagePatcher {
-    MagiskRoot(MagiskRootPatcher),
-    OtaCert(OtaCertPatcher),
-    PrepatchedImage(PrepatchedImagePatcher),
-}
-
-impl BootImagePatch for BootImagePatcher {
-    type Output = BootImageOutput;
-
-    fn patcher_name(&self) -> &'static str {
-        match self {
-            Self::MagiskRoot(p) => p.patcher_name(),
-            Self::OtaCert(p) => p.patcher_name(),
-            Self::PrepatchedImage(p) => p.patcher_name(),
-        }
-    }
-
-    fn find_targets<'a>(
-        &self,
-        boot_images: &HashMap<&'a str, BootImageInfo>,
-        cancel_signal: &AtomicBool,
-    ) -> Result<Vec<&'a str>> {
-        match self {
-            Self::MagiskRoot(p) => p.find_targets(boot_images, cancel_signal),
-            Self::OtaCert(p) => p.find_targets(boot_images, cancel_signal),
-            Self::PrepatchedImage(p) => p.find_targets(boot_images, cancel_signal),
-        }
-    }
-
-    fn patch(
-        &self,
-        boot_image: &mut BootImage,
-        cancel_signal: &AtomicBool,
-    ) -> Result<Self::Output> {
-        match self {
-            Self::MagiskRoot(p) => p
-                .patch(boot_image, cancel_signal)
-                .map(|_| BootImageOutput::None),
-            Self::OtaCert(p) => p
-                .patch(boot_image, cancel_signal)
-                .map(|(old, new)| BootImageOutput::OtaCerts { old, new }),
-            Self::PrepatchedImage(p) => p
-                .patch(boot_image, cancel_signal)
-                .map(|_| BootImageOutput::None),
-        }
-    }
-}
-
 pub fn load_boot_images<'a>(
     names: &[&'a str],
     open_input: impl Fn(&str) -> io::Result<Box<dyn ReadSeek>> + Sync,
@@ -979,9 +888,9 @@ pub fn patch_boot_images<'a>(
     open_input: impl Fn(&str) -> io::Result<Box<dyn ReadSeek>> + Sync,
     open_output: impl Fn(&str) -> io::Result<Box<dyn WriteSeek>> + Sync,
     key: &RsaPrivateKey,
-    patchers: &[BootImagePatcher],
+    patchers: &[Box<dyn BootImagePatch + Sync>],
     cancel_signal: &AtomicBool,
-) -> Result<HashMap<&'a str, Vec<BootImageOutput>>> {
+) -> Result<HashSet<&'a str>> {
     // Preparse all images. Some patchers need to inspect every candidate.
     let mut images = load_boot_images(names, open_input)?;
 
@@ -1000,7 +909,7 @@ pub fn patch_boot_images<'a>(
         .collect::<Result<Vec<_>>>()?;
 
     // Regroup data so we can parallelize by target.
-    let mut groups = HashMap::<&str, (BootImageInfo, Vec<&BootImagePatcher>)>::new();
+    let mut groups = HashMap::<&str, (BootImageInfo, Vec<&Box<dyn BootImagePatch + Sync>>)>::new();
     for (patcher, targets) in patchers.iter().zip(all_targets.into_iter()) {
         for target in targets {
             groups
@@ -1015,24 +924,18 @@ pub fn patch_boot_images<'a>(
     drop(images);
 
     // Apply all patches.
-    let outputs = groups
+    groups
         .par_iter_mut()
-        .map(
-            |(name, (info, patchers))| -> Result<(&str, Vec<BootImageOutput>)> {
-                let results = patchers
-                    .iter()
-                    .map(|p| p.patch(&mut info.boot_image, cancel_signal))
-                    .collect::<Result<Vec<_>>>()?;
-
-                Ok((name, results))
-            },
-        )
-        .collect::<Result<HashMap<_, _>>>()?;
+        .try_for_each(|(_, (info, patchers))| -> Result<()> {
+            patchers
+                .iter()
+                .try_for_each(|p| p.patch(&mut info.boot_image, cancel_signal))
+        })?;
 
     // Resign and write new images.
     groups
-        .into_par_iter()
-        .map(|(name, (mut info, _))| {
+        .par_iter_mut()
+        .map(|(name, (info, _))| {
             let AppendedDescriptorMut::Hash(descriptor) = info.header.appended_descriptor_mut()?
             else {
                 return Err(Error::NoHashDescriptor);
@@ -1062,5 +965,5 @@ pub fn patch_boot_images<'a>(
         })
         .collect::<Result<()>>()?;
 
-    Ok(outputs)
+    Ok(groups.keys().cloned().collect())
 }

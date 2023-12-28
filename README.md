@@ -19,11 +19,13 @@ Having a good understanding of how AVB and A/B OTAs work is recommended prior to
 
 ## Patches
 
-avbroot applies two patches to the boot images:
+avbroot applies the following patches to the partition images:
 
 * The `boot` or `init_boot` image, depending on device, is patched to enable root access. For Magisk, the patch is equivalent to what would be normally done by the Magisk app.
 
 * The `boot`, `recovery`, or `vendor_boot` image, depending on device, is patched to replace the OTA signature verification certificates with the custom OTA signing certificate. This allows future patched OTAs to be sideloaded from recovery mode after the bootloader has been locked. It also prevents accidental flashing of the original unpatched OTA.
+
+* The `system` or `my_engineering` image, depending on device, is also patched to replace the OTA signature verification certificates. This prevents the OS' system updater app from installing an unpatched OTA and also allows the use of custom OTA updater apps.
 
 ## Warnings and Caveats
 
@@ -218,22 +220,22 @@ To stop using avbroot and revert to the stock firmware:
 
 4. That's it! There are no other remnants to clean up.
 
-## avbroot modules
+## OTA updates
 
-avbroot's Magisk/KernelSU modules can be downloaded from the [releases page](https://github.com/chenxiaolong/avbroot/releases).
+avbroot replaces `/system/etc/security/otacerts.zip` in both the system and recovery partitions with a new zip that contains the custom OTA signing certificate. This prevents an unpatched OTA from inadvertently being installed both when booted into Android and when sideloading from recovery.
 
-### `clearotacerts`: Block OTA Updates from default updater app
-
-Unpatched OTA updates are already blocked when booted into recovery mode because the original OTA certificate has been replaced with the custom certificate. However, this doesn't prevent the Android's system updater app from attempting to install an unpatched OTA update.
-
-Disabling the system updater app is recommended. To do so:
+Disabling the system updater app is recommended to prevent it from even attempting to install an unpatched OTA. To do so:
 
 * Stock OS: Turn off `Automatic system updates` in Android's Developer Options.
 * Custom OS: Disable the system updater app (or block its network access) from Settings -> Apps -> See all apps -> (three-dot menu) -> Show system -> (find updater app).
 
-As an extra safety measure, flashing the `clearotacerts` module will intentionally make OTAs fail to install while booted into Android. It does so by overriding `/system/etc/security/otacerts.zip` with an empty zip containing no certificates so that even if an OTA is downloaded, signature verification will fail. This may cause some custom OS' system updater app to get stuck in an infinite loop downloading an OTA update and then retrying when signature verification fails, so make sure the system updater app is disabled.
+This is especially important for some custom OS's because their system updater app may get stuck in an infinite loop downloading an OTA update and then retrying when signature verification fails.
 
-As an alternative to this module, see [Custota](https://github.com/chenxiaolong/Custota) for a custom OTA updater app that installs updates from a self-hosted OTA server.
+To self-host a custom OTA server, see [Custota](https://github.com/chenxiaolong/Custota).
+
+## avbroot modules
+
+avbroot's Magisk/KernelSU modules can be downloaded from the [releases page](https://github.com/chenxiaolong/avbroot/releases).
 
 ### `oemunlockonboot`: Enable OEM unlocking on every boot
 

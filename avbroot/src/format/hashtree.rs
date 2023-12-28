@@ -27,7 +27,6 @@ use crate::{
     util::{self, NumBytes},
 };
 
-// TODO: io::Error
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Hash tree should have size {expected} for input size {input}, but has size {actual}")]

@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 anyhow = "1.0.75"
 base64 = "0.21.3"
+bitflags = "2.4.1"
 bstr = "1.6.2"
 byteorder = "1.4.3"
 cap-std = "2.0.0"

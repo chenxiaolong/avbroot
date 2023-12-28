@@ -96,7 +96,7 @@ fn strip_image(
     let header = PayloadHeader::from_reader(&mut payload_reader)
         .context("Failed to load OTA payload header")?;
 
-    let required_images = RequiredImages::new(&header.manifest);
+    let required_images = RequiredImages::new(&header.manifest, false);
     let required_images = required_images.iter().collect::<HashSet<_>>();
     let mut data_holes = vec![];
 
@@ -386,6 +386,9 @@ fn patch_image(
         input_file.as_os_str().into(),
         "--output".into(),
         output_file.as_os_str().into(),
+        // We currently don't test patching the system image because it's too
+        // large to do all the time in the CI pipelines.
+        "--skip-system-otacerts".into(),
     ];
     args.extend(key_args);
     args.extend_from_slice(extra_args);
@@ -412,6 +415,7 @@ fn extract_image(input_file: &Path, output_dir: &Path, cancel_signal: &AtomicBoo
         input_file.as_os_str(),
         OsStr::new("--directory"),
         output_dir.as_os_str(),
+        OsStr::new("--skip-system"),
     ])?;
     avbroot::cli::ota::extract_subcommand(&cli, cancel_signal)?;
 

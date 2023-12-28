@@ -49,12 +49,6 @@ fn newest_child_by_name(directory: &Path) -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("{directory:?} has no children"))
 }
 
-fn build_empty_zip(writer: &mut dyn Write) -> Result<()> {
-    let mut writer = ZipWriter::new_streaming(writer);
-    writer.finish()?;
-    Ok(())
-}
-
 fn build_dex(writer: &mut dyn Write, sources: &[&Path]) -> Result<()> {
     let sdk = env::var_os("ANDROID_HOME")
         .map(PathBuf::from)
@@ -183,10 +177,6 @@ pub fn modules_subcommand(cli: &ModulesCli) -> Result<()> {
         let (path, mut writer) = start_module(&dist_dir, &common_dir, &module_dir)?;
 
         match module {
-            Module::ClearOtaCerts => {
-                writer.start_file("system/etc/security/otacerts.zip", FileOptions::default())?;
-                build_empty_zip(&mut writer)?;
-            }
             Module::OemUnlockOnBoot => {
                 writer.start_file("classes.dex", FileOptions::default())?;
                 build_dex(&mut writer, &[&module_dir.join("Main.java")])?;
@@ -209,7 +199,6 @@ pub fn modules_subcommand(cli: &ModulesCli) -> Result<()> {
 #[derive(Clone, Copy, Debug, ValueEnum)]
 #[value(rename_all = "lower")]
 enum Module {
-    ClearOtaCerts,
     OemUnlockOnBoot,
 }
 
