@@ -9,15 +9,25 @@
 
 ### Unreleased
 
+Happy New Year! This release brings two major changes:
+
+1. The OTA certificates (`otacerts.zip`) in the system partition are now patched. The `clearotacerts` module from avbroot (or the `customotacerts` module from Custota) are no longer needed and can be safely uninstalled.
+
+    This makes it possible to use Pixel's new Repair Mode safely. To do so, first patch and flash with `--rootless` to unroot and then enter Repair Mode. Once the device is repaired, exit Repair Mode and flash a rooted patched OTA again.
+
+2. Autodetection for boot partitions is now significantly more reliable. For KernelSU users or folks who have more obscure devices, the `--boot-partition` option is no longer required (and is now ignored).
+
+Full list of changes:
+
 * Add support for AVB 2.0 format 1.3.0 (for Android 15) ([PR #210])
 * Add new `avbroot key decode-avb` command for converting AVB-encoded public keys to the standard PKCS8-encoded format ([PR #219])
 * Adjust AVB sanity check to validate `*_dlkm` and `odm` specifically because some devices have an unprotected `odm_ext` partition ([PR #220])
 * Improve autodetection of boot images ([Issue #218], [PR #221], [PR #237])
-  * For KernelSU, the `--boot-partition` is no longer needed
 * Build precompiled executables as statically linked executables ([Issue #222], [PR #224], [PR #227])
 * Limit critical partition check to bootloader-verified partitions ([Issue #223], [PR #226])
 * Improve patching performance by spliiting new partition images into chunks and compressing them in parallel ([PR #228])
 * Also verify whole-partition hashes when running `avbroot ota verify` ([PR #229])
+* Add support for patching `otacerts.zip` on the system partition ([Issue #225], [PR #240])
 
 Behind-the-scenes changes:
 
@@ -140,6 +150,7 @@ Behind-the-scenes changes:
 [Issue #218]: https://github.com/chenxiaolong/avbroot/issues/218
 [Issue #222]: https://github.com/chenxiaolong/avbroot/issues/222
 [Issue #223]: https://github.com/chenxiaolong/avbroot/issues/223
+[Issue #225]: https://github.com/chenxiaolong/avbroot/issues/225
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -206,3 +217,4 @@ Behind-the-scenes changes:
 [PR #233]: https://github.com/chenxiaolong/avbroot/pull/233
 [PR #234]: https://github.com/chenxiaolong/avbroot/pull/234
 [PR #237]: https://github.com/chenxiaolong/avbroot/pull/237
+[PR #240]: https://github.com/chenxiaolong/avbroot/pull/240
