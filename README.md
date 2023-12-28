@@ -233,6 +233,24 @@ This is especially important for some custom OS's because their system updater a
 
 To self-host a custom OTA server, see [Custota](https://github.com/chenxiaolong/Custota).
 
+## Repair mode
+
+Some devices now ship with a Repair Mode feature that boots the system with a fresh `userdata` image so that repair technicians are able to run on-device diagnostics without needing the user's credentials to unlock the device.
+
+When the device is rooted, it is unsafe to use Repair Mode. Unless you are using release builds of Magisk/KernelSU signed with your own keys, it's trivial for someone to just install the Magisk/KernelSU app while in repair mode to gain root access with no authentication.
+
+To safely use Repair Mode:
+
+1. Unroot the device by repatching the OTA with the `--rootless` option (instead of `--magisk` or `--prepatched`) and flashing it.
+
+2. Turn on Repair Mode.
+
+3. After receiving the repaired device, exit Repair Mode.
+
+4. Flash the (rooted) patched OTA as normal.
+
+Because the unrooting and rooting are done by flashing OTAs, the device's data will not be wiped.
+
 ## avbroot modules
 
 avbroot's Magisk/KernelSU modules can be downloaded from the [releases page](https://github.com/chenxiaolong/avbroot/releases).
