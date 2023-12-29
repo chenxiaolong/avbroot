@@ -36,6 +36,7 @@ Behind-the-scenes changes:
 * Add support for partially updating FEC data ([PR #230], [PR #231], [PR #234])
 * Fix hash tree calculation for images smaller than one block ([PR #232])
 * Refactor hash tree code and add tests, CLI commands, and support for partial updates ([PR #233])
+* Generate mock OTAs to use for end-to-end tests ([PR #241])
 
 ### Version 2.3.3
 
@@ -218,4 +219,5 @@ Behind-the-scenes changes:
 [PR #234]: https://github.com/chenxiaolong/avbroot/pull/234
 [PR #237]: https://github.com/chenxiaolong/avbroot/pull/237
 [PR #240]: https://github.com/chenxiaolong/avbroot/pull/240
+[PR #241]: https://github.com/chenxiaolong/avbroot/pull/241
 [PR #244]: https://github.com/chenxiaolong/avbroot/pull/244
