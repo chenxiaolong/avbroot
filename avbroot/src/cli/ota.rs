@@ -10,6 +10,7 @@ use std::{
     fmt::Display,
     fs::{self, File},
     io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Mutex},
     time::Instant,
@@ -19,10 +20,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use cap_std::{ambient_authority, fs::Dir};
 use cap_tempfile::TempDir;
 use clap::{value_parser, ArgAction, Args, Parser, Subcommand};
-use rayon::{
-    iter::IntoParallelRefIterator,
-    prelude::{IntoParallelRefMutIterator, ParallelIterator},
-};
+use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
 use rsa::RsaPrivateKey;
 use tempfile::NamedTempFile;
 use topological_sort::TopologicalSort;
@@ -120,11 +118,16 @@ impl RequiredImages {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InputFileState {
+    External,
+    Extracted,
+    Modified,
+}
+
 struct InputFile {
     file: PSeekFile,
-    /// Whether this input can be pruned if it's not directly needed for the
-    /// patching operation.
-    can_prune: bool,
+    state: InputFileState,
 }
 
 /// Open all input files listed in `required_images`. If an image has a path
@@ -158,7 +161,7 @@ fn open_input_files(
                 name.to_owned(),
                 InputFile {
                     file,
-                    can_prune: false,
+                    state: InputFileState::External,
                 },
             );
         } else {
@@ -174,7 +177,7 @@ fn open_input_files(
                 name.to_owned(),
                 InputFile {
                     file,
-                    can_prune: true,
+                    state: InputFileState::Extracted,
                 },
             );
         }
@@ -221,7 +224,7 @@ fn patch_boot_images<'a, 'b: 'a>(
             let mut locked = input_files.lock().unwrap();
             let input_file = locked.get_mut(name).unwrap();
             input_file.file = tempfile::tempfile().map(PSeekFile::new)?;
-            input_file.can_prune = false;
+            input_file.state = InputFileState::Modified;
             WriteSeekReopen::reopen_boxed(&input_file.file)
         },
         key_avb,
@@ -246,27 +249,44 @@ fn patch_system_image<'a, 'b: 'a>(
     cert_ota: &Certificate,
     key_avb: &RsaPrivateKey,
     cancel_signal: &AtomicBool,
-) -> Result<()> {
+) -> Result<(&'b str, Vec<Range<u64>>)> {
     let Some(target) = required_images.iter_system().next() else {
         bail!("No system partition found");
     };
 
     status!("Patching system image: {target}");
 
-    let ranges = system::patch_system_image(
-        &input_files[target].file,
-        &input_files[target].file,
+    let input_file = input_files.get_mut(target).unwrap();
+
+    // We can't modify external files in place.
+    if input_file.state == InputFileState::External {
+        let mut reader = input_file.file.reopen()?;
+        let mut writer = tempfile::tempfile()
+            .map(PSeekFile::new)
+            .with_context(|| format!("Failed to create temp file for: {target}"))?;
+
+        stream::copy(&mut reader, &mut writer, cancel_signal)?;
+
+        input_file.file = writer;
+        input_file.state = InputFileState::Extracted;
+    }
+
+    let (mut ranges, other_ranges) = system::patch_system_image(
+        &input_file.file,
+        &input_file.file,
         cert_ota,
         key_avb,
         cancel_signal,
     )
     .with_context(|| format!("Failed to patch system image: {target}"))?;
 
-    input_files.get_mut(target).unwrap().can_prune = false;
+    input_file.state = InputFileState::Modified;
 
     status!("Patched otacerts.zip offsets in {target}: {ranges:?}");
 
-    Ok(())
+    ranges.extend(other_ranges);
+
+    Ok((target, ranges))
 }
 
 /// Load the specified vbmeta image headers. If an image has a vbmeta footer,
@@ -354,7 +374,7 @@ fn get_vbmeta_patch_order(
             // that were modified during patching.
             if images.contains_key(partition_name)
                 && (vbmeta_headers.contains_key(partition_name)
-                    || !images[partition_name].can_prune)
+                    || images[partition_name].state != InputFileState::Extracted)
             {
                 dep_graph
                     .get_mut(vbmeta_name.as_str())
@@ -599,7 +619,7 @@ fn update_vbmeta_headers(
 
             let input_file = images.get_mut(name).unwrap();
             input_file.file = writer;
-            input_file.can_prune = false;
+            input_file.state = InputFileState::Modified;
         }
     }
 
@@ -607,36 +627,62 @@ fn update_vbmeta_headers(
 }
 
 /// Compress an image and update the OTA manifest partition entry appropriately.
+/// If `ranges` is [`None`], then the entire file is compressed. Otherwise, only
+/// the chunks containing the specified ranges are compressed. In the latter
+/// scenario, unmodified chunks must be copied from the original payload.
 fn compress_image(
     name: &str,
     file: &mut PSeekFile,
-    header: &Mutex<PayloadHeader>,
-    block_size: u32,
+    header: &mut PayloadHeader,
+    ranges: Option<&[Range<u64>]>,
     cancel_signal: &AtomicBool,
-) -> Result<()> {
+) -> Result<Vec<Range<usize>>> {
     file.rewind()?;
 
     let writer = tempfile::tempfile()
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to create temp file for: {name}"))?;
 
-    let (partition_info, operations) =
-        payload::compress_image(&*file, &writer, name, block_size, cancel_signal)?;
-
-    let mut header_locked = header.lock().unwrap();
-    let partition = header_locked
+    let block_size = header.manifest.block_size();
+    let partition = header
         .manifest
         .partitions
         .iter_mut()
         .find(|p| p.partition_name == name)
         .unwrap();
 
+    if let Some(r) = ranges {
+        match payload::compress_modified_image(
+            &*file,
+            &writer,
+            block_size,
+            partition.new_partition_info.as_mut().unwrap(),
+            &mut partition.operations,
+            r,
+            cancel_signal,
+        ) {
+            Ok(indices) => {
+                *file = writer;
+                return Ok(indices);
+            }
+            // If we can't take advantage of the optimization, we can still
+            // compress the whole image.
+            Err(payload::Error::ExtentsNotInOrder) => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    // Otherwise, compress the entire image.
+    let (partition_info, operations) =
+        payload::compress_image(&*file, &writer, name, block_size, cancel_signal)?;
+
     partition.new_partition_info = Some(partition_info);
     partition.operations = operations;
 
     *file = writer;
 
-    Ok(())
+    #[allow(clippy::single_range_in_vec_init)]
+    Ok(vec![0..partition.operations.len()])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -659,7 +705,7 @@ fn patch_ota_payload(
     }
 
     let header = Mutex::new(header);
-    let header_locked = header.lock().unwrap();
+    let mut header_locked = header.lock().unwrap();
     let all_partitions = header_locked
         .manifest
         .partitions
@@ -705,16 +751,28 @@ fn patch_ota_payload(
 
     // Main patching operation is done. Unmodified boot images no longer need to
     // be kept around.
-    input_files.retain(|n, f| !(f.can_prune && RequiredImages::is_boot(n)));
+    input_files
+        .retain(|n, f| !(f.state == InputFileState::Extracted && RequiredImages::is_boot(n)));
+
+    let mut system_target = None;
+    let mut system_ranges = None;
 
     if !skip_system_otacerts {
-        patch_system_image(
+        let (target, ranges) = patch_system_image(
             &required_images,
             &mut input_files,
             cert_ota,
             key_avb,
             cancel_signal,
         )?;
+
+        system_target = Some(target);
+
+        if !external_images.contains_key(target) {
+            // We can only perform the optimization of avoiding recompression
+            // if the image came from the original payload.
+            system_ranges = Some(ranges);
+        }
     }
 
     let mut vbmeta_headers = load_vbmeta_images(&mut input_files, &vbmeta_images)?;
@@ -738,33 +796,32 @@ fn patch_ota_payload(
     )?;
 
     // Unmodified vbmeta images no longer need to be kept around either.
-    input_files.retain(|_, f| !f.can_prune);
+    input_files.retain(|_, f| f.state != InputFileState::Extracted);
 
-    status!(
-        "Compressing replacement images: {}",
-        joined(sorted(input_files.keys())),
-    );
+    let mut compressed_files = input_files
+        .into_iter()
+        .map(|(name, mut input_file)| {
+            status!("Compressing replacement image: {name}");
 
-    let block_size = header_locked.manifest.block_size();
-    drop(header_locked);
-
-    input_files
-        .par_iter_mut()
-        .map(|(name, input_file)| -> Result<()> {
-            compress_image(
-                name,
+            let modified_operations = compress_image(
+                &name,
                 &mut input_file.file,
-                &header,
-                block_size,
+                &mut header_locked,
+                if Some(name.as_str()) == system_target {
+                    system_ranges.as_deref()
+                } else {
+                    None
+                },
                 cancel_signal,
             )
-            .with_context(|| format!("Failed to compress image: {name}"))
+            .with_context(|| format!("Failed to compress image: {name}"))?;
+
+            Ok((name, (input_file, modified_operations)))
         })
-        .collect::<Result<()>>()?;
+        .collect::<Result<HashMap<_, _>>>()?;
 
     status!("Generating new OTA payload");
 
-    let header_locked = header.lock().unwrap();
     let mut payload_writer = PayloadWriter::new(writer, header_locked.clone(), key_ota.clone())
         .context("Failed to write payload header")?;
     let mut orig_payload_reader = payload.reopen_boxed().context("Failed to open payload")?;
@@ -789,42 +846,44 @@ fn patch_ota_payload(
             .data_offset
             .ok_or_else(|| anyhow!("Missing data_offset in partition #{pi} operation #{oi}"))?;
 
-        if let Some(input_file) = input_files.get_mut(&name) {
-            // Copy from our replacement image. The compressed chunks are laid
-            // out sequentially and data_offset is set to the offset within that
-            // file.
-            input_file
-                .file
-                .seek(SeekFrom::Start(data_offset))
-                .with_context(|| format!("Failed to seek image: {name}"))?;
+        // Try to copy from our replacement image. The compressed chunks are
+        // laid out sequentially and data_offset is set to the offset within
+        // that file.
+        if let Some((input_file, modified_operations)) = compressed_files.get_mut(&name) {
+            if util::ranges_contains(modified_operations, &oi) {
+                input_file
+                    .file
+                    .seek(SeekFrom::Start(data_offset))
+                    .with_context(|| format!("Failed to seek image: {name}"))?;
 
-            stream::copy_n(
-                &mut input_file.file,
-                &mut payload_writer,
-                data_length,
-                cancel_signal,
-            )
-            .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
-        } else {
-            // Copy from the original payload.
-            let data_offset = data_offset
-                .checked_add(header_locked.blob_offset)
-                .ok_or_else(|| {
-                    anyhow!("data_offset overflow in partition #{pi} operation #{oi}")
-                })?;
+                stream::copy_n(
+                    &mut input_file.file,
+                    &mut payload_writer,
+                    data_length,
+                    cancel_signal,
+                )
+                .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
 
-            orig_payload_reader
-                .seek(SeekFrom::Start(data_offset))
-                .with_context(|| format!("Failed to seek original payload to {data_offset}"))?;
-
-            stream::copy_n(
-                &mut orig_payload_reader,
-                &mut payload_writer,
-                data_length,
-                cancel_signal,
-            )
-            .with_context(|| format!("Failed to copy from original payload: {name}"))?;
+                continue;
+            }
         }
+
+        // Otherwise, copy from the original payload.
+        let data_offset = data_offset
+            .checked_add(header_locked.blob_offset)
+            .ok_or_else(|| anyhow!("data_offset overflow in partition #{pi} operation #{oi}"))?;
+
+        orig_payload_reader
+            .seek(SeekFrom::Start(data_offset))
+            .with_context(|| format!("Failed to seek original payload to {data_offset}"))?;
+
+        stream::copy_n(
+            &mut orig_payload_reader,
+            &mut payload_writer,
+            data_length,
+            cancel_signal,
+        )
+        .with_context(|| format!("Failed to copy from original payload: {name}"))?;
     }
 
     let (_, properties, metadata_size) = payload_writer
