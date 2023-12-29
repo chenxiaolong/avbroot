@@ -6,6 +6,7 @@
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    ops::Range,
     sync::atomic::AtomicBool,
 };
 
@@ -15,7 +16,10 @@ use byteorder::{BigEndian, ReadBytesExt};
 use bzip2::write::BzDecoder;
 use num_traits::ToPrimitive;
 use prost::Message;
-use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::{
+    iter::{IndexedParallelIterator, IntoParallelRefMutIterator},
+    prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
+};
 use ring::digest::{Context, Digest};
 use rsa::{traits::PublicKeyParts, Pkcs1v15Sign, RsaPrivateKey};
 use sha2::Sha256;
@@ -80,6 +84,8 @@ pub enum Error {
         size: u64,
         block_size: u32,
     },
+    #[error("Destination extents are not in order")]
+    ExtentsNotInOrder,
     #[error("Partition not found in payload: {0}")]
     MissingPartition(String),
     #[error("Partitions not found in payload: {0:?}")]
@@ -862,6 +868,28 @@ pub fn extract_images<'a>(
         .collect()
 }
 
+fn compress_chunk(raw_data: &[u8], cancel_signal: &AtomicBool) -> Result<(Vec<u8>, Digest)> {
+    let reader = Cursor::new(raw_data);
+    let writer = Cursor::new(Vec::new());
+    let hashing_writer = HashingWriter::new(writer, Context::new(&ring::digest::SHA256));
+
+    // AOSP's payload_consumer does not support checking CRC during
+    // decompression. Also, we intentionally pick the lowest compression level
+    // since we primarily care about squishing zeros. The non-zero portions of
+    // boot images are usually already-compressed kernels and ramdisks.
+    let stream = Stream::new_easy_encoder(0, Check::None)?;
+    let mut xz_writer = XzEncoder::new_stream(hashing_writer, stream);
+
+    stream::copy_n(reader, &mut xz_writer, raw_data.len() as u64, cancel_signal)?;
+
+    let hashing_writer = xz_writer.finish()?;
+    let (writer, context_compressed) = hashing_writer.finish();
+    let digest_compressed = context_compressed.finish();
+    let data = writer.into_inner();
+
+    Ok((data, digest_compressed))
+}
+
 /// Compress the image and return the corresponding information to insert into
 /// the payload manifest's [`PartitionUpdate`] instance. The uncompressed data
 /// is split into 2 MiB chunks, which are read and compressed in parallel, and
@@ -930,25 +958,7 @@ pub fn compress_image(
             .into_par_iter()
             .map(
                 |(raw_offset, raw_data)| -> Result<(Vec<u8>, InstallOperation)> {
-                    let reader = Cursor::new(raw_data.as_slice());
-                    let writer = Cursor::new(Vec::new());
-                    let hashing_writer =
-                        HashingWriter::new(writer, Context::new(&ring::digest::SHA256));
-
-                    // AOSP's payload_consumer does not support checking CRC during
-                    // decompression. Also, we intentionally pick the lowest
-                    // compression level since we primarily care about squishing
-                    // zeros. The non-zero portions of boot images are usually
-                    // already-compressed kernels and ramdisks.
-                    let stream = Stream::new_easy_encoder(0, Check::None)?;
-                    let mut xz_writer = XzEncoder::new_stream(hashing_writer, stream);
-
-                    stream::copy_n(reader, &mut xz_writer, raw_data.len() as u64, cancel_signal)?;
-
-                    let hashing_writer = xz_writer.finish()?;
-                    let (writer, context_compressed) = hashing_writer.finish();
-                    let digest_compressed = context_compressed.finish();
-                    let data = writer.into_inner();
+                    let (data, digest_compressed) = compress_chunk(&raw_data, cancel_signal)?;
 
                     let extent = Extent {
                         start_block: Some(raw_offset / u64::from(block_size)),
@@ -992,4 +1002,155 @@ pub fn compress_image(
     };
 
     Ok((partition_info, operations))
+}
+
+fn extents_sorted(operations: &[InstallOperation]) -> bool {
+    let mut offset = 0;
+
+    for operation in operations {
+        if operation.dst_extents.is_empty() {
+            return false;
+        }
+
+        for extent in &operation.dst_extents {
+            let Some(start) = extent.start_block else {
+                return false;
+            };
+            let Some(size) = extent.num_blocks else {
+                return false;
+            };
+
+            if start != offset {
+                return false;
+            }
+
+            let Some(next) = start.checked_add(size) else {
+                return false;
+            };
+            offset = next;
+        }
+    }
+
+    true
+}
+
+/// Compress the modified image and update the specified [`PartitionInfo`] and
+/// list of [`InstallOperation`]s. [`InstallOperation`]s that do not match any
+/// byte range in `ranges` will not be compressed. The caller must update
+/// [`InstallOperation::data_offset`] in each operation manually because the
+/// initial values are relative to 0.
+///
+/// Returns the ranges of indices of `operations` that were updated.
+pub fn compress_modified_image(
+    input: &(dyn ReadSeekReopen + Sync),
+    output: &(dyn WriteSeekReopen + Sync),
+    block_size: u32,
+    partition_info: &mut PartitionInfo,
+    operations: &mut [InstallOperation],
+    ranges: &[Range<u64>],
+    cancel_signal: &AtomicBool,
+) -> Result<Vec<Range<usize>>> {
+    const OPERATION_GROUP: usize = 32;
+
+    // Full OTAs created by payload_generator have one extent per operation and
+    // they're all in order with no gaps. Verify this so we can take advantage
+    // of this layout.
+    if !extents_sorted(operations) {
+        return Err(Error::ExtentsNotInOrder);
+    }
+
+    let groups_total = util::div_ceil(operations.len(), OPERATION_GROUP);
+    let mut bytes_compressed = 0;
+    let mut context_uncompressed = Context::new(&ring::digest::SHA256);
+    let mut modified_operations = vec![];
+
+    // Read the file one group at a time. This allows for some parallelization
+    // without reading the entire file into memory. This is necessary because we
+    // need to compute the checksum of the entire file.
+    for group in 0..groups_total {
+        let operation_start = group * OPERATION_GROUP;
+        let operation_size = (operations.len() - operation_start).min(OPERATION_GROUP);
+        let operation_end = operation_start + operation_size;
+
+        let uncompressed_data_group = operations[operation_start..operation_end]
+            .par_iter()
+            .map(|operation| -> Result<(Vec<u8>, bool)> {
+                let extents_start = operation.dst_extents[0]
+                    .start_block()
+                    .checked_mul(u64::from(block_size))
+                    .ok_or_else(|| Error::FieldOutOfBounds("extents_start"))?;
+                let extents_size = operation
+                    .dst_extents
+                    .iter()
+                    .map(|e| e.num_blocks())
+                    .try_fold(0u64, |acc, n| acc.checked_add(n))
+                    .and_then(|n| n.checked_mul(u64::from(block_size)))
+                    .ok_or_else(|| Error::FieldOutOfBounds("extents_size"))?;
+                let extents_end = extents_start
+                    .checked_add(extents_size)
+                    .ok_or_else(|| Error::FieldOutOfBounds("extents_end"))?;
+                let extents_size = extents_size
+                    .to_usize()
+                    .ok_or_else(|| Error::FieldOutOfBounds("extents_size"))?;
+
+                let mut reader = input.reopen_boxed()?;
+                reader.seek(SeekFrom::Start(extents_start))?;
+
+                let mut data = vec![0u8; extents_size];
+
+                stream::check_cancel(cancel_signal)?;
+                reader.read_exact(&mut data)?;
+
+                let was_modified = util::ranges_overlaps(ranges, &(extents_start..extents_end));
+
+                Ok((data, was_modified))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (data, _) in &uncompressed_data_group {
+            context_uncompressed.update(data);
+        }
+
+        // Only compress the modified chunks.
+        let mut compressed_data_group = operations[operation_start..operation_end]
+            .par_iter_mut()
+            .enumerate()
+            .zip(uncompressed_data_group)
+            .filter(|(_, (_, was_modified))| *was_modified)
+            .map(
+                |((i_rel, operation), (raw_data, _))| -> Result<(Vec<u8>, usize, &mut InstallOperation)> {
+                    let (data, digest_compressed) = compress_chunk(&raw_data, cancel_signal)?;
+
+                    operation.set_type(Type::ReplaceXz);
+                    operation.data_length = Some(data.len() as u64);
+                    operation.data_sha256_hash = Some(digest_compressed.as_ref().to_vec());
+
+                    Ok((data, i_rel + operation_start, operation))
+                },
+            )
+            .collect::<Result<Vec<_>>>()?;
+
+        for (data, _, operation) in &mut compressed_data_group {
+            operation.data_offset = Some(bytes_compressed);
+            bytes_compressed += data.len() as u64;
+        }
+
+        let modified_group_operations = compressed_data_group
+            .into_par_iter()
+            .map(|(data, i, operation)| {
+                let mut writer = output.reopen_boxed()?;
+                writer.seek(SeekFrom::Start(operation.data_offset.unwrap()))?;
+                writer.write_all(&data)?;
+
+                Ok(i..i + 1)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        modified_operations.extend(modified_group_operations);
+    }
+
+    let digest_uncompressed = context_uncompressed.finish();
+    partition_info.hash = Some(digest_uncompressed.as_ref().to_vec());
+
+    Ok(util::merge_overlapping(&modified_operations))
 }

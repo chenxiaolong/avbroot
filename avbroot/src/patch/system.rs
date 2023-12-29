@@ -18,7 +18,7 @@ use zip::ZipArchive;
 
 use crate::{
     format::{
-        avb::{self, AppendedDescriptorMut},
+        avb::{self, AppendedDescriptorMut, Footer},
         ota,
     },
     patch::otacert,
@@ -34,6 +34,8 @@ pub enum Error {
     NoFooter,
     #[error("No hash tree descriptor found in vbmeta header")]
     NoHashTreeDescriptor,
+    #[error("{0:?} field is out of bounds")]
+    FieldOutOfBounds(&'static str),
     #[error("AVB error")]
     Avb(#[from] avb::Error),
     #[error("OTA certificate error")]
@@ -88,15 +90,21 @@ fn find_zip_bounds(data: &[u8], eocd_offset: usize) -> Option<Range<usize>> {
 /// run in parallel where possible. The input and output must refer to the same
 /// file and will be reopened from multiple threads.
 ///
+/// Returns two sorted and non-overlapping lists of byte ranges that were
+/// modified. The first list are the byte regions within the filesystem data
+/// that contained otacerts.zip. The second list is the list of byte regions
+/// outside of the filesyste, like the hash tree, FEC data, and AVB metadata.
+///
 /// If [`Error::OldZipNotFound`] is returned, the output will not have been
 /// modified.
+#[allow(clippy::type_complexity)]
 pub fn patch_system_image(
     input: &(dyn ReadSeekReopen + Sync),
     output: &(dyn WriteSeekReopen + Sync),
     certificate: &Certificate,
     key: &RsaPrivateKey,
     cancel_signal: &AtomicBool,
-) -> Result<Vec<Range<u64>>> {
+) -> Result<(Vec<Range<u64>>, Vec<Range<u64>>)> {
     // This must be a multiple of normal filesystem block sizes (eg. 4 KiB).
     // This ensures that the block containing otacerts.zip's data won't cross
     // chunk boundaries.
@@ -178,5 +186,31 @@ pub fn patch_system_image(
     let writer = output.reopen_boxed()?;
     avb::write_appended_image(writer, &header, &mut footer, image_size)?;
 
-    Ok(modified_ranges)
+    let AppendedDescriptorMut::HashTree(descriptor) = header.appended_descriptor_mut()? else {
+        return Err(Error::NoHashTreeDescriptor);
+    };
+
+    // The hash tree, FEC data, and AVB regions will have been modified.
+    let hash_tree_end = descriptor
+        .tree_offset
+        .checked_add(descriptor.tree_size)
+        .ok_or_else(|| Error::FieldOutOfBounds("hash_tree_end"))?;
+    let fec_data_end = descriptor
+        .fec_offset
+        .checked_add(descriptor.fec_size)
+        .ok_or_else(|| Error::FieldOutOfBounds("fec_data_end"))?;
+    let header_end = footer
+        .vbmeta_offset
+        .checked_add(footer.vbmeta_size)
+        .ok_or_else(|| Error::FieldOutOfBounds("avb_end"))?;
+    let footer_start = image_size - Footer::SIZE as u64;
+
+    let other_ranges = util::merge_overlapping(&[
+        descriptor.tree_offset..hash_tree_end,
+        descriptor.fec_offset..fec_data_end,
+        footer.vbmeta_offset..header_end,
+        footer_start..image_size,
+    ]);
+
+    Ok((modified_ranges, other_ranges))
 }

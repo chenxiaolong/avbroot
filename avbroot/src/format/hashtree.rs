@@ -4,7 +4,6 @@
  */
 
 use std::{
-    cmp::Ordering,
     fmt,
     io::{self, Cursor, Read, SeekFrom, Write},
     ops::Range,
@@ -103,21 +102,6 @@ impl<'a> HashTree<'a> {
         }
 
         Ok(ranges)
-    }
-
-    /// Check if a sorted list of block ranges contains a block.
-    fn block_range_contains(ranges: &[Range<u64>], block: u64) -> bool {
-        ranges
-            .binary_search_by(|range| {
-                if range.start > block {
-                    Ordering::Greater
-                } else if range.end <= block {
-                    Ordering::Less
-                } else {
-                    Ordering::Equal
-                }
-            })
-            .is_ok()
     }
 
     /// Convert a list of ranges of byte offsets to a sorted, non-overlapping
@@ -243,7 +227,7 @@ impl<'a> HashTree<'a> {
         level_data
             .par_chunks_exact_mut(digest_size)
             .enumerate()
-            .filter(|(chunk, _)| Self::block_range_contains(block_ranges, *chunk as u64))
+            .filter(|(chunk, _)| util::ranges_contains(block_ranges, &(*chunk as u64)))
             .map(|(chunk, out_data)| -> io::Result<()> {
                 let in_start = (chunk as u64) * u64::from(self.block_size);
                 let in_size = u64::from(self.block_size).min(size - in_start);
@@ -644,14 +628,6 @@ mod tests {
             hash_tree.compute_level_offsets(1024 * 1024 * 1024).unwrap(),
             &[69632..8458240, 4096..69632, 0..4096],
         )
-    }
-
-    #[test]
-    fn block_range_contains() {
-        assert_eq!(HashTree::block_range_contains(&[0..4], 0), true);
-        assert_eq!(HashTree::block_range_contains(&[0..4], 4), false);
-        assert_eq!(HashTree::block_range_contains(&[0..4, 5..8], 4), false);
-        assert_eq!(HashTree::block_range_contains(&[0..4, 5..8], 6), true);
     }
 
     #[test]
