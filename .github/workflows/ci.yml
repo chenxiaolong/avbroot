@@ -70,6 +70,13 @@ jobs:
           cargo test --release --workspace --features static \
               --target ${{ steps.get_target.outputs.name }}
 
+      - name: End to end tests
+        shell: bash
+        run: |
+          cargo run --release -p e2e --features static \
+              --target ${{ steps.get_target.outputs.name }} \
+              -- test -a -c e2e/e2e.toml
+
       - name: Archive documentation
         uses: actions/upload-artifact@v3
         with:
@@ -96,140 +103,3 @@ jobs:
           path: |
             target/output/avbroot
             target/output/avbroot.exe
-
-      - name: Cache e2e executable
-        uses: actions/cache@v3
-        with:
-          key: e2e-${{ github.sha }}-${{ runner.os }}
-          path: |
-            target/output/e2e
-            target/output/e2e.exe
-
-  setup:
-    name: Prepare workflow data
-    runs-on: ubuntu-latest
-    needs: build
-    timeout-minutes: 2
-    outputs:
-      config-path: ${{ steps.load-config.outputs.config-path }}
-      device-list: ${{ steps.load-config.outputs.device-list }}
-      magisk-key: ${{ steps.cache-keys.outputs.magisk-key }}
-      img-key-prefix: ${{ steps.cache-keys.outputs.img-key-prefix }}
-      img-hit: ${{ steps.get-img-cache.outputs.cache-matched-key }}
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Restore e2e executable
-        uses: actions/cache/restore@v3
-        with:
-          key: e2e-${{ github.sha }}-${{ runner.os }}
-          fail-on-cache-miss: true
-          path: |
-            target/output/e2e
-            target/output/e2e.exe
-
-      - name: Loading test config
-        id: load-config
-        working-directory: e2e
-        run: |
-          echo 'config-path=e2e/e2e.toml' >> "${GITHUB_OUTPUT}"
-          echo -n 'device-list=' >> "${GITHUB_OUTPUT}"
-          ../target/output/e2e list \
-            | jq -cnR '[inputs | select(length > 0)]' \
-            >> "${GITHUB_OUTPUT}"
-
-      - name: Generating cache keys
-        id: cache-keys
-        run: |
-          {
-            echo "img-key-prefix=img-${{ hashFiles(steps.load-config.outputs.config-path) }}-"; \
-            echo "magisk-key=magisk-${{ hashFiles(steps.load-config.outputs.config-path) }}";
-          } >> $GITHUB_OUTPUT
-
-      - name: Checking for cached device images
-        id: get-img-cache
-        uses: actions/cache/restore@v3
-        with:
-          key: ${{ steps.cache-keys.outputs.img-key-prefix }}
-          lookup-only: true
-          path: |
-            e2e/files/${{ fromJSON(steps.load-config.outputs.device-list)[0] }}-sparse.tar
-
-      - name: Checking for cached magisk apk
-        id: get-magisk-cache
-        uses: actions/cache/restore@v3
-        with:
-          key: ${{ steps.cache-keys.outputs.magisk-key }}
-          lookup-only: true
-          path: e2e/files/magisk
-
-      - name: Preloading Magisk cache
-        if: ${{ ! steps.get-magisk-cache.outputs.cache-hit }}
-        uses: ./.github/actions/preload-magisk-cache
-        with:
-          cache-key: ${{ steps.cache-keys.outputs.magisk-key }}
-
-  preload-img:
-    name: Preload device images
-    runs-on: ubuntu-latest
-    needs: setup
-    timeout-minutes: 5
-    # Assume that preloading always succesfully cached all images before.
-    # If for some reason only some got cached, on the first run, the cache will not be preloaded
-    # which will result in some being downloaded multiple times when running the tests.
-    if: ${{ ! needs.setup.outputs.img-hit }}
-    strategy:
-      matrix:
-        device: ${{ fromJSON(needs.setup.outputs.device-list) }}
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Preloading image cache
-        uses: ./.github/actions/preload-img-cache
-        with:
-          cache-key-prefix: ${{ needs.setup.outputs.img-key-prefix }}
-          device: ${{ matrix.device }}
-
-  tests:
-    name: Run test for ${{ matrix.device }} on ${{ matrix.os }}
-    runs-on: ubuntu-latest
-    needs:
-      - setup
-      - preload-img
-    timeout-minutes: 10
-    # Continue on skipped but not on failures or cancels
-    if: ${{ always() && ! failure() && ! cancelled() }}
-    strategy:
-      matrix:
-        device: ${{ fromJSON(needs.setup.outputs.device-list) }}
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Restoring Magisk cache
-        uses: ./.github/actions/preload-magisk-cache
-        with:
-          cache-key: ${{ needs.setup.outputs.magisk-key }}
-
-      - name: Restoring image cache
-        uses: ./.github/actions/preload-img-cache
-        with:
-          cache-key-prefix: ${{ needs.setup.outputs.img-key-prefix }}
-          device: ${{ matrix.device }}
-
-      - name: Restore e2e executable
-        uses: actions/cache/restore@v3
-        with:
-          key: e2e-${{ github.sha }}-${{ runner.os }}
-          fail-on-cache-miss: true
-          path: |
-            target/output/e2e
-            target/output/e2e.exe
-
-      # Finally run tests
-      - name: Run test for ${{ matrix.device }}
-        working-directory: e2e
-        run: ../target/output/e2e test --stripped -d ${{ matrix.device }}

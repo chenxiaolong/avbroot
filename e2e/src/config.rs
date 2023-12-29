@@ -3,15 +3,11 @@
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
-use std::{collections::BTreeMap, fs, ops::Range, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use toml_edit::{
-    ser::ValueSerializer,
-    visit_mut::{self, VisitMut},
-    Array, Document, InlineTable, Item, KeyMut, Table, Value,
-};
+use toml_edit::Document;
 
 #[derive(Serialize, Deserialize)]
 pub struct Sha256Hash(
@@ -23,110 +19,105 @@ pub struct Sha256Hash(
 );
 
 #[derive(Serialize, Deserialize)]
-pub struct Magisk {
-    pub url: String,
-    pub hash: Sha256Hash,
+#[serde(deny_unknown_fields)]
+pub struct OtaInfo {
+    pub device: String,
+    pub fingerprint: String,
+    pub build_number: String,
+    pub incremental_version: String,
+    pub android_version: String,
+    pub sdk_version: String,
+    pub security_patch_level: String,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct OtaHashes {
-    pub full: Sha256Hash,
-    pub stripped: Sha256Hash,
+#[serde(deny_unknown_fields)]
+pub struct Avb {
+    pub signed: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RamdiskContent {
+    Init,
+    Otacerts,
+    InitAndOtacerts,
+    Dlkm,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BootVersion {
+    V2,
+    V3,
+    V4,
+    VendorV3,
+    VendorV4,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct ImageHashes {
-    pub original: OtaHashes,
-    pub patched: OtaHashes,
-    pub avb_images: BTreeMap<String, Sha256Hash>,
+#[serde(deny_unknown_fields)]
+pub struct BootData {
+    pub version: BootVersion,
+    #[serde(default)]
+    pub kernel: bool,
+    #[serde(default)]
+    pub ramdisks: Vec<RamdiskContent>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DmVerityContent {
+    SystemOtacerts,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct Device {
-    pub url: String,
-    pub sections: Vec<Range<u64>>,
-    pub hash: ImageHashes,
+#[serde(deny_unknown_fields)]
+pub struct DmVerityData {
+    pub content: DmVerityContent,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VbmetaData {
+    pub deps: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Data {
+    Boot(BootData),
+    DmVerity(DmVerityData),
+    Vbmeta(VbmetaData),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Hashes {
+    pub original: Sha256Hash,
+    pub patched: Sha256Hash,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Partition {
+    pub avb: Avb,
+    pub data: Data,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Profile {
+    pub partitions: BTreeMap<String, Partition>,
+    pub hashes: Hashes,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
-    pub magisk: Magisk,
-    pub device: BTreeMap<String, Device>,
-}
-
-struct ConfigFormatter;
-
-impl VisitMut for ConfigFormatter {
-    fn visit_table_like_kv_mut(&mut self, key: KeyMut<'_>, node: &mut Item) {
-        // Convert non-array-of-tables inline tables into regular tables.
-        if let Item::Value(Value::InlineTable(t)) = node {
-            let inline_table = std::mem::replace(t, InlineTable::new());
-            *node = Item::Table(inline_table.into_table());
-        }
-
-        // But for hashes, use dotted notation until TOML 1.1, which allows
-        // newlines in inline tables, is released.
-        if key == "hash" || key == "original" || key == "patched" || key == "avb_images" {
-            if let Some(t) = node.as_table_like_mut() {
-                t.set_dotted(true);
-            }
-        }
-
-        visit_mut::visit_table_like_kv_mut(self, key, node);
-    }
-
-    fn visit_table_mut(&mut self, node: &mut Table) {
-        // Make tables implicit unless they are empty, which may be meaningful.
-        if !node.is_empty() {
-            node.set_implicit(true);
-        }
-
-        visit_mut::visit_table_mut(self, node);
-    }
-
-    fn visit_array_mut(&mut self, node: &mut Array) {
-        visit_mut::visit_array_mut(self, node);
-
-        // Put array elements on their own indented lines.
-        if node.is_empty() {
-            node.set_trailing("");
-            node.set_trailing_comma(false);
-        } else {
-            for item in node.iter_mut() {
-                item.decor_mut().set_prefix("\n    ");
-            }
-            node.set_trailing("\n");
-            node.set_trailing_comma(true);
-        }
-    }
-}
-
-/// Add a device to the config file. This leaves all comments intact, except for
-/// those contained within the existing device section if it exists.
-pub fn add_device(document: &mut Document, name: &str, device: &Device) -> Result<()> {
-    let device_table = document.entry("device").or_insert_with(|| {
-        let mut t = toml_edit::Table::new();
-        t.set_implicit(true);
-        Item::Table(t)
-    });
-    let old_table = device_table.get(name).and_then(|i| i.as_table());
-
-    let value = device.serialize(ValueSerializer::new())?;
-    let Value::InlineTable(inline_table) = value else {
-        unreachable!("Device did not serialize as an inline table");
-    };
-    let mut table = inline_table.into_table();
-
-    ConfigFormatter.visit_table_mut(&mut table);
-
-    // Keep top-level comment on the table.
-    if let Some(t) = old_table {
-        *table.decor_mut() = t.decor().clone();
-    }
-
-    device_table[name] = Item::Table(table);
-
-    Ok(())
+    pub ota_info: OtaInfo,
+    #[serde(default)]
+    pub profile: BTreeMap<String, Profile>,
 }
 
 pub fn load_config(path: &Path) -> Result<(Config, Document)> {
