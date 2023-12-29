@@ -27,7 +27,7 @@ Full list of changes:
 * Limit critical partition check to bootloader-verified partitions ([Issue #223], [PR #226])
 * Improve patching performance by spliiting new partition images into chunks and compressing them in parallel ([PR #228])
 * Also verify whole-partition hashes when running `avbroot ota verify` ([PR #229])
-* Add support for patching `otacerts.zip` on the system partition ([Issue #225], [PR #240])
+* Add support for patching `otacerts.zip` on the system partition ([Issue #225], [PR #240], [PR #244])
 
 Behind-the-scenes changes:
 
@@ -218,3 +218,4 @@ Behind-the-scenes changes:
 [PR #234]: https://github.com/chenxiaolong/avbroot/pull/234
 [PR #237]: https://github.com/chenxiaolong/avbroot/pull/237
 [PR #240]: https://github.com/chenxiaolong/avbroot/pull/240
+[PR #244]: https://github.com/chenxiaolong/avbroot/pull/244
