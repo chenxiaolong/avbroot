@@ -38,6 +38,7 @@ Behind-the-scenes changes:
 * Fix hash tree calculation for images smaller than one block ([PR #232])
 * Refactor hash tree code and add tests, CLI commands, and support for partial updates ([PR #233])
 * Generate mock OTAs to use for end-to-end tests ([PR #241])
+* Update all dependencies ([PR #245])
 
 ### Version 2.3.3
 
@@ -224,3 +225,4 @@ Behind-the-scenes changes:
 [PR #241]: https://github.com/chenxiaolong/avbroot/pull/241
 [PR #243]: https://github.com/chenxiaolong/avbroot/pull/243
 [PR #244]: https://github.com/chenxiaolong/avbroot/pull/244
+[PR #245]: https://github.com/chenxiaolong/avbroot/pull/245
