@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.0.0
 
 Happy New Year! This release brings two major changes:
 
