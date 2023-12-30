@@ -21,7 +21,6 @@ Full list of changes:
 
 * Add support for AVB 2.0 format 1.3.0 (for Android 15) ([PR #210])
 * Add new `avbroot key decode-avb` command for converting AVB-encoded public keys to the standard PKCS8-encoded format ([PR #219])
-* Adjust AVB sanity check to validate `*_dlkm` and `odm` specifically because some devices have an unprotected `odm_ext` partition ([PR #220])
 * Improve autodetection of boot images ([Issue #218], [PR #221], [PR #237])
 * Build precompiled executables as statically linked executables ([Issue #222], [PR #224], [PR #227])
 * Limit critical partition check to bootloader-verified partitions ([Issue #223], [PR #226])
