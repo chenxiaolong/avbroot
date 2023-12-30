@@ -13,7 +13,7 @@ Happy New Year! This release brings two major changes:
 
 1. The OTA certificates (`otacerts.zip`) in the system partition are now patched. The `clearotacerts` module from avbroot (or the `customotacerts` module from Custota) are no longer needed and can be safely uninstalled.
 
-    This makes it possible to use Pixel's new Repair Mode safely. To do so, first patch and flash with `--rootless` to unroot and then enter Repair Mode. Once the device is repaired, exit Repair Mode and flash a rooted patched OTA again.
+    This makes it possible to use Pixel's new Repair Mode safely. To do so, follow the instructions in the [documentation here](./README.md#repair-mode).
 
 2. Autodetection for boot partitions is now significantly more reliable. For KernelSU users or folks who have more obscure devices, the `--boot-partition` option is no longer required (and is now ignored).
 
@@ -28,6 +28,7 @@ Full list of changes:
 * Improve patching performance by spliiting new partition images into chunks and compressing them in parallel ([PR #228])
 * Also verify whole-partition hashes when running `avbroot ota verify` ([PR #229])
 * Add support for patching `otacerts.zip` on the system partition ([Issue #225], [PR #240], [PR #244])
+* Document how to use Repair Mode safely ([Issue #216], [PR #243])
 
 Behind-the-scenes changes:
 
@@ -148,6 +149,7 @@ Behind-the-scenes changes:
 [Issue #166]: https://github.com/chenxiaolong/avbroot/issues/166
 [Issue #201]: https://github.com/chenxiaolong/avbroot/issues/201
 [Issue #203]: https://github.com/chenxiaolong/avbroot/issues/203
+[Issue #216]: https://github.com/chenxiaolong/avbroot/issues/216
 [Issue #218]: https://github.com/chenxiaolong/avbroot/issues/218
 [Issue #222]: https://github.com/chenxiaolong/avbroot/issues/222
 [Issue #223]: https://github.com/chenxiaolong/avbroot/issues/223
@@ -220,4 +222,5 @@ Behind-the-scenes changes:
 [PR #237]: https://github.com/chenxiaolong/avbroot/pull/237
 [PR #240]: https://github.com/chenxiaolong/avbroot/pull/240
 [PR #241]: https://github.com/chenxiaolong/avbroot/pull/241
+[PR #243]: https://github.com/chenxiaolong/avbroot/pull/243
 [PR #244]: https://github.com/chenxiaolong/avbroot/pull/244
