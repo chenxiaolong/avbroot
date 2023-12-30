@@ -14,7 +14,7 @@ clap = { version = "4.4.1", features = ["derive"] }
 human-sort = "0.2.2"
 regex = { version = "1.9.4", default-features = false, features = ["perf", "std"] }
 tempfile = "3.8.0"
-toml_edit = "0.20.1"
+toml_edit = "0.21.0"
 walkdir = "2.3.3"
 
 # https://github.com/zip-rs/zip/pull/383
