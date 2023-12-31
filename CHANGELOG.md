@@ -13,6 +13,10 @@
     * https://github.com/chenxiaolong/OEMUnlockOnBoot
     * The new module supports the automatic update mechanism within Magisk/KernelSU
 
+Behind-the-scenes changes:
+
+* Switch from xz2 to liblzma (maintained fork of xz2) ([PR #247])
+
 ### Version 3.0.0
 
 Happy New Year! This release brings two major changes:
@@ -232,3 +236,4 @@ Behind-the-scenes changes:
 [PR #244]: https://github.com/chenxiaolong/avbroot/pull/244
 [PR #245]: https://github.com/chenxiaolong/avbroot/pull/245
 [PR #246]: https://github.com/chenxiaolong/avbroot/pull/246
+[PR #247]: https://github.com/chenxiaolong/avbroot/pull/247
