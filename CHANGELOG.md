@@ -7,6 +7,12 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* The `OEMUnlockOnBoot` module has been split out to a separate repo ([Discussion #235], [PR #246])
+    * https://github.com/chenxiaolong/OEMUnlockOnBoot
+    * The new module supports the automatic update mechanism within Magisk/KernelSU
+
 ### Version 3.0.0
 
 Happy New Year! This release brings two major changes:
@@ -140,6 +146,7 @@ Behind-the-scenes changes:
 
 <!-- Do not manually edit the lines below. Use `cargo xtask update-changelog` to regenerate. -->
 [Discussion #195]: https://github.com/chenxiaolong/avbroot/discussions/195
+[Discussion #235]: https://github.com/chenxiaolong/avbroot/discussions/235
 [Issue #138]: https://github.com/chenxiaolong/avbroot/issues/138
 [Issue #144]: https://github.com/chenxiaolong/avbroot/issues/144
 [Issue #145]: https://github.com/chenxiaolong/avbroot/issues/145
@@ -207,7 +214,6 @@ Behind-the-scenes changes:
 [PR #211]: https://github.com/chenxiaolong/avbroot/pull/211
 [PR #214]: https://github.com/chenxiaolong/avbroot/pull/214
 [PR #219]: https://github.com/chenxiaolong/avbroot/pull/219
-[PR #220]: https://github.com/chenxiaolong/avbroot/pull/220
 [PR #221]: https://github.com/chenxiaolong/avbroot/pull/221
 [PR #224]: https://github.com/chenxiaolong/avbroot/pull/224
 [PR #226]: https://github.com/chenxiaolong/avbroot/pull/226
@@ -225,3 +231,4 @@ Behind-the-scenes changes:
 [PR #243]: https://github.com/chenxiaolong/avbroot/pull/243
 [PR #244]: https://github.com/chenxiaolong/avbroot/pull/244
 [PR #245]: https://github.com/chenxiaolong/avbroot/pull/245
+[PR #246]: https://github.com/chenxiaolong/avbroot/pull/246
