@@ -11,14 +11,5 @@ publish = false
 [dependencies]
 anyhow = "1.0.75"
 clap = { version = "4.4.1", features = ["derive"] }
-human-sort = "0.2.2"
 regex = { version = "1.9.4", default-features = false, features = ["perf", "std"] }
-tempfile = "3.8.0"
 toml_edit = "0.21.0"
-walkdir = "2.3.3"
-
-# https://github.com/zip-rs/zip/pull/383
-[dependencies.zip]
-git = "https://github.com/chenxiaolong/zip"
-rev = "989101f9384b9e94e36e6e9e0f51908fdf98bde6"
-default-features = false

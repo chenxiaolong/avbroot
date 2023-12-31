@@ -8,7 +8,7 @@ To update the project version, run:
 cargo xtask set-version -V <version>
 ```
 
-This will update the main [`Cargo.toml`](../Cargo.toml) and each module's `module.prop` file.
+This will update the main [`Cargo.toml`](../Cargo.toml) file.
 
 ## Updating changelog links
 
@@ -19,14 +19,3 @@ Then, run the following command to generate the appropriate link references:
 ```bash
 cargo xtask update-changelog
 ```
-
-## Build modules
-
-To build avbroot's companion modules, run:
-
-```bash
-cargo xtask modules -a
-# or -m <module1> -m <module2> ...
-```
-
-See the main [`README.md`](../README.md#avbroot-magisk-modules) for more details.
