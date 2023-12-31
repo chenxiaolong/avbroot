@@ -33,11 +33,7 @@ avbroot applies the following patches to the partition images:
 
     Repeat: **_ALWAYS leave `OEM unlocking` enabled if rooted._**
 
-* Any operation that causes an improperly-signed boot image to be flashed will result in the device being unbootable and unrecoverable without unlocking the bootloader again (and thus, triggering a data wipe). This includes:
-
-    * Performing a unpatched A/B OTA update while booted into Android via the OS' default updater. This can be blocked via a Magisk/KernelSU module (see: [Blocking A/B OTA Updates](#blocking-ab-ota-updates)).
-
-    * The `Direct install` method for updating Magisk. Magisk updates **must** be done by repatching the OTA, not via the app.
+* Any operation that causes an improperly-signed boot image to be flashed will result in the device being unbootable and unrecoverable without unlocking the bootloader again (and thus, triggering a data wipe). This includes the `Direct install` method for updating Magisk. Magisk updates **must** be done by repatching the OTA, not via the app.
 
     If the boot image is ever modified, **do not reboot**. [Open an issue](https://github.com/chenxiaolong/avbroot/issues/new) for support and be very clear about what steps were done that lead to the situation. If Android is still running and root access works, it might be possible to recover without wiping and starting over.
 
@@ -184,11 +180,9 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
 
     Remember: **Do not uncheck `OEM unlocking`!**
 
-    **WARNING**: If you are flashing CalyxOS, the setup wizard will [automatically turn off the `OEM unlocking` switch](https://github.com/CalyxOS/platform_packages_apps_SetupWizard/blob/7d2df25cedcbff83ddb608e628f9d97b38259c26/src/org/lineageos/setupwizard/SetupWizardApp.java#L135-L140). Make sure to manually reenable it again from Android's developer settings. Consider using [avbroot's `oemunlockonboot` Magisk module](#oemunlockonboot-enable-oem-unlocking-on-every-boot) to automatically ensure OEM unlocking is enabled on every boot.
+    **WARNING**: If you are flashing CalyxOS, the setup wizard will [automatically turn off the `OEM unlocking` switch](https://github.com/CalyxOS/platform_packages_apps_SetupWizard/blob/7d2df25cedcbff83ddb608e628f9d97b38259c26/src/org/lineageos/setupwizard/SetupWizardApp.java#L135-L140). Make sure to manually reenable it again from Android's developer settings. Consider using the [`OEMUnlockOnBoot` module](https://github.com/chenxiaolong/OEMUnlockOnBoot) to automatically ensure OEM unlocking is enabled on every boot.
 
 8. That's it! To install future OS, Magisk, or KernelSU updates, see the [next section](#updates).
-
-    For extra safety, consider flashing [avbroot's Magisk/KernelSU modules](#avbroot-modules).
 
 ## Updates
 
@@ -250,16 +244,6 @@ To safely use Repair Mode:
 4. Flash the (rooted) patched OTA as normal.
 
 Because the unrooting and rooting are done by flashing OTAs, the device's data will not be wiped.
-
-## avbroot modules
-
-avbroot's Magisk/KernelSU modules can be downloaded from the [releases page](https://github.com/chenxiaolong/avbroot/releases).
-
-### `oemunlockonboot`: Enable OEM unlocking on every boot
-
-To help reduce the risk of OEM unlocking being accidentally disabled (or intentionally disabled as part of some OS' initial setup wizard), this module will attempt to enable the OEM unlocking option on every boot.
-
-The logs for this module can be found at `/data/local/tmp/avbroot_oem_unlock.log`.
 
 ## Magisk preinit device
 
@@ -436,14 +420,6 @@ The output binary is written to `target/release/avbroot`.
 Debug builds work too, but they will run significantly slower (in the sha256 computations) due to compiler optimizations being turned off.
 
 By default, the executable links to the system's bzip2 and liblzma libraries, which are the only external libraries avbroot depends on. To compile and statically link these two libraries, pass in `--features static`.
-
-To build avbroot's modules from source, run:
-
-```bash
-cargo xtask modules -a
-```
-
-This requires Java and the Android SDK to be installed. The `ANDROID_HOME` environment variable must be set to the Android SDK path.
 
 ## Verifying digital signatures
 
