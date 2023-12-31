@@ -16,16 +16,16 @@ use std::{
 };
 
 use bstr::ByteSlice;
+use liblzma::{
+    stream::{Check, Stream},
+    write::XzEncoder,
+};
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use regex::bytes::Regex;
 use ring::digest::Context;
 use rsa::RsaPrivateKey;
 use thiserror::Error;
 use x509_cert::Certificate;
-use xz2::{
-    stream::{Check, Stream},
-    write::XzEncoder,
-};
 use zip::{result::ZipError, ZipArchive};
 
 use crate::{
@@ -67,7 +67,7 @@ pub enum Error {
     #[error("OTA certificate error")]
     OtaCert(#[from] otacert::Error),
     #[error("XZ stream error")]
-    XzStream(#[from] xz2::stream::Error),
+    XzStream(#[from] liblzma::stream::Error),
     #[error("Zip error")]
     Zip(#[from] ZipError),
     #[error("I/O error")]

@@ -7,14 +7,14 @@ use std::io::{self, Read, Seek, Write};
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use lz4_flex::frame::FrameDecoder;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
-use xz2::{
+use liblzma::{
     read::XzDecoder,
     stream::{Check, Stream},
     write::XzEncoder,
 };
+use lz4_flex::frame::FrameDecoder;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 static GZIP_MAGIC: &[u8; 2] = b"\x1f\x8b";
 static LZ4_LEGACY_MAGIC: &[u8; 4] = b"\x02\x21\x4c\x18";
@@ -25,7 +25,7 @@ pub enum Error {
     #[error("Unknown compression format")]
     UnknownFormat,
     #[error("XZ stream error")]
-    XzStream(#[from] xz2::stream::Error),
+    XzStream(#[from] liblzma::stream::Error),
     #[error("I/O error")]
     Io(#[from] io::Error),
 }

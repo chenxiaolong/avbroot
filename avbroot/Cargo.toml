@@ -24,6 +24,7 @@ ctrlc = "3.4.0"
 flate2 = "1.0.27"
 gf256 = { version = "0.3.0", features = ["rs"] }
 hex = { version = "0.4.3", features = ["serde"] }
+liblzma = "0.2.1"
 lz4_flex = "0.11.1"
 memchr = "2.6.0"
 num-bigint-dig = "0.8.4"
@@ -59,14 +60,6 @@ x509-cert = { version = "0.2.4", features = ["builder"] }
 git = "https://github.com/jongiddy/bzip2-rs"
 rev = "2aefcb4d3634de1df226c73d93f758d65228bb8c"
 
-# The upstream xz2 crate uses an old version of liblzma when compiling with the
-# `static` feature and doesn't enable all of the encoders and decoders. This
-# causes certain payload data to fail to decompress.
-# https://github.com/chenxiaolong/avbroot/issues/138
-[dependencies.xz2]
-git = "https://github.com/chenxiaolong/xz2-rs"
-rev = "fe2050b9c3395db15d8610f1dabb505440c1a556"
-
 # https://github.com/zip-rs/zip/pull/383
 [dependencies.zip]
 git = "https://github.com/chenxiaolong/zip"
@@ -85,4 +78,4 @@ protox = "0.5.0"
 assert_matches = "1.5.0"
 
 [features]
-static = ["bzip2/static", "xz2/static"]
+static = ["bzip2/static", "liblzma/static"]

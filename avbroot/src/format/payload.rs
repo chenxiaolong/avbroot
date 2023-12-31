@@ -14,6 +14,11 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use byteorder::{BigEndian, ReadBytesExt};
 use bzip2::write::BzDecoder;
+use liblzma::{
+    stream::{Check, Stream},
+    write::XzDecoder,
+    write::XzEncoder,
+};
 use num_traits::ToPrimitive;
 use prost::Message;
 use rayon::{
@@ -25,11 +30,6 @@ use rsa::{traits::PublicKeyParts, Pkcs1v15Sign, RsaPrivateKey};
 use sha2::Sha256;
 use thiserror::Error;
 use x509_cert::Certificate;
-use xz2::{
-    stream::{Check, Stream},
-    write::XzDecoder,
-    write::XzEncoder,
-};
 
 use crate::{
     crypto,
@@ -99,7 +99,7 @@ pub enum Error {
     #[error("Failed to decode protobuf message")]
     ProtobufDecode(#[from] prost::DecodeError),
     #[error("XZ stream error")]
-    XzStream(#[from] xz2::stream::Error),
+    XzStream(#[from] liblzma::stream::Error),
     #[error("RSA error")]
     Rsa(#[from] rsa::Error),
     #[error("I/O error")]

@@ -127,6 +127,7 @@ dependencies = [
  "flate2",
  "gf256",
  "hex",
+ "liblzma",
  "lz4_flex",
  "memchr",
  "num-bigint-dig",
@@ -151,7 +152,6 @@ dependencies = [
  "toml_edit",
  "topological-sort",
  "x509-cert",
- "xz2",
  "zip",
 ]
 
@@ -301,6 +301,7 @@ version = "1.0.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1174fb0b6ec23863f8b971027804a42614e347eafb0a95bf0b12cdae21fc4d0"
 dependencies = [
+ "jobserver",
  "libc",
 ]
 
@@ -792,6 +793,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1a46d1a171d865aa5f83f92695765caa047a9b4cbae2cbf37dbd613a793fd4c"
 
 [[package]]
+name = "jobserver"
+version = "0.1.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c37f63953c4c63420ed5fd3d6d398c719489b9f872b9fa683262f8edd363c7d"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -805,6 +815,26 @@ name = "libc"
 version = "0.2.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "302d7ab3130588088d277783b1e2d2e10c9e9e4a16dd9050e6ec93fb3e7048f4"
+
+[[package]]
+name = "liblzma"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be0a90100aae90523703bd088bc3b57352bbded8b3fc274de0d5759438ced354"
+dependencies = [
+ "liblzma-sys",
+]
+
+[[package]]
+name = "liblzma-sys"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "340bd13b7f626bad0fbcae3dacbda397e9de1114910a6743a55ae731c80c97c6"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+]
 
 [[package]]
 name = "libm"
@@ -863,16 +893,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ea9b256699eda7b0387ffbc776dd625e28bde3918446381781245b7a50349d8"
 dependencies = [
  "twox-hash",
-]
-
-[[package]]
-name = "lzma-sys"
-version = "0.1.20"
-source = "git+https://github.com/chenxiaolong/xz2-rs?rev=fe2050b9c3395db15d8610f1dabb505440c1a556#fe2050b9c3395db15d8610f1dabb505440c1a556"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
 ]
 
 [[package]]
@@ -1907,14 +1927,6 @@ dependencies = [
  "clap",
  "regex",
  "toml_edit",
-]
-
-[[package]]
-name = "xz2"
-version = "0.1.7"
-source = "git+https://github.com/chenxiaolong/xz2-rs?rev=fe2050b9c3395db15d8610f1dabb505440c1a556#fe2050b9c3395db15d8610f1dabb505440c1a556"
-dependencies = [
- "lzma-sys",
 ]
 
 [[package]]
