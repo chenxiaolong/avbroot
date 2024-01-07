@@ -7,6 +7,7 @@ use std::{borrow::Cow, cmp::Ordering, io::Cursor};
 
 use bitflags::bitflags;
 use thiserror::Error;
+use tracing::trace;
 use x509_cert::{der::asn1::BitString, Certificate};
 use zip::{result::ZipError, write::FileOptions, CompressionMethod, ZipWriter};
 
@@ -134,8 +135,12 @@ pub fn create_zip_with_size(cert: &Certificate, size: usize) -> Result<Vec<u8>> 
     ] {
         flags |= additional_flag;
 
+        trace!("Attempting to create {size} byte otacerts.zip: {flags:?}");
+
         let mut data = create_zip(cert, flags)?;
         if data.len() <= size {
+            trace!("Padding {} byte otacerts.zip to {size}", data.len());
+
             pad_zip(&mut data, size)?;
             return Ok(data);
         }

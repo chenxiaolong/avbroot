@@ -25,6 +25,7 @@ use regex::bytes::Regex;
 use ring::digest::Context;
 use rsa::RsaPrivateKey;
 use thiserror::Error;
+use tracing::{debug, debug_span, trace, warn, Span};
 use x509_cert::Certificate;
 use zip::{result::ZipError, ZipArchive};
 
@@ -86,6 +87,12 @@ fn load_ramdisk(
     let mut reader = CompressedReader::new(raw_reader, false)?;
     let entries = cpio::load(&mut reader, false, cancel_signal)?;
 
+    trace!(
+        "Loaded {:?} ramdisk with {} entries",
+        reader.format(),
+        entries.len(),
+    );
+
     Ok((entries, reader.format()))
 }
 
@@ -97,6 +104,8 @@ fn save_ramdisk(
     let raw_writer = Cursor::new(vec![]);
     let mut writer = CompressedWriter::new(raw_writer, format)?;
     cpio::save(&mut writer, entries, false, cancel_signal)?;
+
+    trace!("Wrote {format:?} ramdisk with {} entries", entries.len());
 
     let raw_writer = writer.finish()?;
     Ok(raw_writer.into_inner())
@@ -153,9 +162,10 @@ impl MagiskRootPatcher {
         preinit_device: Option<&str>,
         random_seed: Option<u64>,
         ignore_compatibility: bool,
-        warning_fn: impl Fn(&str) + Send + 'static,
     ) -> Result<Self> {
         let version = Self::get_version(path)?;
+
+        debug!("Found Magisk version: {version}");
 
         if !Self::VERS_SUPPORTED.iter().any(|v| v.contains(&version)) {
             let msg = format!(
@@ -165,7 +175,7 @@ impl MagiskRootPatcher {
             );
 
             if ignore_compatibility {
-                warning_fn(&msg);
+                warn!("{msg}");
             } else {
                 return Err(Error::Validation(msg));
             }
@@ -179,7 +189,7 @@ impl MagiskRootPatcher {
             );
 
             if ignore_compatibility {
-                warning_fn(&msg);
+                warn!("{msg}");
             } else {
                 return Err(Error::Validation(msg));
             }
@@ -211,6 +221,8 @@ impl MagiskRootPatcher {
             }
 
             if let Some(suffix) = line.trim_end().strip_prefix("MAGISK_VER_CODE=") {
+                trace!("Magisk version code line: {line:?}");
+
                 let version = suffix
                     .parse()
                     .map_err(|e| Error::ParseMagiskVersion(suffix.to_owned(), e))?;
@@ -287,6 +299,22 @@ impl MagiskRootPatcher {
         }
 
         new_entries.push(CpioEntry::new_directory(b".backup", 0));
+
+        debug!(
+            "Removed entries: {:?}",
+            rm_list
+                .split(|b| *b == 0)
+                .filter(|e| !e.is_empty())
+                .map(|p| p.as_bstr().to_string())
+                .collect::<Vec<_>>(),
+        );
+        debug!(
+            "Added/changed entries: {:?}",
+            to_back_up
+                .iter()
+                .map(|e| e.path.as_bstr().to_string())
+                .collect::<Vec<_>>(),
+        );
 
         for old_entry in to_back_up {
             let mut new_path = b".backup/".to_vec();
@@ -412,6 +440,7 @@ impl BootImagePatch for MagiskRootPatcher {
         // Add stub apk, which only exists after Magisk commit
         // ad0e6511e11ebec65aa9b5b916e1397342850319.
         if zip.file_names().any(|n| n == "assets/stub.apk") {
+            debug!("Magisk stub found");
             xz_files.insert("assets/stub.apk", b"overlay.d/sbin/stub.xz");
         }
 
@@ -457,6 +486,8 @@ impl BootImagePatch for MagiskRootPatcher {
         if Self::VER_RANDOM_SEED.contains(&self.version) {
             magisk_config.push_str(&format!("RANDOMSEED={:#x}\n", self.random_seed));
         }
+
+        trace!("Magisk config: {magisk_config:?}");
 
         entries.push(CpioEntry::new_file(
             b".backup/.magisk",
@@ -538,6 +569,7 @@ impl OtaCertPatcher {
             for index in 0..zip.len() {
                 let zip_entry = zip.by_index(index)?;
                 if !zip_entry.name().ends_with(".x509.pem") {
+                    debug!("Skipping invalid entry path: {}", zip_entry.name());
                     continue;
                 }
 
@@ -614,6 +646,7 @@ impl BootImagePatch for OtaCertPatcher {
         };
 
         let new_zip = otacert::create_zip(&self.cert, OtaCertBuildFlags::empty())?;
+        trace!("Generated new {} byte otacerts.zip", new_zip.len());
 
         for ramdisk in ramdisks {
             if ramdisk.is_empty() {
@@ -643,7 +676,6 @@ impl BootImagePatch for OtaCertPatcher {
 pub struct PrepatchedImagePatcher {
     prepatched: PathBuf,
     fatal_level: u8,
-    warning_fn: Box<dyn Fn(&str) + Send + Sync>,
 }
 
 impl PrepatchedImagePatcher {
@@ -654,15 +686,10 @@ impl PrepatchedImagePatcher {
     const VERSION_REGEX: &'static str =
         r"Linux version ([0-9]+\.[0-9]+).[0-9]+-(android[0-9]+)-([0-9]+)-";
 
-    pub fn new(
-        prepatched: &Path,
-        fatal_level: u8,
-        warning_fn: impl Fn(&str) + Send + Sync + 'static,
-    ) -> Self {
+    pub fn new(prepatched: &Path, fatal_level: u8) -> Self {
         Self {
             prepatched: prepatched.to_owned(),
             fatal_level,
-            warning_fn: Box::new(warning_fn),
         }
     }
 
@@ -879,7 +906,7 @@ impl BootImagePatch for PrepatchedImagePatcher {
                 msg.push_str(warning);
             }
 
-            (self.warning_fn)(&msg);
+            warn!("{msg}");
         }
 
         if !errors.is_empty() {
@@ -903,9 +930,12 @@ pub fn load_boot_images<'a>(
     names: &[&'a str],
     open_input: impl Fn(&str) -> io::Result<Box<dyn ReadSeek>> + Sync,
 ) -> Result<HashMap<&'a str, BootImageInfo>> {
+    let parent_span = Span::current();
+
     names
         .par_iter()
         .map(|name| {
+            let _span = debug_span!(parent: &parent_span, "image", name).entered();
             let mut reader = open_input(name)?;
 
             let (header, footer, image_size) = avb::load_image(&mut reader)?;
@@ -922,6 +952,8 @@ pub fn load_boot_images<'a>(
                 image_size,
                 boot_image,
             };
+
+            trace!("Loaded {image_size} byte boot image: {name}");
 
             Ok((*name, info))
         })
@@ -941,6 +973,8 @@ pub fn patch_boot_images<'a>(
     patchers: &[Box<dyn BootImagePatch + Sync>],
     cancel_signal: &AtomicBool,
 ) -> Result<HashSet<&'a str>> {
+    let parent_span = Span::current();
+
     // Preparse all images. Some patchers need to inspect every candidate.
     let mut images = load_boot_images(names, open_input)?;
 
@@ -948,15 +982,20 @@ pub fn patch_boot_images<'a>(
     let all_targets = patchers
         .par_iter()
         .map(|p| {
+            let _span =
+                debug_span!(parent: &parent_span, "patcher", name = p.patcher_name()).entered();
             p.find_targets(&images, cancel_signal).and_then(|targets| {
                 if targets.is_empty() {
                     Err(Error::NoTargets(p.patcher_name()))
                 } else {
+                    debug!("Found patcher targets: {targets:?}");
                     Ok(targets)
                 }
             })
         })
         .collect::<Result<Vec<_>>>()?;
+
+    debug!("All patcher targets: {all_targets:?}");
 
     // Regroup data so we can parallelize by target.
     let mut groups = HashMap::<&str, (BootImageInfo, Vec<&Box<dyn BootImagePatch + Sync>>)>::new();
@@ -977,15 +1016,19 @@ pub fn patch_boot_images<'a>(
     groups
         .par_iter_mut()
         .try_for_each(|(_, (info, patchers))| -> Result<()> {
-            patchers
-                .iter()
-                .try_for_each(|p| p.patch(&mut info.boot_image, cancel_signal))
+            patchers.iter().try_for_each(|p| {
+                let _span =
+                    debug_span!(parent: &parent_span, "patcher", name = p.patcher_name()).entered();
+                p.patch(&mut info.boot_image, cancel_signal)
+            })
         })?;
 
     // Resign and write new images.
     groups
         .par_iter_mut()
         .map(|(name, (info, _))| {
+            let _span = debug_span!(parent: &parent_span, "image", name).entered();
+
             let AppendedDescriptorMut::Hash(descriptor) = info.header.appended_descriptor_mut()?
             else {
                 return Err(Error::NoHashDescriptor);
@@ -1005,6 +1048,7 @@ pub fn patch_boot_images<'a>(
             descriptor.root_digest = context.finish().as_ref().to_vec();
 
             if !info.header.public_key.is_empty() {
+                debug!("Signing boot image");
                 info.header.set_algo_for_key(key)?;
                 info.header.sign(key)?;
             }

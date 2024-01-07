@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use avbroot::cli::args::{LogFormat, LogLevel};
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Args)]
@@ -66,4 +67,12 @@ pub enum Command {
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
+
+    /// Lowest log message severity to output.
+    #[arg(long, global = true, value_name = "LEVEL", default_value_t)]
+    pub log_level: LogLevel,
+
+    /// Output format for log messages.
+    #[arg(long, global = true, value_name = "FORMAT", default_value_t = LogFormat::Medium)]
+    pub log_format: LogFormat,
 }

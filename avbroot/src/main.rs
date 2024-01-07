@@ -8,9 +8,11 @@ use std::sync::{
     Arc,
 };
 
-use anyhow::Result;
+use tracing::error;
 
-fn main() -> Result<()> {
+static LOGGING_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+fn main() {
     // Set up a cancel signal so we can properly clean up any temporary files.
     let cancel_signal = Arc::new(AtomicBool::new(false));
     {
@@ -22,5 +24,15 @@ fn main() -> Result<()> {
         .expect("Failed to set signal handler");
     }
 
-    avbroot::cli::args::main(&cancel_signal)
+    match avbroot::cli::args::main(&LOGGING_INITIALIZED, &cancel_signal) {
+        Ok(_) => {}
+        Err(e) => {
+            if LOGGING_INITIALIZED.load(Ordering::SeqCst) {
+                error!("{e:?}");
+            } else {
+                eprintln!("{e:?}");
+            }
+            std::process::exit(1);
+        }
+    }
 }

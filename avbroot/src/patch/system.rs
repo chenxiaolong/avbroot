@@ -13,6 +13,7 @@ use memchr::memmem;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rsa::RsaPrivateKey;
 use thiserror::Error;
+use tracing::{debug, debug_span, trace, Span};
 use x509_cert::Certificate;
 use zip::ZipArchive;
 
@@ -50,6 +51,7 @@ type Result<T> = std::result::Result<T, Error>;
 fn find_zip_bounds(data: &[u8], eocd_offset: usize) -> Option<Range<usize>> {
     let eocd = &data[eocd_offset..];
     if eocd.len() < 22 {
+        trace!("Buffer is too small to contain EOCD");
         return None;
     }
 
@@ -60,14 +62,18 @@ fn find_zip_bounds(data: &[u8], eocd_offset: usize) -> Option<Range<usize>> {
     let start = eocd_offset.checked_sub(cd_size)?.checked_sub(cd_offset)?;
     let end = eocd_offset.checked_add(22)?.checked_add(comment_size)?;
     if end > data.len() {
+        trace!("End of zip is out of bounds");
         return None;
     }
+
+    trace!("Found zip bounds: {:?}", start..end);
 
     let reader = SectionReader::new(Cursor::new(data), start as u64, (end - start) as u64).ok()?;
     let mut zip_reader = ZipArchive::new(reader).ok()?;
 
     if zip_reader.is_empty() {
         // otacerts.zip files contain at least one cert.
+        trace!("Zip is empty");
         return None;
     }
 
@@ -76,9 +82,12 @@ fn find_zip_bounds(data: &[u8], eocd_offset: usize) -> Option<Range<usize>> {
 
         if !entry.name().ends_with(".x509.pem") {
             // otacerts.zip files only contain files named this way.
+            trace!("Excluded due to invalid name: {:?}", entry.name());
             return None;
         }
     }
+
+    debug!("Found otacerts.zip candidate");
 
     // There's one or more entries and every one is named *.x509.pem.
     Some(start..end)
@@ -110,6 +119,8 @@ pub fn patch_system_image(
     // chunk boundaries.
     const CHUNK_SIZE: u64 = 2 * 1024 * 1024;
 
+    let parent_span = Span::current();
+
     let (mut header, footer, image_size) = avb::load_image(input.reopen_boxed()?)?;
     let Some(mut footer) = footer else {
         return Err(Error::NoFooter);
@@ -119,6 +130,7 @@ pub fn patch_system_image(
     };
 
     let num_chunks = util::div_ceil(footer.original_image_size, CHUNK_SIZE);
+    trace!("Parallel heuristics search for otacerts.zip with {num_chunks} chunks");
 
     let modified_ranges = (0..num_chunks)
         .into_par_iter()
@@ -137,6 +149,9 @@ pub fn patch_system_image(
             let mut ranges = Vec::<Range<u64>>::new();
 
             for eocd_offset_rel in memmem::find_iter(&buf, ota::ZIP_EOCD_MAGIC) {
+                let _span = debug_span!(parent: &parent_span, "otacerts", offset, eocd_offset_rel)
+                    .entered();
+
                 let Some(bounds_rel) = find_zip_bounds(&buf, eocd_offset_rel) else {
                     continue;
                 };
@@ -168,7 +183,14 @@ pub fn patch_system_image(
     let update_ranges = if descriptor.hash_algorithm == "sha1" {
         // Promote to a secure algorithm. SHA1 is allowed for verification only.
         // The entire hash tree and FEC data will need to be recomputed.
-        descriptor.hash_algorithm = "sha256".to_owned();
+        let new_algorithm = "sha256".to_owned();
+
+        debug!(
+            "Changing insecure hash algorithm {} to {new_algorithm}",
+            descriptor.hash_algorithm,
+        );
+
+        descriptor.hash_algorithm = new_algorithm;
         None
     } else {
         // Only need to update the hash tree and FEC data corresponding to the
@@ -179,6 +201,7 @@ pub fn patch_system_image(
     descriptor.update(input, output, update_ranges, cancel_signal)?;
 
     if !header.public_key.is_empty() {
+        debug!("Signing system image");
         header.set_algo_for_key(key)?;
         header.sign(key)?;
     }
