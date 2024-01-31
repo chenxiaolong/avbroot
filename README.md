@@ -144,15 +144,17 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
 
 4. Flash the partition images that were extracted.
 
-    This can be done by manually running `fastboot flash <partition> extracted/<partition>.img` for each image in the `extracted/` directory or by using the following script:
+    For each partition inside `extracted/`, except for `system`, run:
 
     ```bash
-    for image in extracted/*.img; do
-        partition=$(basename "${image}")
-        partition=${partition%.img}
+    fastboot flash <partition> extracted/<partition>.img
+    ```
 
-        fastboot flash "${partition}" "${image}"
-    done
+    Then, reboot into recovery's fastbootd mode and flash `system`:
+
+    ```bash
+    fastboot reboot fastboot
+    fastboot flash system extracted/system.img
     ```
 
 5. Set up the custom AVB public key in the bootloader.
