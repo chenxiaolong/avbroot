@@ -132,39 +132,34 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
 
 1. Reboot into fastboot mode and unlock the bootloader if it isn't already unlocked. This will trigger a data wipe.
 
-2. When setting things up for the first time, the device must already be running the correct OS. Flash the original unpatched OTA if needed.
-
-3. Extract the partition images from the patched OTA that are different from the original.
+2. Extract all the partition images from the patched OTA.
 
     ```bash
     avbroot ota extract \
         --input /path/to/ota.zip.patched \
-        --directory extracted
+        --directory extracted \
+        --all \
+        --fastboot
     ```
 
-4. Flash the partition images that were extracted.
-
-    For each partition inside `extracted/`, except for `system`, run:
+3. Flash the partition images that were extracted.
 
     ```bash
-    fastboot flash <partition> extracted/<partition>.img
+    ANDROID_PRODUCT_OUT=extracted fastboot flashall
     ```
 
-    Then, reboot into recovery's fastbootd mode and flash `system`:
+    Note that this only flashes the OS partitions. The bootloader and modem/radio partitions are left untouched due to fastboot limitations. If they are not already up to date or if unsure, after fastboot completes, follow the steps in the [updates section](#updates) to sideload the patched OTA once. Sideloading OTAs always ensures that all partitions are up to date.
 
-    ```bash
-    fastboot reboot fastboot
-    fastboot flash system extracted/system.img
-    ```
+    Alternatively, for Pixel devices, running `flash-base.sh` from the factory image will also do the trick.
 
-5. Set up the custom AVB public key in the bootloader.
+4. Set up the custom AVB public key in the bootloader.
 
     ```bash
     fastboot erase avb_custom_key
     fastboot flash avb_custom_key /path/to/avb_pkmd.bin
     ```
 
-6. **[Optional]** Before locking the bootloader, reboot into Android once to confirm that everything is properly signed.
+5. **[Optional]** Before locking the bootloader, reboot into Android once to confirm that everything is properly signed.
 
     Install the Magisk or KernelSU app and run the following command:
 
@@ -178,13 +173,13 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
     init: [libfs_avb]Returning avb_handle with status: Success
     ```
 
-7. Reboot back into fastboot and lock the bootloader. This will trigger a data wipe again.
+6. Reboot back into fastboot and lock the bootloader. This will trigger a data wipe again.
 
     Remember: **Do not uncheck `OEM unlocking`!**
 
     **WARNING**: If you are flashing CalyxOS, the setup wizard will [automatically turn off the `OEM unlocking` switch](https://github.com/CalyxOS/platform_packages_apps_SetupWizard/blob/7d2df25cedcbff83ddb608e628f9d97b38259c26/src/org/lineageos/setupwizard/SetupWizardApp.java#L135-L140). Make sure to manually reenable it again from Android's developer settings. Consider using the [`OEMUnlockOnBoot` module](https://github.com/chenxiaolong/OEMUnlockOnBoot) to automatically ensure OEM unlocking is enabled on every boot.
 
-8. That's it! To install future OS, Magisk, or KernelSU updates, see the [next section](#updates).
+7. That's it! To install future OS, Magisk, or KernelSU updates, see the [next section](#updates).
 
 ## Updates
 
