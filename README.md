@@ -132,6 +132,10 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
 
 1. Reboot into fastboot mode and unlock the bootloader if it isn't already unlocked. This will trigger a data wipe.
 
+    ```bash
+    fastboot flashing unlock
+    ```
+
 2. When setting things up for the first time, the device must already be running the correct OS. Flash the original unpatched OTA if needed.
 
 3. Extract the partition images from the patched OTA that are different from the original.
@@ -139,23 +143,21 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
     ```bash
     avbroot ota extract \
         --input /path/to/ota.zip.patched \
-        --directory extracted
+        --directory extracted \
+        --fastboot
     ```
+
+    If you prefer to extract and flash all OS partitions just to be safe, pass in `--all`.
 
 4. Flash the partition images that were extracted.
 
-    For each partition inside `extracted/`, except for `system`, run:
-
     ```bash
-    fastboot flash <partition> extracted/<partition>.img
+    ANDROID_PRODUCT_OUT=extracted fastboot flashall --skip-reboot
     ```
 
-    Then, reboot into recovery's fastbootd mode and flash `system`:
+    Note that this only flashes the OS partitions. The bootloader and modem/radio partitions are left untouched due to fastboot limitations. If they are not already up to date or if unsure, after fastboot completes, follow the steps in the [updates section](#updates) to sideload the patched OTA once. Sideloading OTAs always ensures that all partitions are up to date.
 
-    ```bash
-    fastboot reboot fastboot
-    fastboot flash system extracted/system.img
-    ```
+    Alternatively, for Pixel devices, running `flash-base.sh` from the factory image will also update the bootloader and modem.
 
 5. Set up the custom AVB public key in the bootloader after rebooting from fastbootd to bootloader.
 

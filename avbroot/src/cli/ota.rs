@@ -1346,11 +1346,12 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
     let mut zip = ZipArchive::new(BufReader::new(raw_reader.reopen()?))
         .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
-    let payload_entry = zip
-        .by_name(ota::PATH_PAYLOAD)
-        .with_context(|| format!("Failed to open zip entry: {:?}", ota::PATH_PAYLOAD))?;
-    let payload_offset = payload_entry.data_start();
-    let payload_size = payload_entry.size();
+    let (payload_offset, payload_size) = {
+        let entry = zip
+            .by_name(ota::PATH_PAYLOAD)
+            .with_context(|| format!("Failed to open zip entry: {}", ota::PATH_PAYLOAD))?;
+        (entry.data_start(), entry.size())
+    };
 
     // Open the payload data directly.
     let mut payload_reader = SectionReader::new(
@@ -1402,6 +1403,144 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         &unique_images,
         cancel_signal,
     )?;
+
+    if cli.fastboot {
+        const ANDROID_INFO: &str = "android-info.txt";
+        const FASTBOOT_INFO: &str = "fastboot-info.txt";
+
+        // Generate android-info.txt, which is always required for fastboot's
+        // flashall subcommand. We only add a basic device check to avoid
+        // accidental flashes on the wrong device.
+
+        let mut metadata_entry = zip
+            .by_name(ota::PATH_METADATA_PB)
+            .with_context(|| format!("Failed to open zip entry: {:?}", ota::PATH_METADATA_PB))?;
+        let mut metadata_raw = vec![];
+        metadata_entry
+            .read_to_end(&mut metadata_raw)
+            .with_context(|| format!("Failed to read OTA metadata: {}", ota::PATH_METADATA_PB))?;
+        let metadata = ota::parse_protobuf_metadata(&metadata_raw)
+            .with_context(|| format!("Failed to parse OTA metadata: {}", ota::PATH_METADATA_PB))?;
+
+        let device = metadata
+            .precondition
+            .as_ref()
+            .and_then(|p| p.device.first())
+            .ok_or_else(|| anyhow!("Device codename not found in OTA metadata"))?;
+
+        directory
+            .write(ANDROID_INFO, format!("require board={device}\n"))
+            .with_context(|| format!("Failed to write file: {ANDROID_INFO}"))?;
+
+        // Find out which images can be flashed with fastboot. The bootloader
+        // (and potentially modem) partitions need to be flashed as a whole and
+        // an OTA doesn't contain sufficient information to generate the
+        // required combined file.
+        let mut flashable_images = BTreeSet::new();
+
+        for name in &unique_images {
+            let file = directory
+                .open(format!("{name}.img"))
+                .with_context(|| format!("Failed to open image for reading: {name}"))?;
+
+            match avb::load_image(file) {
+                Ok(_) => {
+                    flashable_images.insert(name);
+                }
+                // Treat images without AVB metadata as bootloader partitions.
+                Err(avb::Error::InvalidHeaderMagic(_)) => continue,
+                Err(e) => return Err(e).with_context(|| format!("Failed to load image: {name}")),
+            }
+        }
+
+        // Generate fastboot-info.txt to be able to control how exactly the
+        // images are flashed. This solves two problems:
+        //
+        // 1. fastboot flashall, by default, expects super_empty.img to exist
+        //    for A/B devices. If it doesn't exist, it assumes that all images
+        //    are meant for non-dynamic partitions and skips the fastbootd
+        //    reboot. We cannot generate a proper super_empty.img because it
+        //    requires knowing the number of super partitions along with their
+        //    names and sizes. This information is not available in an OTA. The
+        //    fastboot info file allows us to control when to reboot to
+        //    fastbootd and flash each partition.
+        //
+        //    This approach is a bit slower because we have to reboot into
+        //    fastbootd. When the device only has a single super partition,
+        //    fastboot will normally locally combine super_empty.img with the
+        //    individual partitions to form a full super image and then flash it
+        //    via the bootloader's fastboot mode.
+        //
+        //    Also, because we can't generate super_empty.img, if the super
+        //    partition metadata on the device somehow becomes corrupted,
+        //    running fastboot flash all using avbroot's extracted images isn't
+        //    sufficient for recovering the device. The user will need to copy
+        //    that file from the factory image into the output directory and add
+        //    an `update-super` line after `reboot fastboot` the fastboot info
+        //    file.
+        //
+        // 2. fastboot flashall does not look at all .img files in a directory.
+        //    Instead, it has a hardcoded list of partitions known to AOSP. This
+        //    means obscure OEM-specific partitions are just silently ignored.
+        //    Using a fastboot info file with explicit flash instructions avoids
+        //    this problem entirely.
+
+        let mut dynamic = BTreeSet::new();
+
+        if let Some(dpm) = &header.manifest.dynamic_partition_metadata {
+            for group in &dpm.groups {
+                for name in &group.partition_names {
+                    if unique_images.contains(name) {
+                        dynamic.insert(name);
+                    }
+                }
+            }
+        }
+
+        let flash_command = |name| {
+            let (prefix, suffix) = if flashable_images.contains(name) {
+                ("", "")
+            } else {
+                ("#", " # Bootloader/modem images cannot be flashed")
+            };
+
+            let extra_arg = if *name == "vbmeta" {
+                "--apply-vbmeta "
+            } else {
+                ""
+            };
+
+            format!("{prefix}flash {extra_arg}{name}{suffix}\n")
+        };
+
+        let mut fastboot_info = String::new();
+
+        fastboot_info.push_str("# Generated by avbroot\n");
+        fastboot_info.push_str("version 1\n");
+
+        fastboot_info.push_str("# Flash non-dynamic partitions\n");
+        for name in &unique_images {
+            if !dynamic.contains(name) {
+                fastboot_info.push_str(&flash_command(name));
+            }
+        }
+
+        fastboot_info.push_str("# Reboot to fastbootd\n");
+        fastboot_info.push_str("reboot fastboot\n");
+
+        fastboot_info.push_str("# Flash dynamic partitions\n");
+        for name in &dynamic {
+            fastboot_info.push_str(&flash_command(name));
+        }
+
+        fastboot_info.push_str("# Wipe data when -w flag is used\n");
+        fastboot_info.push_str("if-wipe erase userdata\n");
+        fastboot_info.push_str("if-wipe erase metadata\n");
+
+        directory
+            .write(FASTBOOT_INFO, fastboot_info)
+            .with_context(|| format!("Failed to write file: {FASTBOOT_INFO}"))?;
+    }
 
     Ok(())
 }
@@ -1712,6 +1851,7 @@ pub struct PatchCli {
     #[arg(
         long,
         value_name = "PARTITION",
+        hide = true,
         help_heading = HEADING_OTHER
     )]
     pub boot_partition: Option<String>,
@@ -1737,8 +1877,12 @@ pub struct ExtractCli {
     pub boot_only: bool,
 
     /// (Deprecated: no longer needed)
-    #[arg(long, value_name = "PARTITION")]
+    #[arg(long, value_name = "PARTITION", hide = true)]
     pub boot_partition: Option<String>,
+
+    /// Generate fastboot info files.
+    #[arg(long)]
+    pub fastboot: bool,
 }
 
 /// Verify signatures of an OTA.
