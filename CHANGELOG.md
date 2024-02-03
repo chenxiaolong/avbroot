@@ -19,6 +19,7 @@
 Behind-the-scenes changes:
 
 * Switch from xz2 to liblzma (maintained fork of xz2) ([PR #247])
+* Update all dependencies ([PR #256])
 
 ### Version 3.0.0
 
@@ -242,3 +243,4 @@ Behind-the-scenes changes:
 [PR #247]: https://github.com/chenxiaolong/avbroot/pull/247
 [PR #251]: https://github.com/chenxiaolong/avbroot/pull/251
 [PR #255]: https://github.com/chenxiaolong/avbroot/pull/255
+[PR #256]: https://github.com/chenxiaolong/avbroot/pull/256
