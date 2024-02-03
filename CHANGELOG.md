@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.1.0
 
 * The `OEMUnlockOnBoot` module has been split out to a separate repo ([Discussion #235], [PR #246])
     * https://github.com/chenxiaolong/OEMUnlockOnBoot
