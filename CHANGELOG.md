@@ -13,6 +13,8 @@
     * https://github.com/chenxiaolong/OEMUnlockOnBoot
     * The new module supports the automatic update mechanism within Magisk/KernelSU
 * Add support for Magisk v27.0 ([PR #255])
+* Switch to using a proper logging library ([PR #251])
+    * Folks who want to see the juicy details during patching can use `--log-level debug` or `--log-level trace`
 
 Behind-the-scenes changes:
 
@@ -238,4 +240,5 @@ Behind-the-scenes changes:
 [PR #245]: https://github.com/chenxiaolong/avbroot/pull/245
 [PR #246]: https://github.com/chenxiaolong/avbroot/pull/246
 [PR #247]: https://github.com/chenxiaolong/avbroot/pull/247
+[PR #251]: https://github.com/chenxiaolong/avbroot/pull/251
 [PR #255]: https://github.com/chenxiaolong/avbroot/pull/255
