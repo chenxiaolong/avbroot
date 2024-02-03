@@ -47,7 +47,7 @@ data.ramdisks = ["otacerts"]
 
 [profile.pixel_v4_gki.hashes]
 original = "f9477a35e3b60a495e49431c61e3897f11775f453a6a9897ead568357c963618"
-patched = "eb045799a514300727357a5ec471f9b04b276991daf4fd72f17f840b2a7dd1b8"
+patched = "d3436650b4e0c60688dafb1472fa5fe95e67d19a8fad2da4850ffaa739d44574"
 
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
@@ -81,7 +81,7 @@ data.ramdisks = ["init_and_otacerts", "dlkm"]
 
 [profile.pixel_v4_non_gki.hashes]
 original = "021b4510bc244f5f686fbff89eb2058ec9c96a2949c2fe8caa7750a78d593225"
-patched = "5d1a36e2eb18d9d905ab397d4eaf2d7e7c94da6e7573afe3d4e4367841171fe3"
+patched = "0f90ae4c26a54a735d48e13e98bea73b6d1c026b0e95fa5b4b26179a1d6bdc86"
 
 # Google Pixel 4a 5G
 # What's unique: boot (boot v3) + vendor_boot (vendor v3)
@@ -116,7 +116,7 @@ data.ramdisks = ["otacerts"]
 
 [profile.pixel_v3.hashes]
 original = "12221a69ff32e137d5f19b61f576fc6b33f0973c4a81da7722c640554ff4bc4e"
-patched = "e2049c6eba6990fc5ce30130af470c134a5ccc42947dcdd398f737fbca7ae44a"
+patched = "0a92969bbd7cb30071a0799eb20028546d1cec3e6ec1ca4d7e1fe7776f1399fc"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)
@@ -145,4 +145,4 @@ data.deps = ["system"]
 
 [profile.pixel_v2.hashes]
 original = "8b38d2d999b5b6e240e894f669e9e2643b3764c108d53bb7b02447da725e7c18"
-patched = "16f56e3d02c08bb646d8d0694ce77a6edb02a613bbcff14b10ead4a448c3dc00"
+patched = "85b411947145e89cdc7f71b7109a12586f4dbddce3021f0f96172fc465c189d6"

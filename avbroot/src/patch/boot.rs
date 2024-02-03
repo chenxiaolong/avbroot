@@ -140,10 +140,13 @@ impl MagiskRootPatcher {
     //   RULESDEVICE config option, which stored the writable block device as an
     //   rdev major/minor pair, which was not consistent across reboots and was
     //   replaced by PREINITDEVICE
-    const VERS_SUPPORTED: &'static [Range<u32>] = &[25102..25207, 25211..26500];
+    const VERS_SUPPORTED: &'static [Range<u32>] = &[25102..25207, 25211..27100];
     const VER_PREINIT_DEVICE: Range<u32> =
         25211..Self::VERS_SUPPORTED[Self::VERS_SUPPORTED.len() - 1].end;
     const VER_RANDOM_SEED: Range<u32> = 25211..26103;
+    const VER_PATCH_VBMETA: Range<u32> = Self::VERS_SUPPORTED[0].start..26202;
+    const VER_XZ_BACKUP: Range<u32> =
+        26403..Self::VERS_SUPPORTED[Self::VERS_SUPPORTED.len() - 1].end;
 
     pub fn new(
         path: &Path,
@@ -216,6 +219,18 @@ impl MagiskRootPatcher {
         }
     }
 
+    fn xz_compress(reader: impl Read, cancel_signal: &AtomicBool) -> Result<Vec<u8>> {
+        let stream = Stream::new_easy_encoder(9, Check::Crc32)?;
+        let raw_writer = Cursor::new(Vec::new());
+        let mut writer = XzEncoder::new_stream(raw_writer, stream);
+
+        stream::copy(reader, &mut writer, cancel_signal)?;
+
+        let raw_writer = writer.finish()?;
+
+        Ok(raw_writer.into_inner())
+    }
+
     /// Compare old and new ramdisk entry lists, creating the Magisk `.backup/`
     /// directory structure. `.backup/.rmlist` will contain a sorted list of
     /// NULL-terminated strings, listing which files were newly added or
@@ -223,7 +238,12 @@ impl MagiskRootPatcher {
     /// entries as `.backup/<path>`.
     ///
     /// Both lists and entries within the lists may be mutated.
-    fn apply_magisk_backup(old_entries: &mut [CpioEntry], new_entries: &mut Vec<CpioEntry>) {
+    fn apply_magisk_backup(
+        old_entries: &mut [CpioEntry],
+        new_entries: &mut Vec<CpioEntry>,
+        xz_compress: bool,
+        cancel_signal: &AtomicBool,
+    ) -> Result<()> {
         cpio::sort(old_entries);
         cpio::sort(new_entries);
 
@@ -269,10 +289,37 @@ impl MagiskRootPatcher {
         new_entries.push(CpioEntry::new_directory(b".backup", 0));
 
         for old_entry in to_back_up {
-            let mut new_entry = old_entry.clone();
-            new_entry.path = b".backup/".to_vec();
-            new_entry.path.extend(&old_entry.path);
-            new_entries.push(new_entry);
+            let mut new_path = b".backup/".to_vec();
+            new_path.extend(&old_entry.path);
+
+            let mut new_data = None;
+
+            if xz_compress {
+                if let CpioEntryData::Data(data) = &old_entry.data {
+                    new_path.extend(b".xz");
+
+                    let reader = Cursor::new(data);
+                    let buf = Self::xz_compress(reader, cancel_signal)?;
+                    new_data = Some(CpioEntryData::Data(buf));
+                }
+            }
+
+            new_entries.push(CpioEntry {
+                path: new_path,
+                data: new_data.unwrap_or_else(|| old_entry.data.clone()),
+                inode: old_entry.inode,
+                file_type: old_entry.file_type,
+                file_mode: old_entry.file_mode,
+                uid: old_entry.uid,
+                gid: old_entry.gid,
+                nlink: old_entry.nlink,
+                mtime: old_entry.mtime,
+                dev_maj: old_entry.dev_maj,
+                dev_min: old_entry.dev_min,
+                rdev_maj: old_entry.rdev_maj,
+                rdev_min: old_entry.rdev_min,
+                crc32: old_entry.crc32,
+            });
         }
 
         new_entries.push(CpioEntry::new_file(
@@ -280,6 +327,8 @@ impl MagiskRootPatcher {
             0,
             CpioEntryData::Data(rm_list),
         ));
+
+        Ok(())
     }
 }
 
@@ -347,7 +396,9 @@ impl BootImagePatch for MagiskRootPatcher {
             ));
         }
 
-        // Add xz-compressed magisk32 and magisk64.
+        // Add xz-compressed magisk32 and magisk64. We currently unconditionally
+        // include magisk32 because the boot image itself doesn't contain
+        // sufficient information to determine if a device is 64-bit only.
         let mut xz_files = HashMap::<&str, &[u8]>::new();
         xz_files.insert(
             "lib/armeabi-v7a/libmagisk32.so",
@@ -366,29 +417,28 @@ impl BootImagePatch for MagiskRootPatcher {
 
         for (source, target) in xz_files {
             let reader = zip.by_name(source)?;
-            let raw_writer = Cursor::new(vec![]);
-            let stream = Stream::new_easy_encoder(9, Check::Crc32)?;
-            let mut writer = XzEncoder::new_stream(raw_writer, stream);
+            let buf = Self::xz_compress(reader, cancel_signal)?;
 
-            stream::copy(reader, &mut writer, cancel_signal)?;
-
-            let raw_writer = writer.finish()?;
-
-            entries.push(CpioEntry::new_file(
-                target,
-                0o644,
-                CpioEntryData::Data(raw_writer.into_inner()),
-            ));
+            entries.push(CpioEntry::new_file(target, 0o644, CpioEntryData::Data(buf)));
         }
 
         // Create Magisk .backup directory structure.
-        Self::apply_magisk_backup(&mut old_entries, &mut entries);
+        Self::apply_magisk_backup(
+            &mut old_entries,
+            &mut entries,
+            Self::VER_XZ_BACKUP.contains(&self.version),
+            cancel_signal,
+        )?;
 
         // Create Magisk config.
         let mut magisk_config = String::new();
         magisk_config.push_str("KEEPVERITY=true\n");
         magisk_config.push_str("KEEPFORCEENCRYPT=true\n");
-        magisk_config.push_str("PATCHVBMETAFLAG=false\n");
+
+        if Self::VER_PATCH_VBMETA.contains(&self.version) {
+            magisk_config.push_str("PATCHVBMETAFLAG=false\n");
+        }
+
         magisk_config.push_str("RECOVERYMODE=false\n");
 
         if Self::VER_PREINIT_DEVICE.contains(&self.version) {

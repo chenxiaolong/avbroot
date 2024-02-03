@@ -817,11 +817,12 @@ fn create_fake_magisk(output: &Path) -> Result<()> {
         "lib/x86_64/libmagiskinit.so",
     ] {
         zip_writer.start_file(path, FileOptions::default())?;
+        write!(zip_writer, "dummy contents for {path}")?;
     }
 
     // avbroot looks for the version number in this file.
     zip_writer.start_file("assets/util_functions.sh", FileOptions::default())?;
-    zip_writer.write_all(b"MAGISK_VER_CODE=26400\n")?;
+    zip_writer.write_all(b"MAGISK_VER_CODE=27000\n")?;
 
     Ok(())
 }
