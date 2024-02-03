@@ -12,6 +12,7 @@
 * The `OEMUnlockOnBoot` module has been split out to a separate repo ([Discussion #235], [PR #246])
     * https://github.com/chenxiaolong/OEMUnlockOnBoot
     * The new module supports the automatic update mechanism within Magisk/KernelSU
+* Add support for Magisk v27.0 ([PR #255])
 
 Behind-the-scenes changes:
 
@@ -237,3 +238,4 @@ Behind-the-scenes changes:
 [PR #245]: https://github.com/chenxiaolong/avbroot/pull/245
 [PR #246]: https://github.com/chenxiaolong/avbroot/pull/246
 [PR #247]: https://github.com/chenxiaolong/avbroot/pull/247
+[PR #255]: https://github.com/chenxiaolong/avbroot/pull/255
