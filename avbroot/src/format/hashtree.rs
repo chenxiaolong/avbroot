@@ -326,7 +326,7 @@ impl<'a> HashTree<'a> {
         cancel_signal: &AtomicBool,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
         let offsets = self.compute_level_offsets(image_size)?;
-        let hash_tree_size = offsets.get(0).map(|r| r.end).unwrap_or(0);
+        let hash_tree_size = offsets.first().map(|r| r.end).unwrap_or(0);
         let mut hash_tree_data = vec![0u8; hash_tree_size];
 
         let root_digest = self.calculate(
@@ -352,7 +352,7 @@ impl<'a> HashTree<'a> {
         cancel_signal: &AtomicBool,
     ) -> Result<Vec<u8>> {
         let offsets = self.compute_level_offsets(image_size)?;
-        let hash_tree_size = offsets.get(0).map(|r| r.end).unwrap_or(0);
+        let hash_tree_size = offsets.first().map(|r| r.end).unwrap_or(0);
         if hash_tree_data.len() != hash_tree_size {
             return Err(Error::InvalidHashTreeSize {
                 input: image_size,
@@ -381,7 +381,7 @@ impl<'a> HashTree<'a> {
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         let offsets = self.compute_level_offsets(image_size)?;
-        let hash_tree_size = offsets.get(0).map(|r| r.end).unwrap_or(0);
+        let hash_tree_size = offsets.first().map(|r| r.end).unwrap_or(0);
         if hash_tree_data.len() != hash_tree_size {
             return Err(Error::InvalidHashTreeSize {
                 input: image_size,
@@ -637,7 +637,7 @@ mod tests {
             hash_tree.blocks_for_ranges(16384, &[0..16384]).unwrap(),
             &[0..4],
         );
-        assert_eq!(hash_tree.blocks_for_ranges(16384, &[0..0]).unwrap(), &[],);
+        assert_eq!(hash_tree.blocks_for_ranges(16384, &[0..0]).unwrap(), &[]);
         assert_eq!(
             hash_tree
                 .blocks_for_ranges(16384, &[12287..12289, 0..1, 5000..5001])

@@ -807,12 +807,12 @@ mod tests {
         let size = 2 * 253 * 4096;
         let fec = Fec::new(size, 4096, 2).unwrap();
 
-        assert_eq!(fec.rounds_for_ranges(&[0..0]).unwrap(), HashSet::new(),);
+        assert_eq!(fec.rounds_for_ranges(&[0..0]).unwrap(), HashSet::new());
         assert_eq!(
             fec.rounds_for_ranges(&[0..size]).unwrap(),
             HashSet::from([0, 1]),
         );
-        assert_eq!(fec.rounds_for_ranges(&[0..1]).unwrap(), HashSet::from([0]),);
+        assert_eq!(fec.rounds_for_ranges(&[0..1]).unwrap(), HashSet::from([0]));
         assert_eq!(
             fec.rounds_for_ranges(&[4095..4096]).unwrap(),
             HashSet::from([0]),
