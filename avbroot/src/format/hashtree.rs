@@ -52,18 +52,19 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-pub struct HashTree<'a> {
+pub struct HashTree {
     block_size: u32,
-    algorithm: &'static Algorithm,
-    salt: &'a [u8],
+    salted_context: Context,
 }
 
-impl<'a> HashTree<'a> {
-    pub fn new(block_size: u32, algorithm: &'static Algorithm, salt: &'a [u8]) -> Self {
+impl HashTree {
+    pub fn new(block_size: u32, algorithm: &'static Algorithm, salt: &[u8]) -> Self {
+        let mut salted_context = Context::new(algorithm);
+        salted_context.update(salt);
+
         Self {
             block_size,
-            algorithm,
-            salt,
+            salted_context,
         }
     }
 
@@ -72,7 +73,8 @@ impl<'a> HashTree<'a> {
     /// in the list. Note that the bottom level is stored at the end of the hash
     /// tree data.
     fn compute_level_offsets(&self, image_size: u64) -> Result<Vec<Range<usize>>> {
-        let digest_size = self.algorithm.output_len().next_power_of_two();
+        let algorithm = self.salted_context.algorithm();
+        let digest_size = algorithm.output_len().next_power_of_two();
         let mut ranges = vec![];
         let mut level_size = image_size;
 
@@ -143,8 +145,8 @@ impl<'a> HashTree<'a> {
         cancel_signal: &AtomicBool,
     ) -> io::Result<()> {
         // Each digest must be a power of 2.
-        let digest_padding =
-            self.algorithm.output_len().next_power_of_two() - self.algorithm.output_len();
+        let algorithm = self.salted_context.algorithm();
+        let digest_padding = algorithm.output_len().next_power_of_two() - algorithm.output_len();
         let mut buf = vec![0u8; self.block_size as usize];
 
         while size > 0 {
@@ -157,8 +159,7 @@ impl<'a> HashTree<'a> {
             // with padding.
             buf[n..].fill(0);
 
-            let mut context = Context::new(self.algorithm);
-            context.update(self.salt);
+            let mut context = self.salted_context.clone();
             context.update(&buf);
 
             // Add the digest to the tree level. Each tree node must be a power
@@ -191,7 +192,8 @@ impl<'a> HashTree<'a> {
         );
 
         // Parallelize in larger chunks to avoid too much seek thrashing.
-        let digest_size = self.algorithm.output_len().next_power_of_two();
+        let algorithm = self.salted_context.algorithm();
+        let digest_size = algorithm.output_len().next_power_of_two();
         let multiplier = 1024u64;
 
         level_data
@@ -222,7 +224,8 @@ impl<'a> HashTree<'a> {
         level_data: &mut [u8],
         cancel_signal: &AtomicBool,
     ) -> io::Result<()> {
-        let digest_size = self.algorithm.output_len().next_power_of_two();
+        let algorithm = self.salted_context.algorithm();
+        let digest_size = algorithm.output_len().next_power_of_two();
 
         level_data
             .par_chunks_exact_mut(digest_size)
@@ -263,8 +266,7 @@ impl<'a> HashTree<'a> {
             let mut buf = vec![0u8; image_size as usize];
             reader.read_exact(&mut buf)?;
 
-            let mut context = Context::new(self.algorithm);
-            context.update(self.salt);
+            let mut context = self.salted_context.clone();
             context.update(&buf);
             let digest = context.finish();
 
@@ -309,8 +311,7 @@ impl<'a> HashTree<'a> {
         }
 
         // Calculate the root hash.
-        let mut context = Context::new(self.algorithm);
-        context.update(self.salt);
+        let mut context = self.salted_context.clone();
         context.update(&hash_tree_data[level_offsets.last().unwrap().clone()]);
         let root_hash = context.finish().as_ref().to_vec();
 
@@ -402,8 +403,9 @@ impl<'a> HashTree<'a> {
 
         if hash_tree_data != actual_hash_tree_data {
             // These are multiple megabytes, so only report the hashes.
-            let expected = ring::digest::digest(self.algorithm, hash_tree_data);
-            let actual = ring::digest::digest(self.algorithm, &actual_hash_tree_data);
+            let algorithm = self.salted_context.algorithm();
+            let expected = ring::digest::digest(algorithm, hash_tree_data);
+            let actual = ring::digest::digest(algorithm, &actual_hash_tree_data);
 
             return Err(Error::InvalidHashTree {
                 expected: hex::encode(expected),
