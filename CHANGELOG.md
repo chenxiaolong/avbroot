@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Cache salted SHA-256 contexts for a small performance improvement ([PR #257])
+
 ### Version 3.1.0
 
 * The `OEMUnlockOnBoot` module has been split out to a separate repo ([Discussion #235], [PR #246])
@@ -244,3 +248,4 @@ Behind-the-scenes changes:
 [PR #251]: https://github.com/chenxiaolong/avbroot/pull/251
 [PR #255]: https://github.com/chenxiaolong/avbroot/pull/255
 [PR #256]: https://github.com/chenxiaolong/avbroot/pull/256
+[PR #257]: https://github.com/chenxiaolong/avbroot/pull/257
