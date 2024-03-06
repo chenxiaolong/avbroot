@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Cache salted SHA-256 contexts for a small performance improvement ([PR #257])
+* Fix loading certificates that have extra text outside of the marker lines ([PR #261])
 
 ### Version 3.1.0
 
@@ -249,3 +250,4 @@ Behind-the-scenes changes:
 [PR #255]: https://github.com/chenxiaolong/avbroot/pull/255
 [PR #256]: https://github.com/chenxiaolong/avbroot/pull/256
 [PR #257]: https://github.com/chenxiaolong/avbroot/pull/257
+[PR #261]: https://github.com/chenxiaolong/avbroot/pull/261
