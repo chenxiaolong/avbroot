@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.1.1
 
 * Cache salted SHA-256 contexts for a small performance improvement ([PR #257])
 * Fix loading certificates that have extra text outside of the marker lines ([PR #261])
