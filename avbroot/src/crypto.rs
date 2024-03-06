@@ -164,6 +164,9 @@ fn reformat_pem(data: &[u8]) -> Result<Vec<u8>> {
             continue;
         } else if line.starts_with(b"-----BEGIN CERTIFICATE-----") {
             inside_base64 = true;
+
+            result.extend_from_slice(line);
+            result.push(b'\n');
         } else if line.starts_with(b"-----END CERTIFICATE-----") {
             inside_base64 = false;
 
@@ -173,13 +176,13 @@ fn reformat_pem(data: &[u8]) -> Result<Vec<u8>> {
             }
 
             base64.clear();
+
+            result.extend_from_slice(line);
+            result.push(b'\n');
         } else if inside_base64 {
             base64.extend_from_slice(line);
             continue;
         }
-
-        result.extend_from_slice(line);
-        result.push(b'\n');
     }
 
     if inside_base64 {
