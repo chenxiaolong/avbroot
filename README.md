@@ -25,7 +25,7 @@ avbroot applies the following patches to the partition images:
 
 * The `boot`, `recovery`, or `vendor_boot` image, depending on device, is patched to replace the OTA signature verification certificates with the custom OTA signing certificate. This allows future patched OTAs to be sideloaded from recovery mode after the bootloader has been locked. It also prevents accidental flashing of the original unpatched OTA.
 
-* The `system` or `my_engineering` image, depending on device, is also patched to replace the OTA signature verification certificates. This prevents the OS' system updater app from installing an unpatched OTA and also allows the use of custom OTA updater apps.
+* The `system` image is also patched to replace the OTA signature verification certificates. This prevents the OS' system updater app from installing an unpatched OTA and also allows the use of custom OTA updater apps.
 
 ## Warnings and Caveats
 
