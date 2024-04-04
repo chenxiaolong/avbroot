@@ -424,18 +424,25 @@ impl BootImagePatch for MagiskRootPatcher {
             ));
         }
 
-        // Add xz-compressed magisk32 and magisk64. We currently unconditionally
-        // include magisk32 because the boot image itself doesn't contain
-        // sufficient information to determine if a device is 64-bit only.
         let mut xz_files = HashMap::<&str, &[u8]>::new();
-        xz_files.insert(
-            "lib/armeabi-v7a/libmagisk32.so",
-            b"overlay.d/sbin/magisk32.xz",
-        );
-        xz_files.insert(
-            "lib/arm64-v8a/libmagisk64.so",
-            b"overlay.d/sbin/magisk64.xz",
-        );
+        if zip.file_names().any(|n| n == "lib/arm64-v8a/libmagisk.so") {
+            // Newer Magisk versions only include a single binary for the target
+            // ABI in the ramdisk. fb5ee86615ed3df830e8538f8b39b1b133caea34.
+            xz_files.insert("lib/arm64-v8a/libmagisk.so", b"overlay.d/sbin/magisk.xz");
+        } else {
+            // Older Magisk versions include the 64-bit binary and, optionally,
+            // the 32-bit binary if the device supports it. We unconditionally
+            // include the magisk32 because the boot image itself doesn't have
+            // sufficient information to determine if a device is 64-bit only.
+            xz_files.insert(
+                "lib/armeabi-v7a/libmagisk32.so",
+                b"overlay.d/sbin/magisk32.xz",
+            );
+            xz_files.insert(
+                "lib/arm64-v8a/libmagisk64.so",
+                b"overlay.d/sbin/magisk64.xz",
+            );
+        }
 
         // Add stub apk, which only exists after Magisk commit
         // ad0e6511e11ebec65aa9b5b916e1397342850319.
