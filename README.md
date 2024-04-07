@@ -157,9 +157,10 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
     fastboot flash system extracted/system.img
     ```
 
-5. Set up the custom AVB public key in the bootloader.
+5. Set up the custom AVB public key in the bootloader after rebooting from fastbootd to bootloader.
 
     ```bash
+    fastboot reboot-bootloader
     fastboot erase avb_custom_key
     fastboot flash avb_custom_key /path/to/avb_pkmd.bin
     ```
@@ -179,6 +180,12 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
     ```
 
 7. Reboot back into fastboot and lock the bootloader. This will trigger a data wipe again.
+
+    ```bash
+    fastboot flashing lock
+    ```
+
+    Confirm by pressing volume down and then power. Then reboot.
 
     Remember: **Do not uncheck `OEM unlocking`!**
 
