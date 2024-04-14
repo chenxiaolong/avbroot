@@ -26,7 +26,7 @@ jobs:
           - macos-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           # For git describe
           fetch-depth: 0
@@ -43,8 +43,6 @@ jobs:
       - name: Get Rust target triple
         id: get_target
         shell: bash
-        env:
-          RUSTC_BOOTSTRAP: '1'
         run: |
           echo -n 'name=' >> "${GITHUB_OUTPUT}"
           rustc -vV | sed -n 's|host: ||p' >> "${GITHUB_OUTPUT}"
@@ -77,14 +75,6 @@ jobs:
               --target ${{ steps.get_target.outputs.name }} \
               -- test -a -c e2e/e2e.toml
 
-      - name: Archive documentation
-        uses: actions/upload-artifact@v3
-        with:
-          name: avbroot-${{ steps.get_version.outputs.version }}-${{ steps.get_target.outputs.name }}
-          path: |
-            LICENSE
-            README.md
-
       # Due to https://github.com/rust-lang/rust/issues/78210, we have to use
       # the --target option, which puts all output files in a different path.
       # Symlink that path to the normal output directory so that we don't need
@@ -95,11 +85,18 @@ jobs:
           rm -rf target/output
           ln -s ${{ steps.get_target.outputs.name }}/release target/output
 
-      # This is separate so we can have a flat directory structure.
+      # This is done to ensure a flat directory structure. The upload-artifact
+      # action no longer allows multiple uploads to the same destination.
+      - name: Copy documentation to target directory
+        shell: bash
+        run: cp LICENSE README.md target/output/
+
       - name: Archive executable
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: avbroot-${{ steps.get_version.outputs.version }}-${{ steps.get_target.outputs.name }}
           path: |
+            target/output/LICENSE
+            target/output/README.md
             target/output/avbroot
             target/output/avbroot.exe
