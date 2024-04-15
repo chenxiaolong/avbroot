@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Use `fastboot flashall` for initial setup to avoid needing to manually flash every partition ([PR #253])
+
 ### Version 3.1.1
 
 * Cache salted SHA-256 contexts for a small performance improvement ([PR #257])
@@ -247,6 +251,7 @@ Behind-the-scenes changes:
 [PR #246]: https://github.com/chenxiaolong/avbroot/pull/246
 [PR #247]: https://github.com/chenxiaolong/avbroot/pull/247
 [PR #251]: https://github.com/chenxiaolong/avbroot/pull/251
+[PR #253]: https://github.com/chenxiaolong/avbroot/pull/253
 [PR #255]: https://github.com/chenxiaolong/avbroot/pull/255
 [PR #256]: https://github.com/chenxiaolong/avbroot/pull/256
 [PR #257]: https://github.com/chenxiaolong/avbroot/pull/257
