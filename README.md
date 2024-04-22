@@ -1,4 +1,7 @@
 # avbroot
+___
+[This page is also available in Russian (Русский).](./README.ru.md)
+___
 
 avbroot is a program for patching Android A/B-style OTA images for root access while preserving AVB (Android Verified Boot) using custom signing keys. It is compatible with both Magisk and KernelSU. If desired, it can also just re-sign an OTA without enabling root access.
 
