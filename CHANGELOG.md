@@ -11,6 +11,7 @@
 
 * Use `fastboot flashall` for initial setup to avoid needing to manually flash every partition ([PR #253])
 * Remove binary test files in the git repo and generate them at runtime ([Issue #265], [PR #276])
+* Fix portions of a couple error messages being incorrectly quoted ([PR #277])
 
 ### Version 3.1.1
 
@@ -259,3 +260,4 @@ Behind-the-scenes changes:
 [PR #257]: https://github.com/chenxiaolong/avbroot/pull/257
 [PR #261]: https://github.com/chenxiaolong/avbroot/pull/261
 [PR #276]: https://github.com/chenxiaolong/avbroot/pull/276
+[PR #277]: https://github.com/chenxiaolong/avbroot/pull/277
