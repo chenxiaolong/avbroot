@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.1.2
 
 * Use `fastboot flashall` for initial setup to avoid needing to manually flash every partition ([PR #253])
 * Remove binary test files in the git repo and generate them at runtime ([Issue #265], [PR #276])
