@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Use `fastboot flashall` for initial setup to avoid needing to manually flash every partition ([PR #253])
+* Remove binary test files in the git repo and generate them at runtime ([Issue #265], [PR #276])
 
 ### Version 3.1.1
 
@@ -178,6 +179,7 @@ Behind-the-scenes changes:
 [Issue #222]: https://github.com/chenxiaolong/avbroot/issues/222
 [Issue #223]: https://github.com/chenxiaolong/avbroot/issues/223
 [Issue #225]: https://github.com/chenxiaolong/avbroot/issues/225
+[Issue #265]: https://github.com/chenxiaolong/avbroot/issues/265
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -256,3 +258,4 @@ Behind-the-scenes changes:
 [PR #256]: https://github.com/chenxiaolong/avbroot/pull/256
 [PR #257]: https://github.com/chenxiaolong/avbroot/pull/257
 [PR #261]: https://github.com/chenxiaolong/avbroot/pull/261
+[PR #276]: https://github.com/chenxiaolong/avbroot/pull/276
