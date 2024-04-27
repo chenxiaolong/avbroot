@@ -388,7 +388,7 @@ fn get_vbmeta_patch_order(
     }
 
     if !missing.is_empty() {
-        warn!("Partitions aren't protected by AVB: {:?}", joined(missing));
+        warn!("Partitions aren't protected by AVB: {}", joined(missing));
     }
 
     // Ensure that there's only a single root of trust. Otherwise, there could
@@ -493,9 +493,7 @@ fn update_security_descriptors(
 /// Get the text before the first equal sign in the kernel command line if it is
 /// not empty.
 fn cmdline_prefix(cmdline: &str) -> Option<&str> {
-    let Some((prefix, _)) = cmdline.split_once('=') else {
-        return None;
-    };
+    let (prefix, _) = cmdline.split_once('=')?;
     if prefix.is_empty() {
         return None;
     }
@@ -916,7 +914,7 @@ fn patch_ota_zip(
     }
 
     if !missing.is_empty() {
-        bail!("Missing entries in OTA zip: {:?}", joined(missing));
+        bail!("Missing entries in OTA zip: {}", joined(missing));
     } else if !paths.contains(ota::PATH_METADATA) && !paths.contains(ota::PATH_METADATA_PB) {
         bail!(
             "Neither legacy nor protobuf OTA metadata files exist: {:?}, {:?}",
