@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Build universal binary for macOS ([Issue #278], [PR #279])
+
 ### Version 3.1.2
 
 * Use `fastboot flashall` for initial setup to avoid needing to manually flash every partition ([PR #253])
@@ -181,6 +185,7 @@ Behind-the-scenes changes:
 [Issue #223]: https://github.com/chenxiaolong/avbroot/issues/223
 [Issue #225]: https://github.com/chenxiaolong/avbroot/issues/225
 [Issue #265]: https://github.com/chenxiaolong/avbroot/issues/265
+[Issue #278]: https://github.com/chenxiaolong/avbroot/issues/278
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -261,3 +266,4 @@ Behind-the-scenes changes:
 [PR #261]: https://github.com/chenxiaolong/avbroot/pull/261
 [PR #276]: https://github.com/chenxiaolong/avbroot/pull/276
 [PR #277]: https://github.com/chenxiaolong/avbroot/pull/277
+[PR #279]: https://github.com/chenxiaolong/avbroot/pull/279
