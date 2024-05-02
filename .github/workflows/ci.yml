@@ -13,17 +13,26 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.artifact.os }}
     env:
       CARGO_TERM_COLOR: always
+      # https://github.com/rust-lang/rust/issues/78210
       RUSTFLAGS: -C strip=symbols -C target-feature=+crt-static
+      TARGETS: ${{ join(matrix.artifact.targets, ' ') || matrix.artifact.name }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
+        artifact:
+          - os: ubuntu-latest
+            name: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            name: x86_64-pc-windows-msvc
+          - os: macos-latest
+            name: universal-apple-darwin
+            targets:
+              - aarch64-apple-darwin
+              - x86_64-apple-darwin
+            combine: lipo
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -40,12 +49,12 @@ jobs:
               | sed -E "s/^v//g;s/([^-]*-g)/r\1/;s/-/./g" \
               >> "${GITHUB_OUTPUT}"
 
-      - name: Get Rust target triple
-        id: get_target
+      - name: Install toolchains
         shell: bash
         run: |
-          echo -n 'name=' >> "${GITHUB_OUTPUT}"
-          rustc -vV | sed -n 's|host: ||p' >> "${GITHUB_OUTPUT}"
+          for target in ${TARGETS}; do
+              rustup target add "${target}"
+          done
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -53,37 +62,58 @@ jobs:
       - name: Clippy
         shell: bash
         run: |
-          cargo clippy --release --workspace --features static \
-              --target ${{ steps.get_target.outputs.name }}
+          for target in ${TARGETS}; do
+              cargo clippy --release --workspace --features static \
+                  --target "${target}"
+          done
 
       - name: Build
         shell: bash
         run: |
-          cargo build --release --workspace --features static \
-              --target ${{ steps.get_target.outputs.name }}
+          for target in ${TARGETS}; do
+              cargo build --release --workspace --features static \
+                  --target "${target}"
+          done
 
       - name: Tests
         shell: bash
         run: |
-          cargo test --release --workspace --features static \
-              --target ${{ steps.get_target.outputs.name }}
+          for target in ${TARGETS}; do
+              cargo test --release --workspace --features static \
+                  --target "${target}"
+          done
 
       - name: End to end tests
         shell: bash
         run: |
-          cargo run --release -p e2e --features static \
-              --target ${{ steps.get_target.outputs.name }} \
-              -- test -a -c e2e/e2e.toml
+          for target in ${TARGETS}; do
+              cargo run --release -p e2e --features static \
+                  --target "${target}" \
+                  -- test -a -c e2e/e2e.toml
+          done
 
-      # Due to https://github.com/rust-lang/rust/issues/78210, we have to use
-      # the --target option, which puts all output files in a different path.
-      # Symlink that path to the normal output directory so that we don't need
-      # to specify the Rust triple everywhere.
-      - name: Symlink target directory
+      - name: Create output directory
         shell: bash
         run: |
           rm -rf target/output
-          ln -s ${{ steps.get_target.outputs.name }}/release target/output
+
+          case "${{ matrix.artifact.combine }}" in
+          lipo)
+              mkdir target/output
+              cmd=(lipo -output target/output/avbroot -create)
+              for target in ${TARGETS}; do
+                  cmd+=("target/${target}/release/avbroot")
+              done
+              "${cmd[@]}"
+              ;;
+          '')
+              ln -s "${TARGETS}/release" target/output
+              ;;
+          *)
+              echo >&2 "Unsupported combine argument"
+              exit 1
+              ;;
+          esac
 
       # This is done to ensure a flat directory structure. The upload-artifact
       # action no longer allows multiple uploads to the same destination.
@@ -94,7 +124,7 @@ jobs:
       - name: Archive executable
         uses: actions/upload-artifact@v4
         with:
-          name: avbroot-${{ steps.get_version.outputs.version }}-${{ steps.get_target.outputs.name }}
+          name: avbroot-${{ steps.get_version.outputs.version }}-${{ matrix.artifact.name }}
           path: |
             target/output/LICENSE
             target/output/README.md
