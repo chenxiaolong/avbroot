@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -94,15 +94,13 @@ fn write_info(path: &Path, info: &AvbInfo) -> Result<()> {
 
 /// Packing with insecure algorithms is intentionally not supported, so promote
 /// to a secure algorithm if needed.
-fn promote_insecure_hash_algorithm(algorithm: &str) -> &str {
+fn promote_insecure_hash_algorithm(algorithm: &mut String) {
     const INSECURE_ALGORITHMS: &[&str] = &["sha1"];
     const NEW_ALGORITHM: &str = "sha256";
 
-    if INSECURE_ALGORITHMS.contains(&algorithm) {
+    if INSECURE_ALGORITHMS.contains(&algorithm.as_str()) {
         warn!("Changing insecure hash algorithm {algorithm} to {NEW_ALGORITHM}");
-        NEW_ALGORITHM
-    } else {
-        algorithm
+        NEW_ALGORITHM.clone_into(algorithm);
     }
 }
 
@@ -193,13 +191,13 @@ fn write_raw_and_update(
 
     match info.header.appended_descriptor_mut()? {
         AppendedDescriptorMut::HashTree(d) => {
-            d.hash_algorithm = promote_insecure_hash_algorithm(&d.hash_algorithm).to_owned();
+            promote_insecure_hash_algorithm(&mut d.hash_algorithm);
             d.image_size = image_size;
             d.update(&raw_file, &raw_file, None, cancel_signal)
                 .context("Failed to update hash tree descriptor")?;
         }
         AppendedDescriptorMut::Hash(d) => {
-            d.hash_algorithm = promote_insecure_hash_algorithm(&d.hash_algorithm).to_owned();
+            promote_insecure_hash_algorithm(&mut d.hash_algorithm);
             d.image_size = image_size;
             raw_file.rewind()?;
             d.update(&mut raw_file, cancel_signal)
@@ -646,7 +644,7 @@ fn repack_subcommand(cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> 
         // Write new hash tree and FEC data instead of copying the original.
         // There could have been errors in the original FEC data itself.
         if let AppendedDescriptorMut::HashTree(d) = info.header.appended_descriptor_mut()? {
-            d.hash_algorithm = promote_insecure_hash_algorithm(&d.hash_algorithm).to_owned();
+            promote_insecure_hash_algorithm(&mut d.hash_algorithm);
             d.update(&file, &file, None, cancel_signal)?;
         }
 

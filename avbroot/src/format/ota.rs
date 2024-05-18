@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2022-2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2022-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -152,15 +152,15 @@ pub fn parse_legacy_metadata(data: &str) -> Result<OtaMetadata> {
             }
             "post-build-incremental" => {
                 let p = metadata.postcondition.get_or_insert_with(Default::default);
-                p.build_incremental = value.to_owned();
+                value.clone_into(&mut p.build_incremental);
             }
             "post-sdk-level" => {
                 let p = metadata.postcondition.get_or_insert_with(Default::default);
-                p.sdk_level = value.to_owned();
+                value.clone_into(&mut p.sdk_level);
             }
             "post-security-patch-level" => {
                 let p = metadata.postcondition.get_or_insert_with(Default::default);
-                p.security_patch_level = value.to_owned();
+                value.clone_into(&mut p.security_patch_level);
             }
             "post-timestamp" => {
                 let p = metadata.postcondition.get_or_insert_with(Default::default);
@@ -176,7 +176,7 @@ pub fn parse_legacy_metadata(data: &str) -> Result<OtaMetadata> {
             }
             "pre-build-incremental" => {
                 let p = metadata.precondition.get_or_insert_with(Default::default);
-                p.build_incremental = value.to_owned();
+                value.clone_into(&mut p.build_incremental);
             }
             "spl-downgrade" => metadata.spl_downgrade = parse_yes()?,
             k if k.ends_with("-property-files") => {

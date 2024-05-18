@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2022-2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2022-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -1044,7 +1044,7 @@ pub fn patch_boot_images<'a>(
             let (mut writer, context) = hashing_writer.finish();
 
             descriptor.image_size = writer.stream_position()?;
-            descriptor.hash_algorithm = "sha256".to_owned();
+            "sha256".clone_into(&mut descriptor.hash_algorithm);
             descriptor.root_digest = context.finish().as_ref().to_vec();
 
             if !info.header.public_key.is_empty() {

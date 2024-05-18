@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2022-2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2022-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -479,7 +479,7 @@ fn update_security_descriptors(
         // vbmeta is signed; Use a chain descriptor.
         match parent_descriptor {
             Descriptor::ChainPartition(pd) => {
-                pd.public_key = child_header.public_key.clone();
+                child_header.public_key.clone_into(&mut pd.public_key);
             }
             _ => {
                 bail!("{child_name} descriptor ({parent_type}) in {parent_name} must be a chain descriptor");
@@ -522,7 +522,7 @@ fn update_metadata_descriptors(parent_header: &mut Header, child_header: &Header
                 });
 
                 if let Some(pd) = parent_property {
-                    pd.value = cd.value.clone();
+                    cd.value.clone_into(&mut pd.value);
                 } else {
                     parent_header
                         .descriptors
@@ -542,7 +542,7 @@ fn update_metadata_descriptors(parent_header: &mut Header, child_header: &Header
                 });
 
                 if let Some(pd) = parent_property {
-                    pd.cmdline = cd.cmdline.clone();
+                    cd.cmdline.clone_into(&mut pd.cmdline);
                 } else {
                     parent_header
                         .descriptors
