@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Fix potential infinite loop when interrupting avbroot at the right moment to a bug in the bzip2-rs library ([Issue #285], [PR #287])
+* Update all dependencies and fix new clippy lints ([PR #288])
 
 ### Version 3.1.3
 
@@ -273,3 +274,4 @@ Behind-the-scenes changes:
 [PR #277]: https://github.com/chenxiaolong/avbroot/pull/277
 [PR #279]: https://github.com/chenxiaolong/avbroot/pull/279
 [PR #287]: https://github.com/chenxiaolong/avbroot/pull/287
+[PR #288]: https://github.com/chenxiaolong/avbroot/pull/288
