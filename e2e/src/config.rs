@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use toml_edit::Document;
+use toml_edit::DocumentMut;
 
 #[derive(Serialize, Deserialize)]
 pub struct Sha256Hash(
@@ -120,12 +120,12 @@ pub struct Config {
     pub profile: BTreeMap<String, Profile>,
 }
 
-pub fn load_config(path: &Path) -> Result<(Config, Document)> {
+pub fn load_config(path: &Path) -> Result<(Config, DocumentMut)> {
     let contents =
         fs::read_to_string(path).with_context(|| format!("Failed to read config: {path:?}"))?;
     let config: Config = toml_edit::de::from_str(&contents)
         .with_context(|| format!("Failed to parse config: {path:?}"))?;
-    let document: Document = contents.parse().unwrap();
+    let document: DocumentMut = contents.parse().unwrap();
 
     Ok((config, document))
 }

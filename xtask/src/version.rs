@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{bail, Result};
 use clap::Parser;
-use toml_edit::{value, Document};
+use toml_edit::{value, DocumentMut};
 
 use crate::WORKSPACE_DIR;
 
@@ -19,7 +19,7 @@ fn update_cargo_version(version: &str) -> Result<()> {
     let path = Path::new(WORKSPACE_DIR).join("Cargo.toml");
     let data = fs::read_to_string(&path)?;
 
-    let mut document: Document = data.parse()?;
+    let mut document: DocumentMut = data.parse()?;
     document["workspace"]["package"]["version"] = value(version);
 
     fs::write(path, document.to_string())?;

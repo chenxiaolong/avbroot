@@ -12,4 +12,4 @@ publish = false
 anyhow = "1.0.75"
 clap = { version = "4.4.1", features = ["derive"] }
 regex = { version = "1.9.4", default-features = false, features = ["perf", "std"] }
-toml_edit = "0.21.0"
+toml_edit = "0.22.9"
