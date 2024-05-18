@@ -231,7 +231,7 @@ checksum = "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223"
 [[package]]
 name = "bzip2"
 version = "0.4.4"
-source = "git+https://github.com/jongiddy/bzip2-rs?rev=2aefcb4d3634de1df226c73d93f758d65228bb8c#2aefcb4d3634de1df226c73d93f758d65228bb8c"
+source = "git+https://github.com/chenxiaolong/bzip2-rs?rev=6e0f9836ec87b19261461b6cc1772e14aff8e851#6e0f9836ec87b19261461b6cc1772e14aff8e851"
 dependencies = [
  "bzip2-sys",
  "libc",
@@ -240,7 +240,7 @@ dependencies = [
 [[package]]
 name = "bzip2-sys"
 version = "0.1.11+1.0.8"
-source = "git+https://github.com/jongiddy/bzip2-rs?rev=2aefcb4d3634de1df226c73d93f758d65228bb8c#2aefcb4d3634de1df226c73d93f758d65228bb8c"
+source = "git+https://github.com/chenxiaolong/bzip2-rs?rev=6e0f9836ec87b19261461b6cc1772e14aff8e851#6e0f9836ec87b19261461b6cc1772e14aff8e851"
 dependencies = [
  "cc",
  "libc",
