@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix potential infinite loop when interrupting avbroot at the right moment to a bug in the bzip2-rs library ([Issue #285], [PR #287])
+
 ### Version 3.1.3
 
 * Build universal binary for macOS ([Issue #278], [PR #279])
@@ -186,6 +190,7 @@ Behind-the-scenes changes:
 [Issue #225]: https://github.com/chenxiaolong/avbroot/issues/225
 [Issue #265]: https://github.com/chenxiaolong/avbroot/issues/265
 [Issue #278]: https://github.com/chenxiaolong/avbroot/issues/278
+[Issue #285]: https://github.com/chenxiaolong/avbroot/issues/285
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -267,3 +272,4 @@ Behind-the-scenes changes:
 [PR #276]: https://github.com/chenxiaolong/avbroot/pull/276
 [PR #277]: https://github.com/chenxiaolong/avbroot/pull/277
 [PR #279]: https://github.com/chenxiaolong/avbroot/pull/279
+[PR #287]: https://github.com/chenxiaolong/avbroot/pull/287
