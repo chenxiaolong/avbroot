@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.2.0
 
 * Fix potential infinite loop when interrupting avbroot at the right moment to a bug in the bzip2-rs library ([Issue #285], [PR #287])
 * Update all dependencies and fix new clippy lints ([PR #288])
