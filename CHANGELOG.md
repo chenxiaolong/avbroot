@@ -11,6 +11,7 @@
 
 * Fix potential infinite loop when interrupting avbroot at the right moment to a bug in the bzip2-rs library ([Issue #285], [PR #287])
 * Update all dependencies and fix new clippy lints ([PR #288])
+* Add support for adding the custom AVB public key to the list of trusted keys for DSU (booting signed GSIs) ([Discussion #286], [PR #289])
 
 ### Version 3.1.3
 
@@ -175,6 +176,7 @@ Behind-the-scenes changes:
 <!-- Do not manually edit the lines below. Use `cargo xtask update-changelog` to regenerate. -->
 [Discussion #195]: https://github.com/chenxiaolong/avbroot/discussions/195
 [Discussion #235]: https://github.com/chenxiaolong/avbroot/discussions/235
+[Discussion #286]: https://github.com/chenxiaolong/avbroot/discussions/286
 [Issue #138]: https://github.com/chenxiaolong/avbroot/issues/138
 [Issue #144]: https://github.com/chenxiaolong/avbroot/issues/144
 [Issue #145]: https://github.com/chenxiaolong/avbroot/issues/145
@@ -275,3 +277,4 @@ Behind-the-scenes changes:
 [PR #279]: https://github.com/chenxiaolong/avbroot/pull/279
 [PR #287]: https://github.com/chenxiaolong/avbroot/pull/287
 [PR #288]: https://github.com/chenxiaolong/avbroot/pull/288
+[PR #289]: https://github.com/chenxiaolong/avbroot/pull/289
