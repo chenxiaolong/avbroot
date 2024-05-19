@@ -227,6 +227,14 @@ fn ramdisk_add_otacerts(entries: &mut Vec<CpioEntry>, cert_ota: &Certificate) ->
     Ok(())
 }
 
+fn ramdisk_add_first_stage(entries: &mut Vec<CpioEntry>) {
+    entries.push(CpioEntry::new_directory(b"first_stage_ramdisk", 0o755));
+}
+
+fn ramdisk_add_dsu_key_dir(entries: &mut Vec<CpioEntry>) {
+    entries.push(CpioEntry::new_directory(b"first_stage_ramdisk/avb", 0o755));
+}
+
 fn ramdisk_add_dlkm(entries: &mut Vec<CpioEntry>) {
     for path in [b"lib".as_slice(), b"lib/modules".as_slice()] {
         entries.push(CpioEntry::new_directory(path, 0o755));
@@ -245,25 +253,29 @@ fn ramdisk_add_dlkm(entries: &mut Vec<CpioEntry>) {
 }
 
 fn create_ramdisk(
-    content: RamdiskContent,
+    content_list: &[RamdiskContent],
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<Vec<u8>> {
     let mut entries = vec![];
 
-    match content {
-        RamdiskContent::Init => {
-            ramdisk_add_init(&mut entries);
-        }
-        RamdiskContent::Otacerts => {
-            ramdisk_add_otacerts(&mut entries, cert_ota)?;
-        }
-        RamdiskContent::InitAndOtacerts => {
-            ramdisk_add_init(&mut entries);
-            ramdisk_add_otacerts(&mut entries, cert_ota)?;
-        }
-        RamdiskContent::Dlkm => {
-            ramdisk_add_dlkm(&mut entries);
+    for content in content_list {
+        match content {
+            RamdiskContent::Init => {
+                ramdisk_add_init(&mut entries);
+            }
+            RamdiskContent::Otacerts => {
+                ramdisk_add_otacerts(&mut entries, cert_ota)?;
+            }
+            RamdiskContent::FirstStage => {
+                ramdisk_add_first_stage(&mut entries);
+            }
+            RamdiskContent::DsuKeyDir => {
+                ramdisk_add_dsu_key_dir(&mut entries);
+            }
+            RamdiskContent::Dlkm => {
+                ramdisk_add_dlkm(&mut entries);
+            }
         }
     }
 
@@ -298,7 +310,7 @@ fn create_boot_image(
     let ramdisks = boot_data
         .ramdisks
         .iter()
-        .map(|c| create_ramdisk(*c, cert_ota, cancel_signal))
+        .map(|c| create_ramdisk(c, cert_ota, cancel_signal))
         .collect::<Result<Vec<_>>>()?;
 
     let boot_image = match boot_data.version {
@@ -361,17 +373,20 @@ fn create_boot_image(
                     ramdisk_metas: boot_data
                         .ramdisks
                         .iter()
-                        .map(|c| match c {
-                            RamdiskContent::Dlkm => RamdiskMeta {
-                                ramdisk_type: bootimage::VENDOR_RAMDISK_TYPE_DLKM,
-                                ramdisk_name: "dlkm".to_owned(),
-                                board_id: Default::default(),
-                            },
-                            _ => RamdiskMeta {
-                                ramdisk_type: bootimage::VENDOR_RAMDISK_TYPE_PLATFORM,
-                                ramdisk_name: String::new(),
-                                board_id: Default::default(),
-                            },
+                        .map(|c_list| {
+                            if c_list.iter().any(|c| *c == RamdiskContent::Dlkm) {
+                                RamdiskMeta {
+                                    ramdisk_type: bootimage::VENDOR_RAMDISK_TYPE_DLKM,
+                                    ramdisk_name: "dlkm".to_owned(),
+                                    board_id: Default::default(),
+                                }
+                            } else {
+                                RamdiskMeta {
+                                    ramdisk_type: bootimage::VENDOR_RAMDISK_TYPE_PLATFORM,
+                                    ramdisk_name: String::new(),
+                                    board_id: Default::default(),
+                                }
+                            }
                         })
                         .collect(),
                     bootconfig: String::new(),
@@ -968,6 +983,7 @@ fn patch_image(
         keys.ota_pass_file.path().as_os_str(),
         OsStr::new("--cert-ota"),
         keys.ota_cert_file.path().as_os_str(),
+        OsStr::new("--dsu"),
     ];
     args.extend_from_slice(extra_args);
 

@@ -31,14 +31,16 @@ use crate::{
     cli,
     crypto::{self, PassphraseSource},
     format::{
-        avb::Header,
-        avb::{self, Descriptor},
+        avb::{self, Descriptor, Header},
         ota::{self, SigningWriter, ZipEntry},
         padding,
         payload::{self, PayloadHeader, PayloadWriter},
     },
     patch::{
-        boot::{self, BootImagePatch, MagiskRootPatcher, OtaCertPatcher, PrepatchedImagePatcher},
+        boot::{
+            self, BootImagePatch, DsuPubKeyPatcher, MagiskRootPatcher, OtaCertPatcher,
+            PrepatchedImagePatcher,
+        },
         system,
     },
     protobuf::{
@@ -195,6 +197,7 @@ fn patch_boot_images<'a, 'b: 'a>(
     required_images: &'b RequiredImages,
     input_files: &mut HashMap<String, InputFile>,
     root_patcher: Option<Box<dyn BootImagePatch + Sync>>,
+    dsu: bool,
     key_avb: &RsaPrivateKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
@@ -205,6 +208,9 @@ fn patch_boot_images<'a, 'b: 'a>(
 
     if let Some(p) = root_patcher {
         boot_patchers.push(p);
+    }
+    if dsu {
+        boot_patchers.push(Box::new(DsuPubKeyPatcher::new(key_avb.to_public_key())));
     }
 
     let boot_partitions = required_images.iter_boot().collect::<Vec<_>>();
@@ -699,6 +705,7 @@ fn patch_ota_payload(
     writer: impl Write,
     external_images: &HashMap<String, PathBuf>,
     root_patcher: Option<Box<dyn BootImagePatch + Sync>>,
+    dsu: bool,
     clear_vbmeta_flags: bool,
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
@@ -751,6 +758,7 @@ fn patch_ota_payload(
         &required_images,
         &mut input_files,
         root_patcher,
+        dsu,
         key_avb,
         cert_ota,
         cancel_signal,
@@ -894,6 +902,7 @@ fn patch_ota_zip(
     mut zip_writer: &mut ZipWriter<impl Write>,
     external_images: &HashMap<String, PathBuf>,
     mut root_patch: Option<Box<dyn BootImagePatch + Sync>>,
+    dsu: bool,
     clear_vbmeta_flags: bool,
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
@@ -1016,6 +1025,7 @@ fn patch_ota_zip(
                     external_images,
                     // There's only one payload in the OTA.
                     root_patch.take(),
+                    dsu,
                     clear_vbmeta_flags,
                     key_avb,
                     key_ota,
@@ -1273,6 +1283,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &mut zip_writer,
         &external_images,
         root_patcher,
+        cli.dsu,
         cli.clear_vbmeta_flags,
         &key_avb,
         &key_ota,
@@ -1840,6 +1851,10 @@ pub struct PatchCli {
         help_heading = HEADING_PREPATCHED
     )]
     pub ignore_prepatched_compat: u8,
+
+    /// Add AVB public key to trusted keys for DSU.
+    #[arg(long, help_heading = HEADING_OTHER)]
+    pub dsu: bool,
 
     /// Forcibly clear vbmeta flags if they disable AVB.
     #[arg(long, help_heading = HEADING_OTHER)]

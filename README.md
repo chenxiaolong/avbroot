@@ -363,6 +363,12 @@ The only behavior this changes is where the partition is read from. When using `
 
 This has no impact on what patches are applied. For example, when using Magisk, the root patch is applied to the boot partition, no matter if the partition came from the original `payload.bin` or from `--replace`.
 
+### Booting signed GSIs
+
+Android's [Dynamic System Updates (DSU)](https://developer.android.com/topic/dsu) feature uses a different root of trust than the regular system. Instead of using the bootloader's `avb_custom_key`, it obtains the trusted keys from the `first_stage_ramdisk/avb/*.avbpubkey` files inside the `init_boot` or `vendor_boot` ramdisk. These files are encoded in the same binary format as `avb_pkmd.bin`.
+
+avbroot can add the custom AVB public key to this directory by passing in `--dsu` when patching an OTA. This allows booting [Generic System Images (GSI)](https://developer.android.com/topic/generic-system-image) signed by the custom AVB key.
+
 ### Clearing vbmeta flags
 
 Some Android builds may ship with a root `vbmeta` image with the flags set such that AVB is effectively disabled. When avbroot encounters these images, the patching process will fail with a message like:

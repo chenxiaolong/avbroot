@@ -23,7 +23,7 @@ use liblzma::{
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use regex::bytes::Regex;
 use ring::digest::Context;
-use rsa::RsaPrivateKey;
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use thiserror::Error;
 use tracing::{debug, debug_span, trace, warn, Span};
 use x509_cert::Certificate;
@@ -663,6 +663,137 @@ impl BootImagePatch for OtaCertPatcher {
         Err(Error::Validation(format!(
             "No ramdisk contains {:?}",
             Self::OTACERTS_PATH.as_bstr(),
+        )))
+    }
+}
+
+/// Add the AVB public key to DSU's list of trusted keys for verifying GSIs.
+pub struct DsuPubKeyPatcher {
+    key: RsaPublicKey,
+}
+
+impl DsuPubKeyPatcher {
+    const FIRST_STAGE_PATH: &'static [u8] = b"first_stage_ramdisk";
+    const DSU_KEYS_PATH: &'static [u8] = b"first_stage_ramdisk/avb";
+    const AVBROOT_KEY_PATH: &'static [u8] = b"first_stage_ramdisk/avb/avbroot.avbpubkey";
+
+    pub fn new(key: RsaPublicKey) -> Self {
+        Self { key }
+    }
+
+    fn patch_ramdisk(&self, ramdisk: &mut Vec<u8>, cancel_signal: &AtomicBool) -> Result<bool> {
+        let (mut entries, ramdisk_format) = load_ramdisk(ramdisk, cancel_signal)?;
+        if !entries.iter_mut().any(|e| e.path == Self::FIRST_STAGE_PATH) {
+            return Ok(false);
+        }
+
+        if !entries.iter().any(|e| e.path == Self::DSU_KEYS_PATH) {
+            entries.push(CpioEntry::new_directory(Self::DSU_KEYS_PATH, 0o755));
+        }
+
+        let data = CpioEntryData::Data(avb::encode_public_key(&self.key)?);
+
+        if let Some(e) = entries
+            .iter_mut()
+            .find(|e| e.path == Self::AVBROOT_KEY_PATH)
+        {
+            e.data = data;
+        } else {
+            entries.push(CpioEntry::new_file(Self::AVBROOT_KEY_PATH, 0o644, data));
+        };
+
+        *ramdisk = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
+
+        Ok(true)
+    }
+}
+
+impl BootImagePatch for DsuPubKeyPatcher {
+    fn patcher_name(&self) -> &'static str {
+        "DsuPubKeyPatcher"
+    }
+
+    fn find_targets<'a>(
+        &self,
+        boot_images: &HashMap<&'a str, BootImageInfo>,
+        cancel_signal: &AtomicBool,
+    ) -> Result<Vec<&'a str>> {
+        let mut dsu_keys_targets = vec![];
+        let mut first_stage_targets = vec![];
+
+        'outer: for (name, info) in boot_images {
+            let ramdisks = match &info.boot_image {
+                BootImage::V0Through2(b) => slice::from_ref(&b.ramdisk),
+                BootImage::V3Through4(b) => slice::from_ref(&b.ramdisk),
+                BootImage::VendorV3Through4(b) => &b.ramdisks,
+            };
+
+            for ramdisk in ramdisks {
+                if ramdisk.is_empty() {
+                    continue;
+                }
+
+                let (entries, _) = load_ramdisk(ramdisk, cancel_signal)?;
+                let mut found = false;
+
+                for entry in entries {
+                    if entry.path == Self::DSU_KEYS_PATH {
+                        dsu_keys_targets.push(*name);
+                        found = true;
+                    } else if entry.path == Self::FIRST_STAGE_PATH {
+                        first_stage_targets.push(*name);
+                        found = true;
+                    }
+                }
+
+                if found {
+                    continue 'outer;
+                }
+            }
+        }
+
+        if !dsu_keys_targets.is_empty() {
+            // Most builds trust as least one DSU key. For these builds, add the
+            // user's key to the same directory.
+            if dsu_keys_targets.len() > 1 {
+                return Err(Error::Validation(format!(
+                    "DSU keys found in more than one boot image: {dsu_keys_targets:?}",
+                )));
+            }
+
+            Ok(dsu_keys_targets)
+        } else {
+            // For builds that don't trust any DSU keys, pick the first boot
+            // image that contains a first stage ramdisk directory.
+            if !first_stage_targets.is_empty() {
+                first_stage_targets.sort();
+                first_stage_targets.resize(1, "");
+            }
+
+            Ok(first_stage_targets)
+        }
+    }
+
+    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
+        let ramdisks = match boot_image {
+            BootImage::V0Through2(b) => slice::from_mut(&mut b.ramdisk),
+            BootImage::V3Through4(b) => slice::from_mut(&mut b.ramdisk),
+            BootImage::VendorV3Through4(b) => &mut b.ramdisks,
+        };
+
+        for ramdisk in ramdisks {
+            if ramdisk.is_empty() {
+                continue;
+            }
+
+            if self.patch_ramdisk(ramdisk, cancel_signal)? {
+                return Ok(());
+            }
+        }
+
+        Err(Error::Validation(format!(
+            "No ramdisk contains {:?}",
+            Self::FIRST_STAGE_PATH.as_bstr(),
         )))
     }
 }

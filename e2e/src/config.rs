@@ -41,7 +41,8 @@ pub struct Avb {
 pub enum RamdiskContent {
     Init,
     Otacerts,
-    InitAndOtacerts,
+    FirstStage,
+    DsuKeyDir,
     Dlkm,
 }
 
@@ -62,7 +63,7 @@ pub struct BootData {
     #[serde(default)]
     pub kernel: bool,
     #[serde(default)]
-    pub ramdisks: Vec<RamdiskContent>,
+    pub ramdisks: Vec<Vec<RamdiskContent>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
