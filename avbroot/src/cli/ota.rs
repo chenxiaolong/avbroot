@@ -10,6 +10,7 @@ use std::{
     fmt::Display,
     fs::{self, File},
     io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    mem,
     ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Mutex},
@@ -189,30 +190,17 @@ fn open_input_files(
 }
 
 /// Patch the boot images listed in `required_images`. Not every image is
-/// necessarily patched. An [`OtaCertPatcher`] is always applied to the boot
-/// image that contains the trusted OTA certificate list. If `root_patcher` is
-/// specified, then it is used to patch the boot image for root access. If the
-/// original image is signed, then it will be re-signed with `key_avb`.
+/// necessarily patched. Each patcher will determine which image it should
+/// target. If the original image is signed, then it will be re-signed with
+/// `key_avb`.
 fn patch_boot_images<'a, 'b: 'a>(
     required_images: &'b RequiredImages,
     input_files: &mut HashMap<String, InputFile>,
-    root_patcher: Option<Box<dyn BootImagePatch + Sync>>,
-    dsu: bool,
+    boot_patchers: Vec<Box<dyn BootImagePatch + Sync>>,
     key_avb: &RsaPrivateKey,
-    cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let input_files = Mutex::new(input_files);
-    let mut boot_patchers = Vec::<Box<dyn BootImagePatch + Sync>>::new();
-    boot_patchers.push(Box::new(OtaCertPatcher::new(cert_ota.clone())));
-
-    if let Some(p) = root_patcher {
-        boot_patchers.push(p);
-    }
-    if dsu {
-        boot_patchers.push(Box::new(DsuPubKeyPatcher::new(key_avb.to_public_key())));
-    }
-
     let boot_partitions = required_images.iter_boot().collect::<Vec<_>>();
 
     info!(
@@ -704,8 +692,7 @@ fn patch_ota_payload(
     payload: &(dyn ReadSeekReopen + Sync),
     writer: impl Write,
     external_images: &HashMap<String, PathBuf>,
-    root_patcher: Option<Box<dyn BootImagePatch + Sync>>,
-    dsu: bool,
+    boot_patchers: Vec<Box<dyn BootImagePatch + Sync>>,
     clear_vbmeta_flags: bool,
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
@@ -757,10 +744,8 @@ fn patch_ota_payload(
     patch_boot_images(
         &required_images,
         &mut input_files,
-        root_patcher,
-        dsu,
+        boot_patchers,
         key_avb,
-        cert_ota,
         cancel_signal,
     )?;
 
@@ -901,8 +886,7 @@ fn patch_ota_zip(
     zip_reader: &mut ZipArchive<impl Read + Seek>,
     mut zip_writer: &mut ZipWriter<impl Write>,
     external_images: &HashMap<String, PathBuf>,
-    mut root_patch: Option<Box<dyn BootImagePatch + Sync>>,
-    dsu: bool,
+    mut boot_patchers: Vec<Box<dyn BootImagePatch + Sync>>,
     clear_vbmeta_flags: bool,
     key_avb: &RsaPrivateKey,
     key_ota: &RsaPrivateKey,
@@ -1024,8 +1008,7 @@ fn patch_ota_zip(
                     &mut writer,
                     external_images,
                     // There's only one payload in the OTA.
-                    root_patch.take(),
-                    dsu,
+                    mem::take(&mut boot_patchers),
                     clear_vbmeta_flags,
                     key_avb,
                     key_ota,
@@ -1233,8 +1216,11 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         external_images.insert(name.to_owned(), path.to_owned());
     }
 
-    let root_patcher = if let Some(magisk) = &cli.root.magisk {
-        let patcher: Box<dyn BootImagePatch + Sync> = Box::new(
+    let mut boot_patchers = Vec::<Box<dyn BootImagePatch + Sync>>::new();
+    boot_patchers.push(Box::new(OtaCertPatcher::new(cert_ota.clone())));
+
+    if let Some(magisk) = &cli.root.magisk {
+        boot_patchers.push(Box::new(
             MagiskRootPatcher::new(
                 magisk,
                 cli.magisk_preinit_device.as_deref(),
@@ -1242,20 +1228,19 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
                 cli.ignore_magisk_warnings,
             )
             .context("Failed to create Magisk boot image patcher")?,
-        );
-
-        Some(patcher)
+        ));
     } else if let Some(prepatched) = &cli.root.prepatched {
-        let patcher: Box<dyn BootImagePatch + Sync> = Box::new(PrepatchedImagePatcher::new(
+        boot_patchers.push(Box::new(PrepatchedImagePatcher::new(
             prepatched,
             cli.ignore_prepatched_compat + 1,
-        ));
-
-        Some(patcher)
+        )));
     } else {
         assert!(cli.root.rootless);
-        None
     };
+
+    if cli.dsu {
+        boot_patchers.push(Box::new(DsuPubKeyPatcher::new(key_avb.to_public_key())));
+    }
 
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
@@ -1282,8 +1267,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &mut zip_reader,
         &mut zip_writer,
         &external_images,
-        root_patcher,
-        cli.dsu,
+        boot_patchers,
         cli.clear_vbmeta_flags,
         &key_avb,
         &key_ota,
