@@ -196,7 +196,7 @@ impl Fec {
 
     /// Get the size of the FEC data needed to cover the entire file.
     #[inline]
-    fn fec_size(&self) -> usize {
+    pub fn fec_size(&self) -> usize {
         usize::from(self.parity()) * self.rounds as usize * self.block_size as usize
     }
 

@@ -72,7 +72,7 @@ impl HashTree {
     /// tree data. The items are returned with the bottom level's offsets first
     /// in the list. Note that the bottom level is stored at the end of the hash
     /// tree data.
-    fn compute_level_offsets(&self, image_size: u64) -> Result<Vec<Range<usize>>> {
+    pub fn compute_level_offsets(&self, image_size: u64) -> Result<Vec<Range<usize>>> {
         let algorithm = self.salted_context.algorithm();
         let digest_size = algorithm.output_len().next_power_of_two();
         let mut ranges = vec![];
