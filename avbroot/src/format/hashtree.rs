@@ -72,14 +72,14 @@ impl HashTree {
     /// tree data. The items are returned with the bottom level's offsets first
     /// in the list. Note that the bottom level is stored at the end of the hash
     /// tree data.
-    fn compute_level_offsets(&self, image_size: u64) -> Result<Vec<Range<usize>>> {
+    pub fn compute_level_offsets(&self, image_size: u64) -> Result<Vec<Range<usize>>> {
         let algorithm = self.salted_context.algorithm();
         let digest_size = algorithm.output_len().next_power_of_two();
         let mut ranges = vec![];
         let mut level_size = image_size;
 
         while level_size > u64::from(self.block_size) {
-            let blocks = util::div_ceil(level_size, u64::from(self.block_size));
+            let blocks = level_size.div_ceil(u64::from(self.block_size));
             level_size = blocks
                 .checked_mul(digest_size as u64)
                 .and_then(|s| padding::round(s, u64::from(self.block_size)))
@@ -124,7 +124,7 @@ impl HashTree {
             let end_block = if range.end % block_size == 0 {
                 range.end / block_size
             } else {
-                util::div_ceil(range.end, block_size)
+                range.end.div_ceil(block_size)
             };
 
             result.push(start_block..end_block);

@@ -49,16 +49,6 @@ pub fn parent_path(path: &Path) -> &Path {
     Path::new(".")
 }
 
-/// Since Rust's built-in .div_ceil() is still nightly-only.
-pub fn div_ceil<T: PrimInt>(dividend: T, divisor: T) -> T {
-    dividend / divisor
-        + if dividend % divisor != T::zero() {
-            T::one()
-        } else {
-            T::zero()
-        }
-}
-
 /// Sort and merge overlapping intervals.
 pub fn merge_overlapping<T>(sections: &[Range<T>]) -> Vec<Range<T>>
 where
