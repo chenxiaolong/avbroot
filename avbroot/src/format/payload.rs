@@ -918,7 +918,7 @@ pub fn compress_image(
         });
     }
 
-    let chunks_total = util::div_ceil(file_size, CHUNK_SIZE);
+    let chunks_total = file_size.div_ceil(CHUNK_SIZE);
     let mut bytes_compressed = 0;
     let mut context_uncompressed = Context::new(&ring::digest::SHA256);
     let mut operations = vec![];
@@ -1059,7 +1059,7 @@ pub fn compress_modified_image(
         return Err(Error::ExtentsNotInOrder);
     }
 
-    let groups_total = util::div_ceil(operations.len(), OPERATION_GROUP);
+    let groups_total = operations.len().div_ceil(OPERATION_GROUP);
     let mut bytes_compressed = 0;
     let mut context_uncompressed = Context::new(&ring::digest::SHA256);
     let mut modified_operations = vec![];

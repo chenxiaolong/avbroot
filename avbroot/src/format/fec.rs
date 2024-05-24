@@ -166,8 +166,8 @@ impl Fec {
             return Err(Error::UnsupportedParity(parity));
         }
 
-        let blocks = util::div_ceil(file_size, u64::from(block_size));
-        let rounds = util::div_ceil(blocks, u64::from(rs_k));
+        let blocks = file_size.div_ceil(u64::from(block_size));
+        let rounds = blocks.div_ceil(u64::from(rs_k));
 
         // Check upfront so we don't need to do checked multiplication later.
         rounds
@@ -225,7 +225,7 @@ impl Fec {
             let end_block = if range.end % block_size == 0 {
                 range.end / block_size
             } else {
-                util::div_ceil(range.end, block_size)
+                range.end.div_ceil(block_size)
             };
 
             for block in start_block..end_block {

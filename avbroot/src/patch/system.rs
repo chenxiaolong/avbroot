@@ -129,7 +129,7 @@ pub fn patch_system_image(
         return Err(Error::NoHashTreeDescriptor);
     };
 
-    let num_chunks = util::div_ceil(footer.original_image_size, CHUNK_SIZE);
+    let num_chunks = footer.original_image_size.div_ceil(CHUNK_SIZE);
     trace!("Parallel heuristics search for otacerts.zip with {num_chunks} chunks");
 
     let modified_ranges = (0..num_chunks)

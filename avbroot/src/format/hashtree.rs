@@ -79,7 +79,7 @@ impl HashTree {
         let mut level_size = image_size;
 
         while level_size > u64::from(self.block_size) {
-            let blocks = util::div_ceil(level_size, u64::from(self.block_size));
+            let blocks = level_size.div_ceil(u64::from(self.block_size));
             level_size = blocks
                 .checked_mul(digest_size as u64)
                 .and_then(|s| padding::round(s, u64::from(self.block_size)))
@@ -124,7 +124,7 @@ impl HashTree {
             let end_block = if range.end % block_size == 0 {
                 range.end / block_size
             } else {
-                util::div_ceil(range.end, block_size)
+                range.end.div_ceil(block_size)
             };
 
             result.push(start_block..end_block);
