@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.2.1
 
 * Increase hash tree and FEC size limits to accommodate partition images up to 8 GiB ([Issue #291], [PR #293])
 
