@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Increase hash tree and FEC size limits to accommodate partition images up to 8 GiB ([Issue #291], [PR #293])
+
 ### Version 3.2.0
 
 * Fix potential infinite loop when interrupting avbroot at the right moment to a bug in the bzip2-rs library ([Issue #285], [PR #287])
@@ -194,6 +198,7 @@ Behind-the-scenes changes:
 [Issue #265]: https://github.com/chenxiaolong/avbroot/issues/265
 [Issue #278]: https://github.com/chenxiaolong/avbroot/issues/278
 [Issue #285]: https://github.com/chenxiaolong/avbroot/issues/285
+[Issue #291]: https://github.com/chenxiaolong/avbroot/issues/291
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -278,3 +283,4 @@ Behind-the-scenes changes:
 [PR #287]: https://github.com/chenxiaolong/avbroot/pull/287
 [PR #288]: https://github.com/chenxiaolong/avbroot/pull/288
 [PR #289]: https://github.com/chenxiaolong/avbroot/pull/289
+[PR #293]: https://github.com/chenxiaolong/avbroot/pull/293
