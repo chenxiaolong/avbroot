@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
  * SPDX-FileCopyrightText: 2023 Pascal Roeleven
  * SPDX-License-Identifier: GPL-3.0-only
  */
@@ -196,7 +196,7 @@ fn append_avb(
         // Give enough free space for changes from patching.
         .max(1024 * 1024);
 
-    avb::write_appended_image(file, &header, &mut footer, full_image_size)?;
+    avb::write_appended_image(file, &header, &mut footer, Some(full_image_size))?;
 
     Ok(())
 }

@@ -1184,7 +1184,12 @@ pub fn patch_boot_images<'a>(
                 info.header.sign(key)?;
             }
 
-            avb::write_appended_image(writer, &info.header, &mut info.footer, info.image_size)?;
+            avb::write_appended_image(
+                writer,
+                &info.header,
+                &mut info.footer,
+                Some(info.image_size),
+            )?;
 
             Ok(())
         })

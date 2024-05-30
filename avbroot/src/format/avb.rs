@@ -1,10 +1,10 @@
 /*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
 use std::{
-    cmp, fmt,
+    fmt,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     ops::Range,
     str,
@@ -29,8 +29,8 @@ use crate::{
         padding,
     },
     stream::{
-        self, CountingReader, FromReader, ReadDiscardExt, ReadSeekReopen, ReadStringExt, ToWriter,
-        WriteSeekReopen, WriteStringExt, WriteZerosExt,
+        self, CountingReader, CountingWriter, FromReader, ReadDiscardExt, ReadSeekReopen,
+        ReadStringExt, ToWriter, WriteSeekReopen, WriteStringExt, WriteZerosExt,
     },
     util,
 };
@@ -124,8 +124,10 @@ pub enum Error {
     RsaSign(#[source] rsa::Error),
     #[error("Failed to RSA verify signature")]
     RsaVerify(#[source] rsa::Error),
-    #[error("{0} byte image size is too small to fit header or footer")]
-    ImageSizeTooSmall(u64),
+    #[error("{0} byte image size is too small to fit header")]
+    TooSmallForHeader(u64),
+    #[error("{0} byte image size is too small to fit footer")]
+    TooSmallForFooter(u64),
     #[error("Hash tree error")]
     HashTree(#[from] hashtree::Error),
     #[error("FEC error")]
@@ -1851,97 +1853,95 @@ pub fn load_image(mut reader: impl Read + Seek) -> Result<(Header, Option<Footer
     Ok((header, footer, image_size))
 }
 
-/// Write a vbmeta header to the specified writer. If a footer is specified, it
-/// will be used as the basis of the newly written footer, with the original
-/// image size, vbmeta header offset, and vbmeta header size fields updated
-/// appropriately.
-///
-/// The writer must not have an existing vbmeta header or footer.
-fn write_image_internal(
-    mut writer: impl Write + Seek,
-    header: &Header,
-    footer: Option<&mut Footer>,
-    image_size: Option<u64>,
-    block_size: u64,
-) -> Result<()> {
-    let eof_image_size = if footer.is_some() {
-        match header.appended_descriptor()? {
-            AppendedDescriptorRef::HashTree(d) => d
-                .image_size
-                .checked_add(d.tree_size)
-                .and_then(|s| s.checked_add(d.fec_size))
-                .ok_or_else(|| Error::FieldOutOfBounds("eof_image_size"))?,
-            AppendedDescriptorRef::Hash(d) => d.image_size,
-        }
-    } else {
-        0
-    };
-
-    writer.seek(SeekFrom::Start(eof_image_size))?;
-
-    // The header must be block-aligned.
-    let vbmeta_offset = if block_size > 0 {
-        let padding_size = padding::write_zeros(&mut writer, block_size)?;
-        eof_image_size
-            .checked_add(padding_size)
-            .ok_or_else(|| Error::FieldOutOfBounds("vbmeta_offset"))?
-    } else {
-        eof_image_size
-    };
-
-    header.to_writer(&mut writer)?;
-    let vbmeta_end = writer.stream_position()?;
-
-    if let Some(s) = image_size {
-        let footer_space = if footer.is_some() {
-            cmp::max(block_size, Footer::SIZE as u64)
-        } else {
-            0
-        };
-
-        if s < footer_space || vbmeta_end > s - footer_space {
-            return Err(Error::ImageSizeTooSmall(s));
-        }
-    }
-
-    if block_size > 0 {
-        padding::write_zeros(&mut writer, block_size)?;
-    }
-
-    if let Some(f) = footer {
-        let footer_offset = image_size.unwrap() - Footer::SIZE as u64;
-        writer.seek(SeekFrom::Start(footer_offset))?;
-
-        let original_image_size = match header.appended_descriptor()? {
-            AppendedDescriptorRef::HashTree(d) => d.image_size,
-            AppendedDescriptorRef::Hash(d) => d.image_size,
-        };
-
-        f.original_image_size = original_image_size;
-        f.vbmeta_offset = vbmeta_offset;
-        f.vbmeta_size = vbmeta_end - vbmeta_offset;
-
-        f.to_writer(&mut writer)?;
-    }
-
-    Ok(())
-}
-
 /// Write a vbmeta header to the specified writer. This is meant for writing
 /// vbmeta partition images, not appended vbmeta images. The writer must refer
-/// to an empty file.
-pub fn write_root_image(writer: impl Write + Seek, header: &Header, block_size: u64) -> Result<()> {
-    write_image_internal(writer, header, None, None, block_size)
+/// to an empty file. Returns the size of the new file.
+pub fn write_root_image(writer: impl Write, header: &Header, block_size: u64) -> Result<u64> {
+    let mut counting_writer = CountingWriter::new(writer);
+
+    header.to_writer(&mut counting_writer)?;
+    padding::write_zeros(&mut counting_writer, block_size)?;
+
+    Ok(counting_writer.stream_position()?)
 }
 
 /// Write a vbmeta header and footer to the specified writer. This is meant for
 /// appending vbmeta data to existing partition data, not writing vbmeta images.
+/// If `image_size` is specified, then the writer is guaranteed to not grow
+/// past that size and an error is returned if the header and footer won't fit.
+/// Otherwise, the writer will grow to the necessary size. Returns the size of
+/// the new file.
 pub fn write_appended_image(
-    writer: impl Write + Seek,
+    mut writer: impl Write + Seek,
     header: &Header,
     footer: &mut Footer,
-    image_size: u64,
-) -> Result<()> {
+    image_size: Option<u64>,
+) -> Result<u64> {
     // avbtool hardcodes a 4096 block size for appended non-sparse images.
-    write_image_internal(writer, header, Some(footer), Some(image_size), 4096)
+    const BLOCK_SIZE: u64 = 4096;
+
+    // Logical image size, excluding the AVB header and footer.
+    let logical_image_size = match header.appended_descriptor()? {
+        AppendedDescriptorRef::HashTree(d) => d
+            .image_size
+            .checked_add(d.tree_size)
+            .and_then(|s| s.checked_add(d.fec_size))
+            .ok_or_else(|| Error::FieldOutOfBounds("logical_image_size"))?,
+        AppendedDescriptorRef::Hash(d) => d.image_size,
+    };
+
+    writer.seek(SeekFrom::Start(logical_image_size))?;
+
+    // The header start offset must be block aligned.
+    let header_offset = {
+        let padding_size = padding::write_zeros(&mut writer, BLOCK_SIZE)?;
+        logical_image_size
+            .checked_add(padding_size)
+            .ok_or_else(|| Error::FieldOutOfBounds("header_offset"))?
+    };
+
+    // The header lives at the beginning of the empty space.
+    let mut header_buf = Cursor::new(Vec::new());
+    header.to_writer(&mut header_buf)?;
+    let header_size = header_buf.stream_position()?;
+    let header_padding = padding::write_zeros(&mut header_buf, BLOCK_SIZE)?;
+    let header_end_padded = header_offset
+        .checked_add(header_size)
+        .and_then(|s| s.checked_add(header_padding))
+        .ok_or_else(|| Error::FieldOutOfBounds("header_end_padded"))?;
+
+    if let Some(s) = image_size {
+        if header_end_padded > s {
+            return Err(Error::TooSmallForHeader(s));
+        }
+    }
+
+    writer.write_all(&header_buf.into_inner())?;
+
+    // The footer lives in its own separate block at the end of the empty space.
+    let footer_end = if let Some(s) = image_size {
+        if s - header_end_padded < BLOCK_SIZE {
+            return Err(Error::TooSmallForFooter(s));
+        }
+
+        s
+    } else {
+        header_end_padded
+            .checked_add(BLOCK_SIZE)
+            .ok_or_else(|| Error::FieldOutOfBounds("footer_end"))?
+    };
+
+    let footer_offset = footer_end - Footer::SIZE as u64;
+    writer.seek(SeekFrom::Start(footer_offset))?;
+
+    footer.original_image_size = match header.appended_descriptor()? {
+        AppendedDescriptorRef::HashTree(d) => d.image_size,
+        AppendedDescriptorRef::Hash(d) => d.image_size,
+    };
+    footer.vbmeta_offset = header_offset;
+    footer.vbmeta_size = header_size;
+
+    footer.to_writer(&mut writer)?;
+
+    Ok(footer_end)
 }

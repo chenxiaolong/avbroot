@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -207,7 +207,7 @@ pub fn patch_system_image(
     }
 
     let writer = output.reopen_boxed()?;
-    avb::write_appended_image(writer, &header, &mut footer, image_size)?;
+    avb::write_appended_image(writer, &header, &mut footer, Some(image_size))?;
 
     let AppendedDescriptorMut::HashTree(descriptor) = header.appended_descriptor_mut()? else {
         return Err(Error::NoHashTreeDescriptor);

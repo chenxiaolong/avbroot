@@ -57,11 +57,17 @@ fn read_avb_image(path: &Path) -> Result<(AvbInfo, BufReader<File>)> {
     Ok((info, reader))
 }
 
-fn write_avb_image(file: PSeekFile, info: &mut AvbInfo) -> Result<()> {
+fn write_avb_image(file: PSeekFile, info: &mut AvbInfo, recompute_size: bool) -> Result<()> {
     let mut writer = BufWriter::new(file);
 
     if let Some(f) = &mut info.footer {
-        avb::write_appended_image(&mut writer, &info.header, f, info.image_size)
+        let image_size = if recompute_size {
+            None
+        } else {
+            Some(info.image_size)
+        };
+
+        avb::write_appended_image(&mut writer, &info.header, f, image_size)
             .context("Failed to write appended AVB image")?;
     } else {
         avb::write_root_image(&mut writer, &info.header, 4096)
@@ -625,7 +631,7 @@ fn pack_subcommand(cli: &PackCli, cancel_signal: &AtomicBool) -> Result<()> {
 
     sign_or_clear(&mut info, &orig_header, &cli.key)?;
 
-    write_avb_image(file, &mut info)?;
+    write_avb_image(file, &mut info, cli.recompute_size)?;
 
     // We display the info at the very end after both the header and footer are
     // updated so that incorrect/incomplete information isn't shown.
@@ -659,7 +665,7 @@ fn repack_subcommand(cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> 
 
     sign_or_clear(&mut info, &orig_header, &cli.key)?;
 
-    write_avb_image(file, &mut info)?;
+    write_avb_image(file, &mut info, false)?;
 
     // We display the info at the very end after both the header and footer are
     // updated so that incorrect/incomplete information isn't shown.
@@ -832,6 +838,15 @@ struct PackCli {
     /// Appended AVB images require a raw image.
     #[arg(long, value_name = "FILE", value_parser, default_value = "raw.img")]
     input_raw: PathBuf,
+
+    /// Recompute image size.
+    ///
+    /// By default, it is assumed that the image has a fixed size specified by
+    /// the image_size top-level field in the AVB info TOML. If flag is passed,
+    /// then that field is ignored and the smallest possible output image will
+    /// be created.
+    #[arg(long)]
+    recompute_size: bool,
 
     #[command(flatten)]
     key: KeyGroup,
