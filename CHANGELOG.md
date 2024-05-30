@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add new `--recompute-size` option to `avbroot avb pack` to automatically recompute the image size for resizable images ([Discussion #294], [PR #296])
+
 ### Version 3.2.1
 
 * Increase hash tree and FEC size limits to accommodate partition images up to 8 GiB ([Issue #291], [PR #293])
@@ -181,6 +185,7 @@ Behind-the-scenes changes:
 [Discussion #195]: https://github.com/chenxiaolong/avbroot/discussions/195
 [Discussion #235]: https://github.com/chenxiaolong/avbroot/discussions/235
 [Discussion #286]: https://github.com/chenxiaolong/avbroot/discussions/286
+[Discussion #294]: https://github.com/chenxiaolong/avbroot/discussions/294
 [Issue #138]: https://github.com/chenxiaolong/avbroot/issues/138
 [Issue #144]: https://github.com/chenxiaolong/avbroot/issues/144
 [Issue #145]: https://github.com/chenxiaolong/avbroot/issues/145
@@ -284,3 +289,4 @@ Behind-the-scenes changes:
 [PR #288]: https://github.com/chenxiaolong/avbroot/pull/288
 [PR #289]: https://github.com/chenxiaolong/avbroot/pull/289
 [PR #293]: https://github.com/chenxiaolong/avbroot/pull/293
+[PR #296]: https://github.com/chenxiaolong/avbroot/pull/296
