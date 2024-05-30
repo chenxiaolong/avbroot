@@ -60,7 +60,7 @@ fn read_avb_image(path: &Path) -> Result<(AvbInfo, BufReader<File>)> {
 fn write_avb_image(file: PSeekFile, info: &mut AvbInfo, recompute_size: bool) -> Result<()> {
     let mut writer = BufWriter::new(file);
 
-    if let Some(f) = &mut info.footer {
+    info.image_size = if let Some(f) = &mut info.footer {
         let image_size = if recompute_size {
             None
         } else {
@@ -68,11 +68,11 @@ fn write_avb_image(file: PSeekFile, info: &mut AvbInfo, recompute_size: bool) ->
         };
 
         avb::write_appended_image(&mut writer, &info.header, f, image_size)
-            .context("Failed to write appended AVB image")?;
+            .context("Failed to write appended AVB image")?
     } else {
         avb::write_root_image(&mut writer, &info.header, 4096)
-            .context("Failed to write root AVB image")?;
-    }
+            .context("Failed to write root AVB image")?
+    };
 
     writer.flush().context("Failed to flush writes")?;
 
@@ -637,6 +637,10 @@ fn pack_subcommand(cli: &PackCli, cancel_signal: &AtomicBool) -> Result<()> {
     // updated so that incorrect/incomplete information isn't shown.
     display_info(&cli.display, &info);
 
+    if let Some(path) = &cli.output_info {
+        write_info(path, &info)?;
+    }
+
     Ok(())
 }
 
@@ -832,6 +836,13 @@ struct PackCli {
     /// For root images, all header descriptor fields are left unmodified.
     #[arg(long, value_name = "FILE", value_parser, default_value = "avb.toml")]
     input_info: PathBuf,
+
+    /// Path to output AVB info TOML.
+    ///
+    /// If specified, the AVB info containing all recomputed fields will be
+    /// written to this file. This can point to the same file as --input-info.
+    #[arg(long, value_name = "FILE", value_parser)]
+    output_info: Option<PathBuf>,
 
     /// Path to input raw image.
     ///
