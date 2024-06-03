@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.2.2
 
 * Add new `--recompute-size` option to `avbroot avb pack` to automatically recompute the image size for resizable images ([Discussion #294], [PR #296])
 * Add new `--output-info` option to `avbroot avb pack` to write a new `avb.toml` file containing computed values ([PR #297])
