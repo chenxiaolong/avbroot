@@ -11,6 +11,7 @@
 
 * Add new `--recompute-size` option to `avbroot avb pack` to automatically recompute the image size for resizable images ([Discussion #294], [PR #296])
 * Add new `--output-info` option to `avbroot avb pack` to write a new `avb.toml` file containing computed values ([PR #297])
+* Add support for upcoming Magisk Canary 27003 ([Issue #301], [PR #268])
 
 ### Version 3.2.1
 
@@ -205,6 +206,7 @@ Behind-the-scenes changes:
 [Issue #278]: https://github.com/chenxiaolong/avbroot/issues/278
 [Issue #285]: https://github.com/chenxiaolong/avbroot/issues/285
 [Issue #291]: https://github.com/chenxiaolong/avbroot/issues/291
+[Issue #301]: https://github.com/chenxiaolong/avbroot/issues/301
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -283,6 +285,7 @@ Behind-the-scenes changes:
 [PR #256]: https://github.com/chenxiaolong/avbroot/pull/256
 [PR #257]: https://github.com/chenxiaolong/avbroot/pull/257
 [PR #261]: https://github.com/chenxiaolong/avbroot/pull/261
+[PR #268]: https://github.com/chenxiaolong/avbroot/pull/268
 [PR #276]: https://github.com/chenxiaolong/avbroot/pull/276
 [PR #277]: https://github.com/chenxiaolong/avbroot/pull/277
 [PR #279]: https://github.com/chenxiaolong/avbroot/pull/279
