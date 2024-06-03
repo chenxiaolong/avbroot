@@ -70,7 +70,11 @@ pub enum Error {
     #[error("XZ stream error")]
     XzStream(#[from] liblzma::stream::Error),
     #[error("Zip error")]
-    Zip(#[from] ZipError),
+    Zip(#[source] ZipError),
+    #[error("Zip error for entry name: {0:?}")]
+    ZipEntryName(String, #[source] ZipError),
+    #[error("Zip error for entry index #{0}")]
+    ZipEntryIndex(usize, #[source] ZipError),
     #[error("I/O error")]
     Io(#[from] io::Error),
     #[error("File I/O error")]
@@ -157,6 +161,13 @@ impl MagiskRootPatcher {
     const VER_XZ_BACKUP: Range<u32> =
         26403..Self::VERS_SUPPORTED[Self::VERS_SUPPORTED.len() - 1].end;
 
+    const ZIP_LIBMAGISK: &'static str = "lib/arm64-v8a/libmagisk.so";
+    const ZIP_LIBMAGISK32: &'static str = "lib/armeabi-v7a/libmagisk32.so";
+    const ZIP_LIBMAGISK64: &'static str = "lib/arm64-v8a/libmagisk64.so";
+    const ZIP_MAGISKINIT: &'static str = "lib/arm64-v8a/libmagiskinit.so";
+    const ZIP_STUB: &'static str = "assets/stub.apk";
+    const ZIP_UTIL_FUNCTIONS: &'static str = "assets/util_functions.sh";
+
     pub fn new(
         path: &Path,
         preinit_device: Option<&str>,
@@ -208,8 +219,10 @@ impl MagiskRootPatcher {
     fn get_version(path: &Path) -> Result<u32> {
         let reader = File::open(path).map_err(|e| Error::File(path.to_owned(), e))?;
         let reader = BufReader::new(reader);
-        let mut zip = ZipArchive::new(reader)?;
-        let entry = zip.by_name("assets/util_functions.sh")?;
+        let mut zip = ZipArchive::new(reader).map_err(Error::Zip)?;
+        let entry = zip
+            .by_name(Self::ZIP_UTIL_FUNCTIONS)
+            .map_err(|e| Error::ZipEntryName(Self::ZIP_UTIL_FUNCTIONS.to_owned(), e))?;
         let mut entry = BufReader::new(entry);
         let mut line = String::new();
 
@@ -384,7 +397,7 @@ impl BootImagePatch for MagiskRootPatcher {
     fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
         let zip_reader =
             File::open(&self.apk_path).map_err(|e| Error::File(self.apk_path.clone(), e))?;
-        let mut zip = ZipArchive::new(BufReader::new(zip_reader))?;
+        let mut zip = ZipArchive::new(BufReader::new(zip_reader)).map_err(Error::Zip)?;
 
         // Load the first ramdisk. If it doesn't exist, we have to generate one
         // from scratch.
@@ -413,7 +426,9 @@ impl BootImagePatch for MagiskRootPatcher {
 
         // Add magiskinit.
         {
-            let mut zip_entry = zip.by_name("lib/arm64-v8a/libmagiskinit.so")?;
+            let mut zip_entry = zip
+                .by_name(Self::ZIP_MAGISKINIT)
+                .map_err(|e| Error::ZipEntryName(Self::ZIP_MAGISKINIT.to_owned(), e))?;
             let mut data = vec![];
             zip_entry.read_to_end(&mut data)?;
 
@@ -425,34 +440,32 @@ impl BootImagePatch for MagiskRootPatcher {
         }
 
         let mut xz_files = HashMap::<&str, &[u8]>::new();
-        if zip.file_names().any(|n| n == "lib/arm64-v8a/libmagisk.so") {
+        if zip.file_names().any(|n| n == Self::ZIP_LIBMAGISK) {
             // Newer Magisk versions only include a single binary for the target
             // ABI in the ramdisk. fb5ee86615ed3df830e8538f8b39b1b133caea34.
-            xz_files.insert("lib/arm64-v8a/libmagisk.so", b"overlay.d/sbin/magisk.xz");
+            debug!("Single libmagisk");
+            xz_files.insert(Self::ZIP_LIBMAGISK, b"overlay.d/sbin/magisk.xz");
         } else {
             // Older Magisk versions include the 64-bit binary and, optionally,
             // the 32-bit binary if the device supports it. We unconditionally
             // include the magisk32 because the boot image itself doesn't have
             // sufficient information to determine if a device is 64-bit only.
-            xz_files.insert(
-                "lib/armeabi-v7a/libmagisk32.so",
-                b"overlay.d/sbin/magisk32.xz",
-            );
-            xz_files.insert(
-                "lib/arm64-v8a/libmagisk64.so",
-                b"overlay.d/sbin/magisk64.xz",
-            );
+            debug!("Split libmagisk32/libmagisk64");
+            xz_files.insert(Self::ZIP_LIBMAGISK32, b"overlay.d/sbin/magisk32.xz");
+            xz_files.insert(Self::ZIP_LIBMAGISK64, b"overlay.d/sbin/magisk64.xz");
         }
 
         // Add stub apk, which only exists after Magisk commit
         // ad0e6511e11ebec65aa9b5b916e1397342850319.
-        if zip.file_names().any(|n| n == "assets/stub.apk") {
+        if zip.file_names().any(|n| n == Self::ZIP_STUB) {
             debug!("Magisk stub found");
-            xz_files.insert("assets/stub.apk", b"overlay.d/sbin/stub.xz");
+            xz_files.insert(Self::ZIP_STUB, b"overlay.d/sbin/stub.xz");
         }
 
         for (source, target) in xz_files {
-            let reader = zip.by_name(source)?;
+            let reader = zip
+                .by_name(source)
+                .map_err(|e| Error::ZipEntryName(source.to_owned(), e))?;
             let buf = Self::xz_compress(reader, cancel_signal)?;
 
             entries.push(CpioEntry::new_file(target, 0o644, CpioEntryData::Data(buf)));
@@ -571,10 +584,12 @@ impl OtaCertPatcher {
                 continue;
             };
 
-            let mut zip = ZipArchive::new(Cursor::new(&data))?;
+            let mut zip = ZipArchive::new(Cursor::new(&data)).map_err(Error::Zip)?;
 
             for index in 0..zip.len() {
-                let zip_entry = zip.by_index(index)?;
+                let zip_entry = zip
+                    .by_index(index)
+                    .map_err(|e| Error::ZipEntryIndex(index, e))?;
                 if !zip_entry.name().ends_with(".x509.pem") {
                     debug!("Skipping invalid entry path: {}", zip_entry.name());
                     continue;
