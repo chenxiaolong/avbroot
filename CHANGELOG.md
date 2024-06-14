@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.2.3
 
 * Add prebuilt binary for Android (aarch64) ([PR #304])
 
