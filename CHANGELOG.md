@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add prebuilt binary for Android (aarch64) ([PR #304])
+
 ### Version 3.2.2
 
 * Add new `--recompute-size` option to `avbroot avb pack` to automatically recompute the image size for resizable images ([Discussion #294], [PR #296])
@@ -295,3 +299,4 @@ Behind-the-scenes changes:
 [PR #293]: https://github.com/chenxiaolong/avbroot/pull/293
 [PR #296]: https://github.com/chenxiaolong/avbroot/pull/296
 [PR #297]: https://github.com/chenxiaolong/avbroot/pull/297
+[PR #304]: https://github.com/chenxiaolong/avbroot/pull/304
