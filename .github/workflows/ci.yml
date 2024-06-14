@@ -19,6 +19,7 @@ jobs:
       # https://github.com/rust-lang/rust/issues/78210
       RUSTFLAGS: -C strip=symbols -C target-feature=+crt-static
       TARGETS: ${{ join(matrix.artifact.targets, ' ') || matrix.artifact.name }}
+      ANDROID_API: ${{ matrix.artifact.android_api }}
     strategy:
       fail-fast: false
       matrix:
@@ -33,12 +34,38 @@ jobs:
               - aarch64-apple-darwin
               - x86_64-apple-darwin
             combine: lipo
+          # ubuntu-latest is not 24.04 yet and 22.04's qemu-user-static segfaults.
+          - os: ubuntu-24.04
+            name: aarch64-linux-android31
+            targets:
+              - aarch64-linux-android
+            android_api: '31'
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
           # For git describe
           fetch-depth: 0
+
+      - name: Install qemu-user-static
+        if: ${{ contains(matrix.artifact.name, 'android') }}
+        shell: bash
+        run: |
+          sudo apt-get -y update
+          sudo apt-get -y install qemu-user-static
+
+      - name: Set Android temporary directory
+        if: ${{ contains(matrix.artifact.name, 'android') }}
+        shell: bash
+        run: |
+          echo "TMPDIR=/tmp" >> "${GITHUB_ENV}"
+
+      - name: Install cargo-android
+        shell: bash
+        run: |
+          cargo install \
+              --git https://github.com/chenxiaolong/cargo-android \
+              --tag v0.1.1
 
       - name: Get version
         id: get_version
@@ -63,7 +90,8 @@ jobs:
         shell: bash
         run: |
           for target in ${TARGETS}; do
-              cargo clippy --release --workspace --features static \
+              cargo android \
+                  clippy --release --workspace --features static \
                   --target "${target}"
           done
 
@@ -71,7 +99,8 @@ jobs:
         shell: bash
         run: |
           for target in ${TARGETS}; do
-              cargo build --release --workspace --features static \
+              cargo android \
+                  build --release --workspace --features static \
                   --target "${target}"
           done
 
@@ -79,7 +108,8 @@ jobs:
         shell: bash
         run: |
           for target in ${TARGETS}; do
-              cargo test --release --workspace --features static \
+              cargo android \
+                  test --release --workspace --features static \
                   --target "${target}"
           done
 
@@ -87,7 +117,8 @@ jobs:
         shell: bash
         run: |
           for target in ${TARGETS}; do
-              cargo run --release -p e2e --features static \
+              cargo android \
+                  run --release -p e2e --features static \
                   --target "${target}" \
                   -- test -a -c e2e/e2e.toml
           done

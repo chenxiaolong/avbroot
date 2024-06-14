@@ -440,6 +440,16 @@ Debug builds work too, but they will run significantly slower (in the sha256 com
 
 By default, the executable links to the system's bzip2 and liblzma libraries, which are the only external libraries avbroot depends on. To compile and statically link these two libraries, pass in `--features static`.
 
+### Android cross-compilation
+
+To cross-compile for Android, install [cargo-android](https://github.com/chenxiaolong/cargo-android) and use the `cargo android` wrapper. To make a release build for aarch64, run:
+
+```bash
+cargo android build --release --target aarch64-linux-android
+```
+
+It is possible to run the tests if the host is running Linux, qemu-user-static is installed, and the executable is built with `RUSTFLAGS=-C target-feature=+crt-static` and `--features static`.
+
 ## Verifying digital signatures
 
 First, save the public key to a file listing the keys to be trusted. This is the same key listed in [the author's profile](https://github.com/chenxiaolong/).
