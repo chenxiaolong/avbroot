@@ -252,3 +252,13 @@ avbroot hash-tree verify -i <input data file> -H <input hash tree file>
 ```
 
 This will check if the input file has any corrupted blocks. Currently, the command cannot report which specific blocks are corrupted, only whether the file is valid.
+
+## `avbroot payload`
+
+### Showing payload header information
+
+```bash
+avbroot payload info -i <payload>
+```
+
+This subcommand shows all of the payload header fields (which will likely be extremely long).

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tracing::{debug, Level};
 use tracing_subscriber::fmt::{format::Writer, time::FormatTime};
 
-use crate::cli::{avb, boot, completion, cpio, fec, hashtree, key, ota};
+use crate::cli::{avb, boot, completion, cpio, fec, hashtree, key, ota, payload};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
@@ -28,6 +28,7 @@ pub enum Command {
     HashTree(hashtree::HashTreeCli),
     Key(key::KeyCli),
     Ota(ota::OtaCli),
+    Payload(payload::PayloadCli),
     /// (Deprecated: Use `avbroot ota patch` instead.)
     Patch(ota::PatchCli),
     /// (Deprecated: Use `avbroot ota extract` instead.)
@@ -163,6 +164,7 @@ pub fn main(logging_initialized: &AtomicBool, cancel_signal: &AtomicBool) -> Res
         Command::HashTree(c) => hashtree::hash_tree_main(&c, cancel_signal),
         Command::Key(c) => key::key_main(&c),
         Command::Ota(c) => ota::ota_main(&c, cancel_signal),
+        Command::Payload(c) => payload::payload_main(&c),
         // Deprecated aliases.
         Command::Patch(c) => ota::patch_subcommand(&c, cancel_signal),
         Command::Extract(c) => ota::extract_subcommand(&c, cancel_signal),

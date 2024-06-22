@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -12,3 +12,4 @@ pub mod fec;
 pub mod hashtree;
 pub mod key;
 pub mod ota;
+pub mod payload;
