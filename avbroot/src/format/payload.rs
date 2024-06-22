@@ -890,6 +890,21 @@ fn compress_chunk(raw_data: &[u8], cancel_signal: &AtomicBool) -> Result<(Vec<u8
     Ok((data, digest_compressed))
 }
 
+fn compress_cow_size(mut raw_data: &[u8], block_size: u32) -> u64 {
+    let mut total = 0;
+
+    while !raw_data.is_empty() {
+        let n = raw_data.len().min(block_size as usize);
+        let compressed = lz4_flex::block::compress(&raw_data[..n]);
+
+        total += compressed.len().min(n) as u64;
+
+        raw_data = &raw_data[n..];
+    }
+
+    total
+}
+
 /// Compress the image and return the corresponding information to insert into
 /// the payload manifest's [`PartitionUpdate`] instance. The uncompressed data
 /// is split into 2 MiB chunks, which are read and compressed in parallel, and
@@ -897,13 +912,21 @@ fn compress_chunk(raw_data: &[u8], cancel_signal: &AtomicBool) -> Result<(Vec<u8
 /// a corresponding [`InstallOperation`] in the return value. The caller must
 /// update [`InstallOperation::data_offset`] in each operation manually because
 /// the initial values are relative to 0.
+///
+/// If `need_cow_estimate` is true, the VABC CoW v2 + lz4 size estimate will be
+/// computed. The caller must update [`PartitionUpdate::estimate_cow_size`] with
+/// this value or else update_engine may fail to flash the partition due to
+/// running out of space on the CoW block device. CoW v2 + other algorithms and
+/// also CoW v3 are currently unsupported because there currently are no known
+/// OTAs that use those configurations.
 pub fn compress_image(
     input: &(dyn ReadSeekReopen + Sync),
     output: &(dyn WriteSeekReopen + Sync),
     partition_name: &str,
     block_size: u32,
+    need_cow_estimate: bool,
     cancel_signal: &AtomicBool,
-) -> Result<(PartitionInfo, Vec<InstallOperation>)> {
+) -> Result<(PartitionInfo, Vec<InstallOperation>, Option<u64>)> {
     const CHUNK_SIZE: u64 = 2 * 1024 * 1024;
     const CHUNK_GROUP: u64 = 32;
 
@@ -921,6 +944,7 @@ pub fn compress_image(
     let chunks_total = file_size.div_ceil(CHUNK_SIZE);
     let mut bytes_compressed = 0;
     let mut context_uncompressed = Context::new(&ring::digest::SHA256);
+    let mut cow_estimate = 0;
     let mut operations = vec![];
 
     // Read the file one group at a time. This allows for some parallelization
@@ -957,8 +981,13 @@ pub fn compress_image(
         let mut compressed_data_group = uncompressed_data_group
             .into_par_iter()
             .map(
-                |(raw_offset, raw_data)| -> Result<(Vec<u8>, InstallOperation)> {
+                |(raw_offset, raw_data)| -> Result<(Vec<u8>, InstallOperation, u64)> {
                     let (data, digest_compressed) = compress_chunk(&raw_data, cancel_signal)?;
+                    let cow_size = if need_cow_estimate {
+                        compress_cow_size(&raw_data, block_size)
+                    } else {
+                        0
+                    };
 
                     let extent = Extent {
                         start_block: Some(raw_offset / u64::from(block_size)),
@@ -971,19 +1000,20 @@ pub fn compress_image(
                     operation.dst_extents.push(extent);
                     operation.data_sha256_hash = Some(digest_compressed.as_ref().to_vec());
 
-                    Ok((data, operation))
+                    Ok((data, operation, cow_size))
                 },
             )
             .collect::<Result<Vec<_>>>()?;
 
-        for (data, operation) in &mut compressed_data_group {
+        for (data, operation, cow_size) in &mut compressed_data_group {
             operation.data_offset = Some(bytes_compressed);
             bytes_compressed += data.len() as u64;
+            cow_estimate += *cow_size;
         }
 
         let group_operations = compressed_data_group
             .into_par_iter()
-            .map(|(data, operation)| -> Result<InstallOperation> {
+            .map(|(data, operation, _)| -> Result<InstallOperation> {
                 let mut writer = output.reopen_boxed()?;
                 writer.seek(SeekFrom::Start(operation.data_offset.unwrap()))?;
                 writer.write_all(&data)?;
@@ -1001,7 +1031,13 @@ pub fn compress_image(
         hash: Some(digest_uncompressed.as_ref().to_vec()),
     };
 
-    Ok((partition_info, operations))
+    let cow_estimate = if need_cow_estimate {
+        Some(cow_estimate)
+    } else {
+        None
+    };
+
+    Ok((partition_info, operations, cow_estimate))
 }
 
 fn extents_sorted(operations: &[InstallOperation]) -> bool {

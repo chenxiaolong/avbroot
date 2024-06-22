@@ -674,12 +674,40 @@ fn compress_image(
 
     info!("Compressing full image: {name}");
 
-    // Otherwise, compress the entire image.
-    let (partition_info, operations) =
-        payload::compress_image(&*file, &writer, name, block_size, cancel_signal)?;
+    // Otherwise, compress the entire image. If VABC is enabled, we need to
+    // update the CoW size estimate or else the CoW block device may run out of
+    // space during flashing.
+    let need_cow = partition.estimate_cow_size.is_some();
+    if need_cow {
+        info!("Needs updated CoW size estimate: {name}");
+
+        // Only CoW v2 + lz4 seems to exist in the wild currently, so that is
+        // all we support.
+        let Some(dpm) = &header.manifest.dynamic_partition_metadata else {
+            bail!("Dynamic partition metadata is missing");
+        };
+
+        if !dpm.vabc_enabled() {
+            bail!("Partition has CoW estimate, but VABC is disabled: {name}");
+        }
+
+        let cow_version = dpm.cow_version();
+        if dpm.cow_version() != 2 {
+            bail!("Unsupported CoW version: {cow_version}");
+        }
+
+        let compression = dpm.vabc_compression_param();
+        if compression != "lz4" {
+            bail!("Unsupported VABC compression: {compression}");
+        }
+    }
+
+    let (partition_info, operations, cow_estimate) =
+        payload::compress_image(&*file, &writer, name, block_size, need_cow, cancel_signal)?;
 
     partition.new_partition_info = Some(partition_info);
     partition.operations = operations;
+    partition.estimate_cow_size = cow_estimate;
 
     *file = writer;
 

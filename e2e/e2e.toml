@@ -46,8 +46,8 @@ data.version = "vendor_v4"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v4_gki.hashes]
-original = "24a0a62cc08b96563f4872aee2fdd4a84d1a977b55c326dd9d4ddd92a1d326ea"
-patched = "29889670efea78bace221742b19e8ace88b67137fc2f46dcd9dbdf67e4e42267"
+original = "dabf4426c2de58730d7627eaf857b96d83464100641b7f60a8a69c89e94c7fcc"
+patched = "b299d8542975c9b2509344dce5be813890fd6844a78752af94e6ad9126175051"
 
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
@@ -80,8 +80,8 @@ data.version = "vendor_v4"
 data.ramdisks = [["init", "otacerts", "first_stage", "dsu_key_dir"], ["dlkm"]]
 
 [profile.pixel_v4_non_gki.hashes]
-original = "0e7d0924a68d46e00abe96abfa0e5f3a98d5d15a32bef7401b91fca9a19748e8"
-patched = "1a2f53d9ac3a1da75e5e7502110bda437c5a725764f16656c564d42460136279"
+original = "58579f0fa8aa1b144a8db2ce64a2a0fac297da4b2a36293dcbf351dc13addf70"
+patched = "cb764d3d54cafca32086b90aa2d86a0c1223fb8d95e2429fe9dee408fc682de2"
 
 # Google Pixel 4a 5G
 # What's unique: boot (boot v3) + vendor_boot (vendor v3)
@@ -115,8 +115,8 @@ data.version = "vendor_v3"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v3.hashes]
-original = "533e6f233cb98c98c945044c2ee81a6069e66baee6f7dbcfbf7523795a11215e"
-patched = "1eeae9dba0302c2d469bd03c8bccdc0469c171204dbd676a20cb6620d2d11c5c"
+original = "42b1a8e9d902faee5ecede586ef7adad45b1599a61b92a4fb1f5d586d608a99f"
+patched = "9b8a61e315a46c8916a9fa2e90b684ced7ca379b77db8bbfc762047de52e862c"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)
@@ -144,5 +144,5 @@ data.type = "vbmeta"
 data.deps = ["system"]
 
 [profile.pixel_v2.hashes]
-original = "958dfa428abd2901178b90147903d7857ed78d6c016f6cb3af30d024a22a8f9a"
-patched = "b0d18ef350ca7b6499b7de4b0182f4ac3be7288ad238ce888708643e750f7631"
+original = "29c8775c5ee5693bbaf5cbd2762d437c8f7bdba427ad50d1bb041ab283518783"
+patched = "5cd63397b8e6d4658157673e168b5d571c0fe9ac594d6098ca706b4c49d19e9b"

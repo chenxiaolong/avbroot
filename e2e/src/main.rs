@@ -593,8 +593,14 @@ fn create_payload(
             .map(PSeekFile::new)
             .with_context(|| format!("Failed to create temp file for: {name}"))?;
 
-        let (partition_info, operations) =
-            payload::compress_image(file, &writer, name, 4096, cancel_signal)?;
+        let (partition_info, operations, cow_estimate) = payload::compress_image(
+            file,
+            &writer,
+            name,
+            4096,
+            dynamic_partitions_names.contains(name),
+            cancel_signal,
+        )?;
 
         compressed.insert(name, writer);
 
@@ -617,7 +623,7 @@ fn create_payload(
             fec_roots: None,
             version: None,
             merge_operations: vec![],
-            estimate_cow_size: None,
+            estimate_cow_size: cow_estimate,
         });
     }
 
@@ -638,7 +644,7 @@ fn create_payload(
                 }],
                 snapshot_enabled: Some(true),
                 vabc_enabled: Some(true),
-                vabc_compression_param: Some("gz".to_owned()),
+                vabc_compression_param: Some("lz4".to_owned()),
                 cow_version: Some(2),
                 vabc_feature_set: None,
             }),
@@ -960,6 +966,7 @@ impl KeySet {
 fn patch_image(
     input_file: &Path,
     output_file: &Path,
+    system_image_file: &Path,
     extra_args: &[&OsStr],
     keys: &KeySet,
     cancel_signal: &AtomicBool,
@@ -973,6 +980,9 @@ fn patch_image(
         input_file.as_os_str(),
         OsStr::new("--output"),
         output_file.as_os_str(),
+        OsStr::new("--replace"),
+        OsStr::new("system"),
+        system_image_file.as_os_str(),
         OsStr::new("--key-avb"),
         keys.avb_key_file.path().as_os_str(),
         OsStr::new("--pass-avb-file"),
@@ -1119,9 +1129,15 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
             .with_context(|| format!("[{name}] Failed to verify original OTA hash"))?;
 
         // Patch once using Magisk.
+        extract_image(&out_original, &profile_dir, cancel_signal)
+            .with_context(|| format!("[{name}] Failed to extract OTA"))?;
+
+        let system_image = profile_dir.join("system.img");
+
         patch_image(
             &out_original,
             &out_magisk,
+            &system_image,
             &args_magisk,
             &test_keys,
             cancel_signal,
@@ -1149,6 +1165,7 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
         patch_image(
             &out_original,
             &out_prepatched,
+            &system_image,
             &args_prepatched,
             &test_keys,
             cancel_signal,
