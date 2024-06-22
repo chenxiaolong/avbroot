@@ -7,6 +7,11 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Recompute CoW size estimate when replacing dynamic partitions ([Issue #306], [PR #307])
+  * Fixes out of space error when flashing a patched OTA that uses `--replace` to replace a dynamic partition (eg. `system`) with a larger or more incompressible image
+
 ### Version 3.2.3
 
 * Add prebuilt binary for Android (aarch64) ([PR #304])
@@ -211,6 +216,7 @@ Behind-the-scenes changes:
 [Issue #285]: https://github.com/chenxiaolong/avbroot/issues/285
 [Issue #291]: https://github.com/chenxiaolong/avbroot/issues/291
 [Issue #301]: https://github.com/chenxiaolong/avbroot/issues/301
+[Issue #306]: https://github.com/chenxiaolong/avbroot/issues/306
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -300,3 +306,4 @@ Behind-the-scenes changes:
 [PR #296]: https://github.com/chenxiaolong/avbroot/pull/296
 [PR #297]: https://github.com/chenxiaolong/avbroot/pull/297
 [PR #304]: https://github.com/chenxiaolong/avbroot/pull/304
+[PR #307]: https://github.com/chenxiaolong/avbroot/pull/307
