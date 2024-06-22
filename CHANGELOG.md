@@ -11,6 +11,7 @@
 
 * Recompute CoW size estimate when replacing dynamic partitions ([Issue #306], [PR #307])
   * Fixes out of space error when flashing a patched OTA that uses `--replace` to replace a dynamic partition (eg. `system`) with a larger or more incompressible image
+* Add `avbroot payload info` subcommand for inspecting `payload.bin` headers ([PR #309])
 
 ### Version 3.2.3
 
@@ -307,3 +308,4 @@ Behind-the-scenes changes:
 [PR #297]: https://github.com/chenxiaolong/avbroot/pull/297
 [PR #304]: https://github.com/chenxiaolong/avbroot/pull/304
 [PR #307]: https://github.com/chenxiaolong/avbroot/pull/307
+[PR #309]: https://github.com/chenxiaolong/avbroot/pull/309
