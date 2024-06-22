@@ -1032,7 +1032,10 @@ pub fn compress_image(
     };
 
     let cow_estimate = if need_cow_estimate {
-        Some(cow_estimate)
+        // Because lz4_flex compresses better than official lz4.
+        let fudge = cow_estimate / 100;
+
+        Some(cow_estimate + fudge)
     } else {
         None
     };
