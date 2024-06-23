@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.3.0
 
 * Recompute CoW size estimate when replacing dynamic partitions ([Issue #306], [PR #307])
   * Fixes out of space error when flashing a patched OTA that uses `--replace` to replace a dynamic partition (eg. `system`) with a larger or more incompressible image
