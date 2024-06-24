@@ -229,37 +229,35 @@ impl AlgorithmType {
     }
 
     pub fn sign(self, key: &RsaPrivateKey, digest: &[u8]) -> Result<Vec<u8>> {
-        let signature = match self {
-            Self::None | Self::Unknown(_) => vec![],
+        match self {
+            Self::None => Ok(vec![]),
+            Self::Unknown(_) => Err(Error::UnsupportedAlgorithm(self)),
             Self::Sha256Rsa2048 | Self::Sha256Rsa4096 | Self::Sha256Rsa8192 => {
                 let scheme = Pkcs1v15Sign::new::<Sha256>();
-                key.sign(scheme, digest).map_err(Error::RsaSign)?
+                Ok(key.sign(scheme, digest).map_err(Error::RsaSign)?)
             }
             Self::Sha512Rsa2048 | Self::Sha512Rsa4096 | Self::Sha512Rsa8192 => {
                 let scheme = Pkcs1v15Sign::new::<Sha512>();
-                key.sign(scheme, digest).map_err(Error::RsaSign)?
+                Ok(key.sign(scheme, digest).map_err(Error::RsaSign)?)
             }
-        };
-
-        Ok(signature)
+        }
     }
 
     pub fn verify(self, key: &RsaPublicKey, digest: &[u8], signature: &[u8]) -> Result<()> {
         match self {
-            Self::None | Self::Unknown(_) => {}
+            Self::None => Ok(()),
+            Self::Unknown(_) => Err(Error::UnsupportedAlgorithm(self)),
             Self::Sha256Rsa2048 | Self::Sha256Rsa4096 | Self::Sha256Rsa8192 => {
                 let scheme = Pkcs1v15Sign::new::<Sha256>();
                 key.verify(scheme, digest, signature)
-                    .map_err(Error::RsaVerify)?;
+                    .map_err(Error::RsaVerify)
             }
             Self::Sha512Rsa2048 | Self::Sha512Rsa4096 | Self::Sha512Rsa8192 => {
                 let scheme = Pkcs1v15Sign::new::<Sha512>();
                 key.verify(scheme, digest, signature)
-                    .map_err(Error::RsaVerify)?;
+                    .map_err(Error::RsaVerify)
             }
         }
-
-        Ok(())
     }
 }
 
