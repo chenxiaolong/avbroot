@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix (unreachable) minor error handling logic when attempting to use unsupported AVB signing algorithms ([PR #311])
+
 ### Version 3.3.0
 
 * Recompute CoW size estimate when replacing dynamic partitions ([Issue #306], [PR #307])
@@ -309,3 +313,4 @@ Behind-the-scenes changes:
 [PR #304]: https://github.com/chenxiaolong/avbroot/pull/304
 [PR #307]: https://github.com/chenxiaolong/avbroot/pull/307
 [PR #309]: https://github.com/chenxiaolong/avbroot/pull/309
+[PR #311]: https://github.com/chenxiaolong/avbroot/pull/311
