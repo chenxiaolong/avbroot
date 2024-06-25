@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -12,11 +12,11 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use num_traits::ToPrimitive;
 use ring::digest::Context;
-use rsa::RsaPrivateKey;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
+    crypto::RsaSigningKey,
     format::{
         avb::{self, Descriptor, Header},
         padding,
@@ -765,7 +765,7 @@ impl BootImageV3Through4 {
     /// Sign the boot image with a legacy VTS signature. Returns true if the
     /// image was successfully signed. Returns false if there's no vbmeta
     /// structure to sign in [`V4Extra::signature`].
-    pub fn sign(&mut self, key: &RsaPrivateKey) -> Result<bool> {
+    pub fn sign(&mut self, key: &RsaSigningKey) -> Result<bool> {
         let mut context = Context::new(&ring::digest::SHA256);
         let image_size;
 

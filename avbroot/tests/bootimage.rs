@@ -7,6 +7,7 @@ use std::io::Cursor;
 
 use avbroot::{
     self,
+    crypto::RsaSigningKey,
     format::{
         avb::{AlgorithmType, Descriptor, HashDescriptor, Header},
         bootimage::{
@@ -19,7 +20,7 @@ use avbroot::{
 use pkcs8::DecodePrivateKey;
 use rsa::RsaPrivateKey;
 
-fn get_test_key() -> RsaPrivateKey {
+fn get_test_key() -> RsaSigningKey {
     let data = include_str!(concat!(
         env!("CARGO_WORKSPACE_DIR"),
         "/e2e/keys/TEST_KEY_DO_NOT_USE_avb.key",
@@ -29,7 +30,8 @@ fn get_test_key() -> RsaPrivateKey {
         "/e2e/keys/TEST_KEY_DO_NOT_USE_avb.passphrase",
     ));
 
-    RsaPrivateKey::from_pkcs8_encrypted_pem(data, passphrase.trim_end()).unwrap()
+    let key = RsaPrivateKey::from_pkcs8_encrypted_pem(data, passphrase.trim_end()).unwrap();
+    RsaSigningKey::Internal(key)
 }
 
 fn repeat(s: &str, max_len: usize) -> String {

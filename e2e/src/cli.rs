@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 use avbroot::cli::args::{LogFormat, LogLevel};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Args)]
 pub struct ProfileGroup {
@@ -75,4 +75,28 @@ pub struct Cli {
     /// Output format for log messages.
     #[arg(long, global = true, value_name = "FORMAT", default_value_t = LogFormat::Medium)]
     pub log_format: LogFormat,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum PassSource {
+    Env,
+    File,
+}
+
+#[derive(Debug, Parser)]
+pub struct HelperCli {
+    /// Signature algorithm.
+    pub algorithm: String,
+
+    /// Public key.
+    #[arg(value_name = "FILE", value_parser)]
+    pub public_key: PathBuf,
+
+    /// Non-interactive password source.
+    #[arg(value_name = "SOURCE")]
+    pub pass_source: PassSource,
+
+    /// Non-interactive password source value.
+    #[arg(value_name = "VALUE", value_parser)]
+    pub pass_source_value: OsString,
 }

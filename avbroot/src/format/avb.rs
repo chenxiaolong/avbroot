@@ -16,12 +16,12 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use num_bigint_dig::{ModInverse, ToBigInt};
 use num_traits::{Pow, ToPrimitive};
 use ring::digest::{Algorithm, Context};
-use rsa::{traits::PublicKeyParts, BigUint, Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
+use rsa::{traits::PublicKeyParts, BigUint, RsaPublicKey};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256, Sha512};
 use thiserror::Error;
 
 use crate::{
+    crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
     escape,
     format::{
         fec::{self, Fec},
@@ -103,12 +103,9 @@ pub enum Error {
     UnsupportedAlgorithm(AlgorithmType),
     #[error("Hashing algorithm not supported: {0:?}")]
     UnsupportedHashAlgorithm(String),
-    #[error("Incorrect key size ({key_size} bytes) for algorithm {algo:?} ({} bytes)", algo.public_key_len())]
-    IncorrectKeySize {
-        key_size: usize,
-        algo: AlgorithmType,
-    },
-    #[error("RSA key size (0) is not compatible with any AVB signing algorithm")]
+    #[error("Incorrect key size ({}) for algorithm {1:?}", .0 * 8)]
+    IncorrectKeySize(usize, AlgorithmType),
+    #[error("RSA key size ({}) is not compatible with any AVB signing algorithm", .0 * 8)]
     UnsupportedKey(usize),
     #[error("Hash tree does not immediately follow image data")]
     HashTreeGap,
@@ -120,18 +117,18 @@ pub enum Error {
     MismatchedFecBlockSizes { data: u32, hash: u32 },
     #[error("Must have exactly one hash or hash tree descriptor")]
     NoAppendedDescriptor,
-    #[error("Failed to RSA sign digest")]
-    RsaSign(#[source] rsa::Error),
-    #[error("Failed to RSA verify signature")]
-    RsaVerify(#[source] rsa::Error),
     #[error("{0} byte image size is too small to fit header")]
     TooSmallForHeader(u64),
     #[error("{0} byte image size is too small to fit footer")]
     TooSmallForFooter(u64),
+    #[error("Crypto error")]
+    Crypto(#[from] crypto::Error),
     #[error("Hash tree error")]
     HashTree(#[from] hashtree::Error),
     #[error("FEC error")]
     Fec(#[from] fec::Error),
+    #[error("RSA error")]
+    Rsa(#[from] rsa::Error),
     #[error("I/O error")]
     Io(#[from] io::Error),
 }
@@ -156,6 +153,7 @@ pub enum AlgorithmType {
     Sha512Rsa2048,
     Sha512Rsa4096,
     Sha512Rsa8192,
+    #[serde(untagged)]
     Unknown(u32),
 }
 
@@ -186,16 +184,22 @@ impl AlgorithmType {
         }
     }
 
-    pub fn hash_len(self) -> usize {
+    pub fn to_digest_algorithm(self) -> Option<SignatureAlgorithm> {
         match self {
-            Self::None | Self::Unknown(_) => 0,
             Self::Sha256Rsa2048 | Self::Sha256Rsa4096 | Self::Sha256Rsa8192 => {
-                Sha256::output_size()
+                Some(SignatureAlgorithm::Sha256WithRsa)
             }
             Self::Sha512Rsa2048 | Self::Sha512Rsa4096 | Self::Sha512Rsa8192 => {
-                Sha512::output_size()
+                Some(SignatureAlgorithm::Sha512WithRsa)
             }
+            _ => None,
         }
+    }
+
+    pub fn digest_len(self) -> usize {
+        self.to_digest_algorithm()
+            .map(|a| a.digest_len())
+            .unwrap_or_default()
     }
 
     pub fn signature_len(self) -> usize {
@@ -217,47 +221,36 @@ impl AlgorithmType {
     }
 
     pub fn hash(self, data: &[u8]) -> Vec<u8> {
-        match self {
-            Self::None | Self::Unknown(_) => vec![],
-            Self::Sha256Rsa2048 | Self::Sha256Rsa4096 | Self::Sha256Rsa8192 => {
-                Sha256::digest(data).to_vec()
-            }
-            Self::Sha512Rsa2048 | Self::Sha512Rsa4096 | Self::Sha512Rsa8192 => {
-                Sha512::digest(data).to_vec()
-            }
-        }
+        let Some(algo) = self.to_digest_algorithm() else {
+            return vec![];
+        };
+
+        algo.hash(data)
     }
 
-    pub fn sign(self, key: &RsaPrivateKey, digest: &[u8]) -> Result<Vec<u8>> {
-        match self {
-            Self::None => Ok(vec![]),
-            Self::Unknown(_) => Err(Error::UnsupportedAlgorithm(self)),
-            Self::Sha256Rsa2048 | Self::Sha256Rsa4096 | Self::Sha256Rsa8192 => {
-                let scheme = Pkcs1v15Sign::new::<Sha256>();
-                Ok(key.sign(scheme, digest).map_err(Error::RsaSign)?)
-            }
-            Self::Sha512Rsa2048 | Self::Sha512Rsa4096 | Self::Sha512Rsa8192 => {
-                let scheme = Pkcs1v15Sign::new::<Sha512>();
-                Ok(key.sign(scheme, digest).map_err(Error::RsaSign)?)
-            }
-        }
+    pub fn sign(self, key: &RsaSigningKey, digest: &[u8]) -> Result<Vec<u8>> {
+        let Some(algo) = self.to_digest_algorithm() else {
+            return if self == Self::None {
+                Ok(vec![])
+            } else {
+                Err(Error::UnsupportedAlgorithm(self))
+            };
+        };
+
+        key.sign(algo, digest).map_err(|e| e.into())
     }
 
     pub fn verify(self, key: &RsaPublicKey, digest: &[u8], signature: &[u8]) -> Result<()> {
-        match self {
-            Self::None => Ok(()),
-            Self::Unknown(_) => Err(Error::UnsupportedAlgorithm(self)),
-            Self::Sha256Rsa2048 | Self::Sha256Rsa4096 | Self::Sha256Rsa8192 => {
-                let scheme = Pkcs1v15Sign::new::<Sha256>();
-                key.verify(scheme, digest, signature)
-                    .map_err(Error::RsaVerify)
-            }
-            Self::Sha512Rsa2048 | Self::Sha512Rsa4096 | Self::Sha512Rsa8192 => {
-                let scheme = Pkcs1v15Sign::new::<Sha512>();
-                key.verify(scheme, digest, signature)
-                    .map_err(Error::RsaVerify)
-            }
-        }
+        let Some(algo) = self.to_digest_algorithm() else {
+            return if self == Self::None {
+                Ok(())
+            } else {
+                Err(Error::UnsupportedAlgorithm(self))
+            };
+        };
+
+        key.verify_sig(algo, digest, signature)
+            .map_err(|e| e.into())
     }
 }
 
@@ -1459,7 +1452,7 @@ impl Header {
         result.ok_or(Error::NoAppendedDescriptor)
     }
 
-    pub fn set_algo_for_key(&mut self, key: &RsaPrivateKey) -> Result<()> {
+    pub fn set_algo_for_key(&mut self, key: &RsaSigningKey) -> Result<()> {
         let key_raw = encode_public_key(&key.to_public_key())?;
 
         for algo in [AlgorithmType::Sha256Rsa2048, AlgorithmType::Sha256Rsa4096] {
@@ -1479,30 +1472,17 @@ impl Header {
         self.public_key_metadata.clear();
     }
 
-    pub fn sign(&mut self, key: &RsaPrivateKey) -> Result<()> {
+    pub fn sign(&mut self, key: &RsaSigningKey) -> Result<()> {
         let key_raw = encode_public_key(&key.to_public_key())?;
 
-        // RustCrypto does not support 8192-bit keys.
-        match self.algorithm_type {
-            AlgorithmType::Sha256Rsa8192
-            | AlgorithmType::Sha512Rsa8192
-            | AlgorithmType::Unknown(_) => {
-                return Err(Error::UnsupportedAlgorithm(self.algorithm_type));
-            }
-            _ => {}
-        }
-
         if key_raw.len() != self.algorithm_type.public_key_len() {
-            return Err(Error::IncorrectKeySize {
-                key_size: key_raw.len(),
-                algo: self.algorithm_type,
-            });
+            return Err(Error::IncorrectKeySize(key.size(), self.algorithm_type));
         }
 
         // The public key and the sizes of the hash and signature are included
         // in the data that's about to be signed.
         self.public_key = key_raw;
-        self.hash.resize(self.algorithm_type.hash_len(), 0);
+        self.hash.resize(self.algorithm_type.digest_len(), 0);
         self.signature
             .resize(self.algorithm_type.signature_len(), 0);
 
@@ -1523,17 +1503,15 @@ impl Header {
     /// and return the public key. If the header is not signed, then `None` is
     /// returned.
     pub fn verify(&self) -> Result<Option<RsaPublicKey>> {
-        // RustCrypto does not support 8192-bit keys.
-        match self.algorithm_type {
-            AlgorithmType::None => return Ok(None),
-            a @ AlgorithmType::Sha256Rsa8192
-            | a @ AlgorithmType::Sha512Rsa8192
-            | a @ AlgorithmType::Unknown(_) => return Err(Error::UnsupportedAlgorithm(a)),
-            _ => {}
-        }
-
         // Reconstruct the public key.
         let public_key = decode_public_key(&self.public_key)?;
+
+        if self.public_key.len() != self.algorithm_type.public_key_len() {
+            return Err(Error::IncorrectKeySize(
+                public_key.size(),
+                self.algorithm_type,
+            ));
+        }
 
         let mut without_auth_writer = Cursor::new(Vec::new());
         self.to_writer_internal(&mut without_auth_writer, true)?;
@@ -1823,8 +1801,7 @@ pub fn decode_public_key(data: &[u8]) -> Result<RsaPublicKey> {
     reader.read_exact(&mut modulus_raw)?;
 
     let modulus = BigUint::from_bytes_be(&modulus_raw);
-    let public_key =
-        RsaPublicKey::new(modulus, BigUint::from(65537u32)).map_err(Error::RsaVerify)?;
+    let public_key = RsaPublicKey::new(modulus, BigUint::from(65537u32))?;
 
     Ok(public_key)
 }

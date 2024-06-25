@@ -9,10 +9,11 @@ mod config;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    ffi::OsStr,
+    env,
+    ffi::{OsStr, OsString},
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Cursor, Seek, SeekFrom, Write},
-    path::Path,
+    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -22,7 +23,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use avbroot::{
     cli::ota::{ExtractCli, PatchCli, VerifyCli},
-    crypto::{self, PassphraseSource},
+    crypto::{self, PassphraseSource, RsaSigningKey},
     format::{
         avb::{
             self, AlgorithmType, ChainPartitionDescriptor, Descriptor, Footer, HashDescriptor,
@@ -48,15 +49,15 @@ use avbroot::{
     stream::{self, CountingWriter, HashingReader, PSeekFile, Reopen, ToWriter},
 };
 use clap::Parser;
-use rsa::RsaPrivateKey;
-use tempfile::{NamedTempFile, TempDir};
+use rsa::{rand_core::OsRng, traits::PublicKeyParts, BigUint};
+use tempfile::TempDir;
 use topological_sort::TopologicalSort;
 use tracing::{info, info_span};
 use x509_cert::Certificate;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 use crate::{
-    cli::{Cli, Command, ListCli, ProfileGroup, TestCli},
+    cli::{Cli, Command, HelperCli, ListCli, PassSource, ProfileGroup, TestCli},
     config::{
         Avb, BootData, BootVersion, Config, Data, DmVerityContent, DmVerityData, OtaInfo,
         Partition, Profile, RamdiskContent, VbmetaData,
@@ -100,7 +101,7 @@ fn append_avb(
     avb: &Avb,
     hash_tree: bool,
     ota_info: &OtaInfo,
-    key_avb: &RsaPrivateKey,
+    key_avb: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let image_size = file.seek(SeekFrom::End(0))?;
@@ -298,7 +299,7 @@ fn create_boot_image(
     avb: &Avb,
     boot_data: &BootData,
     ota_info: &OtaInfo,
-    key_avb: &RsaPrivateKey,
+    key_avb: &RsaSigningKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
@@ -425,7 +426,7 @@ fn create_dm_verity_image(
     avb: &Avb,
     dm_verity_data: &DmVerityData,
     ota_info: &OtaInfo,
-    key_avb: &RsaPrivateKey,
+    key_avb: &RsaSigningKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
@@ -454,7 +455,7 @@ fn create_vbmeta_image(
     avb: &Avb,
     vbmeta_data: &VbmetaData,
     inputs: &BTreeMap<String, PSeekFile>,
-    key: &RsaPrivateKey,
+    key: &RsaSigningKey,
 ) -> Result<()> {
     let mut descriptors = Vec::new();
 
@@ -506,7 +507,7 @@ fn create_vbmeta_image(
 fn create_partition_images(
     partitions: &BTreeMap<String, Partition>,
     ota_info: &OtaInfo,
-    key_avb: &RsaPrivateKey,
+    key_avb: &RsaSigningKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<BTreeMap<String, PSeekFile>> {
@@ -576,7 +577,7 @@ fn create_payload(
     partitions: &BTreeMap<String, Partition>,
     inputs: &BTreeMap<String, PSeekFile>,
     ota_info: &OtaInfo,
-    key_ota: &RsaPrivateKey,
+    key_ota: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
     let dynamic_partitions_names = partitions
@@ -698,8 +699,8 @@ fn create_ota(
     output: &Path,
     ota_info: &OtaInfo,
     profile: &Profile,
-    key_avb: &RsaPrivateKey,
-    key_ota: &RsaPrivateKey,
+    key_avb: &RsaSigningKey,
+    key_ota: &RsaSigningKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
@@ -850,15 +851,18 @@ fn create_fake_magisk(output: &Path) -> Result<()> {
 }
 
 struct KeySet {
-    avb_key: RsaPrivateKey,
-    ota_key: RsaPrivateKey,
+    avb_key: RsaSigningKey,
+    ota_key: RsaSigningKey,
     ota_cert: Certificate,
-    avb_key_file: NamedTempFile,
-    avb_pass_file: NamedTempFile,
-    avb_pkmd_file: NamedTempFile,
-    ota_key_file: NamedTempFile,
-    ota_pass_file: NamedTempFile,
-    ota_cert_file: NamedTempFile,
+    _key_dir: TempDir,
+    avb_key_file: PathBuf,
+    avb_public_key_file: PathBuf,
+    avb_pass_file: PathBuf,
+    avb_pkmd_file: PathBuf,
+    ota_key_file: PathBuf,
+    ota_public_key_file: PathBuf,
+    ota_pass_file: PathBuf,
+    ota_cert_file: PathBuf,
 }
 
 macro_rules! new_keys_with_prefix {
@@ -907,13 +911,8 @@ macro_rules! new_keys_with_prefix {
 }
 
 impl KeySet {
-    fn write_temp(data: &[u8]) -> Result<NamedTempFile> {
-        let mut temp_file =
-            NamedTempFile::new().context("Failed to create temp file for test keys")?;
-        temp_file
-            .write_all(data)
-            .with_context(|| format!("Failed to write test key data: {:?}", temp_file.path()))?;
-        Ok(temp_file)
+    fn write(path: &Path, data: &[u8]) -> Result<()> {
+        fs::write(path, data).with_context(|| format!("Failed to write test key data: {path:?}"))
     }
 
     fn new_with_data(
@@ -924,36 +923,54 @@ impl KeySet {
         ota_pass: &[u8],
         ota_cert: &[u8],
     ) -> Result<Self> {
-        let avb_key_file = Self::write_temp(avb_key)?;
-        let avb_pass_file = Self::write_temp(avb_pass)?;
-        let avb_pkmd_file = Self::write_temp(avb_pkmd)?;
-        let ota_key_file = Self::write_temp(ota_key)?;
-        let ota_pass_file = Self::write_temp(ota_pass)?;
-        let ota_cert_file = Self::write_temp(ota_cert)?;
+        let key_dir = TempDir::new().context("Failed to create temp directory")?;
+        let avb_key_file = key_dir.path().join("avb.key");
+        let avb_public_key_file = key_dir.path().join("avb.public.key");
+        let avb_pass_file = key_dir.path().join("avb.passphrase");
+        let avb_pkmd_file = key_dir.path().join("avb_pkmd.bin");
+        let ota_key_file = key_dir.path().join("ota.key");
+        let ota_public_key_file = key_dir.path().join("ota.public.key");
+        let ota_pass_file = key_dir.path().join("ota.passphrase");
+        let ota_cert_file = key_dir.path().join("ota.crt");
+
+        Self::write(&avb_key_file, avb_key)?;
+        Self::write(&avb_pass_file, avb_pass)?;
+        Self::write(&avb_pkmd_file, avb_pkmd)?;
+        Self::write(&ota_key_file, ota_key)?;
+        Self::write(&ota_pass_file, ota_pass)?;
+        Self::write(&ota_cert_file, ota_cert)?;
 
         let avb_key = crypto::read_pem_key_file(
-            avb_key_file.path(),
-            &PassphraseSource::File(avb_pass_file.path().to_owned()),
+            &avb_key_file,
+            &PassphraseSource::File(avb_pass_file.clone()),
         )
+        .map(RsaSigningKey::Internal)
         .context("Failed to load AVB test key")?;
 
         let ota_key = crypto::read_pem_key_file(
-            ota_key_file.path(),
-            &PassphraseSource::File(ota_pass_file.path().to_owned()),
+            &ota_key_file,
+            &PassphraseSource::File(ota_pass_file.clone()),
         )
+        .map(RsaSigningKey::Internal)
         .context("Failed to load OTA test key")?;
 
-        let ota_cert = crypto::read_pem_cert_file(ota_cert_file.path())
-            .context("Failed to load OTA test cert")?;
+        crypto::write_pem_public_key_file(&avb_public_key_file, &avb_key.to_public_key())?;
+        crypto::write_pem_public_key_file(&ota_public_key_file, &ota_key.to_public_key())?;
+
+        let ota_cert =
+            crypto::read_pem_cert_file(&ota_cert_file).context("Failed to load OTA test cert")?;
 
         Ok(Self {
             avb_key,
             ota_key,
             ota_cert,
+            _key_dir: key_dir,
             avb_key_file,
+            avb_public_key_file,
             avb_pass_file,
             avb_pkmd_file,
             ota_key_file,
+            ota_public_key_file,
             ota_pass_file,
             ota_cert_file,
         })
@@ -969,9 +986,16 @@ fn patch_image(
     system_image_file: &Path,
     extra_args: &[&OsStr],
     keys: &KeySet,
+    signing_helper: bool,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     info!("Patching OTA: {input_file:?} -> {output_file:?}");
+
+    let (avb_key_file, ota_key_file) = if signing_helper {
+        (&keys.avb_public_key_file, &keys.ota_public_key_file)
+    } else {
+        (&keys.avb_key_file, &keys.ota_key_file)
+    };
 
     // We're intentionally using the CLI interface.
     let mut args: Vec<&OsStr> = vec![
@@ -984,17 +1008,25 @@ fn patch_image(
         OsStr::new("system"),
         system_image_file.as_os_str(),
         OsStr::new("--key-avb"),
-        keys.avb_key_file.path().as_os_str(),
+        avb_key_file.as_os_str(),
         OsStr::new("--pass-avb-file"),
-        keys.avb_pass_file.path().as_os_str(),
+        keys.avb_pass_file.as_os_str(),
         OsStr::new("--key-ota"),
-        keys.ota_key_file.path().as_os_str(),
+        ota_key_file.as_os_str(),
         OsStr::new("--pass-ota-file"),
-        keys.ota_pass_file.path().as_os_str(),
+        keys.ota_pass_file.as_os_str(),
         OsStr::new("--cert-ota"),
-        keys.ota_cert_file.path().as_os_str(),
+        keys.ota_cert_file.as_os_str(),
         OsStr::new("--dsu"),
     ];
+
+    let argv0: OsString;
+    if signing_helper {
+        argv0 = env::args_os().next().unwrap();
+        args.push(OsStr::new("--signing-helper"));
+        args.push(&argv0);
+    }
+
     args.extend_from_slice(extra_args);
 
     let cli = PatchCli::try_parse_from(args)?;
@@ -1026,9 +1058,9 @@ fn verify_image(input_file: &Path, keys: &KeySet, cancel_signal: &AtomicBool) ->
         OsStr::new("--input"),
         input_file.as_os_str(),
         OsStr::new("--public-key-avb"),
-        keys.avb_pkmd_file.path().as_os_str(),
+        keys.avb_pkmd_file.as_os_str(),
         OsStr::new("--cert-ota"),
-        keys.ota_cert_file.path().as_os_str(),
+        keys.ota_cert_file.as_os_str(),
     ])?;
     avbroot::cli::ota::verify_subcommand(&cli, cancel_signal)?;
 
@@ -1140,6 +1172,7 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
             &system_image,
             &args_magisk,
             &test_keys,
+            false,
             cancel_signal,
         )
         .with_context(|| format!("[{name}] Failed to patch OTA"))?;
@@ -1168,6 +1201,7 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
             &system_image,
             &args_prepatched,
             &test_keys,
+            true,
             cancel_signal,
         )
         .with_context(|| format!("[{name}] Failed to patch OTA"))?;
@@ -1192,7 +1226,87 @@ fn list_subcommand(cli: &ListCli) -> Result<()> {
     Ok(())
 }
 
+/// A basic --signing-helper implementation that just signs via RustCrypto.
+fn helper_mode() -> Result<()> {
+    let cli = HelperCli::parse();
+
+    let private_key_path = {
+        let parent = cli.public_key.parent().unwrap_or(Path::new("."));
+        let name = cli
+            .public_key
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow!("Bad filename: {:?}", cli.public_key))?;
+
+        parent.join(name.replace(".public", ""))
+    };
+    let source = match cli.pass_source {
+        PassSource::Env => PassphraseSource::EnvVar(cli.pass_source_value),
+        PassSource::File => PassphraseSource::File(cli.pass_source_value.into()),
+    };
+    let private_key = crypto::read_pem_key_file(&private_key_path, &source)
+        .with_context(|| format!("Failed to load private key: {private_key_path:?}"))?;
+    let public_key = crypto::read_pem_public_key_file(&cli.public_key)
+        .with_context(|| format!("Failed to load public key: {:?}", cli.public_key))?;
+
+    if private_key.to_public_key() != public_key {
+        bail!("Private key does not match public key");
+    }
+
+    let (hash_algo, key_algo) = cli
+        .algorithm
+        .split_once('_')
+        .ok_or_else(|| anyhow!("Unknown algorithm: {:?}", cli.algorithm))?;
+
+    if key_algo != format!("RSA{}", private_key.size() * 8) {
+        bail!(
+            "{key_algo} does not match key size ({})",
+            private_key.size() * 8
+        );
+    } else if hash_algo != "SHA256" && hash_algo != "SHA512" {
+        bail!("Unknown hash algorithm: {hash_algo}");
+    }
+
+    let mut padded_digest = vec![];
+    io::stdin()
+        .read_to_end(&mut padded_digest)
+        .context("Failed to read padded digest from stdin")?;
+
+    if padded_digest.len() != private_key.size() {
+        bail!(
+            "Padded digest size ({}) bytes does not match key size ({})",
+            padded_digest.len(),
+            private_key.size()
+        );
+    }
+
+    // The input is already padded, so perform a raw RSA signing operation.
+    let mut signature = rsa::hazmat::rsa_decrypt_and_check(
+        &private_key,
+        None::<&mut OsRng>,
+        &BigUint::from_bytes_be(&padded_digest),
+    )
+    .context("Failed to sign digest")?
+    .to_bytes_le();
+    signature.resize(private_key.size(), 0);
+    signature.reverse();
+
+    io::stdout()
+        .write_all(&signature)
+        .context("Failed to write signature to stdout")?;
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    const ENV_HELPER_MODE: &str = "E2E_HELPER_MODE";
+
+    // Re-invoking ourselves will execute as the helper script instead.
+    if env::var_os(ENV_HELPER_MODE).is_some() {
+        return helper_mode();
+    }
+    env::set_var(ENV_HELPER_MODE, "true");
+
     // Set up a cancel signal so we can properly clean up any temporary files.
     let cancel_signal = Arc::new(AtomicBool::new(false));
     {

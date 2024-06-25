@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug_span, info, warn, Span};
 
 use crate::{
-    crypto::{self, PassphraseSource},
+    crypto::{self, PassphraseSource, RsaSigningKey},
     format::avb::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
         HashTreeDescriptor, Header, KernelCmdlineDescriptor,
@@ -383,12 +383,26 @@ fn sign_or_clear(info: &mut AvbInfo, orig_header: &Header, key_group: &KeyGroup)
                 key_group.pass_file.as_deref(),
                 key_group.pass_env_var.as_deref(),
             );
-            let private_key = crypto::read_pem_key_file(key_path, &source)
-                .with_context(|| format!("Failed to load key: {key_path:?}"))?;
+            let signing_key = if let Some(helper) = &key_group.signing_helper {
+                let public_key = crypto::read_pem_public_key_file(key_path)
+                    .with_context(|| format!("Failed to load key: {key_path:?}"))?;
 
-            info.header.set_algo_for_key(&private_key)?;
+                RsaSigningKey::External {
+                    program: helper.clone(),
+                    public_key_file: key_path.clone(),
+                    public_key,
+                    passphrase_source: source,
+                }
+            } else {
+                let private_key = crypto::read_pem_key_file(key_path, &source)
+                    .with_context(|| format!("Failed to load key: {key_path:?}"))?;
+
+                RsaSigningKey::Internal(private_key)
+            };
+
+            info.header.set_algo_for_key(&signing_key)?;
             info.header
-                .sign(&private_key)
+                .sign(&signing_key)
                 .context("Failed to sign new AVB header")?;
         }
         SignAction::Clear => {
@@ -743,12 +757,15 @@ struct DisplayGroup {
 
 #[derive(Debug, Args)]
 struct KeyGroup {
-    /// Path to private key for signing.
+    /// Path to signing key.
     ///
-    /// A private key is needed if packing an image where the original header
+    /// A signing key is needed if packing an image where the original header
     /// was signed and the header needs to be modified (eg. for a new checksum).
-    /// If the header was originally not signed, then the private key is not
+    /// If the header was originally not signed, then the signing key is not
     /// used, unless --force is specified.
+    ///
+    /// This should normally be a private key. However, if --signing-helper is
+    /// used, then it should be a public key instead.
     #[arg(short, long, value_name = "FILE", value_parser)]
     key: Option<PathBuf>,
 
@@ -768,6 +785,15 @@ struct KeyGroup {
     /// File containing private key passphrase.
     #[arg(long, value_name = "FILE", value_parser, group = "pass")]
     pass_file: Option<PathBuf>,
+
+    /// External program for signing.
+    ///
+    /// If this option is specified, then --key must refer to a public key. The
+    /// program will be invoked as:
+    ///
+    /// <program> <algo> <public key> [file <pass file>|env <pass env>]
+    #[arg(long, value_name = "PROGRAM", value_parser)]
+    signing_helper: Option<PathBuf>,
 }
 
 /// Unpack an AVB image.

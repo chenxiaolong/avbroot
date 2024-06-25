@@ -11,13 +11,13 @@ use std::{
 
 use memchr::memmem;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use rsa::RsaPrivateKey;
 use thiserror::Error;
 use tracing::{debug, debug_span, trace, Span};
 use x509_cert::Certificate;
 use zip::ZipArchive;
 
 use crate::{
+    crypto::RsaSigningKey,
     format::{
         avb::{self, AppendedDescriptorMut, Footer},
         ota,
@@ -111,7 +111,7 @@ pub fn patch_system_image(
     input: &(dyn ReadSeekReopen + Sync),
     output: &(dyn WriteSeekReopen + Sync),
     certificate: &Certificate,
-    key: &RsaPrivateKey,
+    key: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<(Vec<Range<u64>>, Vec<Range<u64>>)> {
     // This must be a multiple of normal filesystem block sizes (eg. 4 KiB).

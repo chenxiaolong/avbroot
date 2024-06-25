@@ -15,15 +15,12 @@ use const_oid::{db::rfc5912, ObjectIdentifier};
 use memchr::memmem;
 use prost::Message;
 use ring::digest::Context;
-use rsa::{Pkcs1v15Sign, RsaPrivateKey};
-use sha1::Sha1;
-use sha2::Sha256;
 use thiserror::Error;
 use x509_cert::{der::Encode, Certificate};
 use zip::{result::ZipError, write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::{
-    crypto,
+    crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
     format::payload::{self, PayloadHeader},
     protobuf::build::tools::releasetools::{ota_metadata::OtaType, OtaMetadata},
     stream::{self, FromReader, HashingReader, HashingWriter},
@@ -88,8 +85,6 @@ pub enum Error {
     Spki(#[from] pkcs8::spki::Error),
     #[error("x509 DER error")]
     Der(#[from] x509_cert::der::Error),
-    #[error("RSA error")]
-    Rsa(#[from] rsa::Error),
     #[error("Zip error")]
     Zip(#[from] ZipError),
     #[error("I/O error")]
@@ -586,12 +581,12 @@ pub fn verify_ota(mut reader: impl Read + Seek, cancel_signal: &AtomicBool) -> R
     reader.seek(SeekFrom::Start(0))?;
 
     // We support SHA1 for verification only.
-    let (algorithm, scheme) = if signer.digest_alg.oid == rfc5912::ID_SHA_256 {
-        (&ring::digest::SHA256, Pkcs1v15Sign::new::<Sha256>())
+    let (algorithm, algo) = if signer.digest_alg.oid == rfc5912::ID_SHA_256 {
+        (&ring::digest::SHA256, SignatureAlgorithm::Sha256WithRsa)
     } else {
         (
             &ring::digest::SHA1_FOR_LEGACY_USE_ONLY,
-            Pkcs1v15Sign::new::<Sha1>(),
+            SignatureAlgorithm::Sha1WithRsa,
         )
     };
 
@@ -603,7 +598,7 @@ pub fn verify_ota(mut reader: impl Read + Seek, cancel_signal: &AtomicBool) -> R
     let digest = context.finish();
 
     // Verify the signature against the public key.
-    public_key.verify(scheme, digest.as_ref(), signer.signature.as_bytes())?;
+    public_key.verify_sig(algo, digest.as_ref(), signer.signature.as_bytes())?;
 
     Ok(cert.clone())
 }
@@ -661,7 +656,7 @@ impl<W: Write> SigningWriter<W> {
         }
     }
 
-    pub fn finish(mut self, key: &RsaPrivateKey, cert: &Certificate) -> Result<W> {
+    pub fn finish(mut self, key: &RsaSigningKey, cert: &Certificate) -> Result<W> {
         if self.used < self.queue.len() {
             return Err(
                 io::Error::new(io::ErrorKind::InvalidData, "Too small to contain EOCD").into(),

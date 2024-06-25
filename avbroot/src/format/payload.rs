@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2022-2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2022-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -26,13 +26,11 @@ use rayon::{
     prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
 };
 use ring::digest::{Context, Digest};
-use rsa::{traits::PublicKeyParts, Pkcs1v15Sign, RsaPrivateKey};
-use sha2::Sha256;
 use thiserror::Error;
 use x509_cert::Certificate;
 
 use crate::{
-    crypto,
+    crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
     protobuf::chromeos_update_engine::{
         install_operation::Type, signatures::Signature, DeltaArchiveManifest, Extent,
         InstallOperation, PartitionInfo, PartitionUpdate, Signatures,
@@ -100,8 +98,6 @@ pub enum Error {
     ProtobufDecode(#[from] prost::DecodeError),
     #[error("XZ stream error")]
     XzStream(#[from] liblzma::stream::Error),
-    #[error("RSA error")]
-    Rsa(#[from] rsa::Error),
     #[error("I/O error")]
     Io(#[from] io::Error),
 }
@@ -175,9 +171,8 @@ impl<R: Read> FromReader<R> for PayloadHeader {
 
 /// Sign `digest` with `key` and return a [`Signatures`] protobuf struct with
 /// the signature padded to the maximum size.
-fn sign_digest(digest: &[u8], key: &RsaPrivateKey) -> Result<Signatures> {
-    let scheme = Pkcs1v15Sign::new::<Sha256>();
-    let mut digest_signed = key.sign(scheme, digest)?;
+fn sign_digest(digest: &[u8], key: &RsaSigningKey) -> Result<Signatures> {
+    let mut digest_signed = key.sign(SignatureAlgorithm::Sha256WithRsa, digest)?;
     assert!(
         digest_signed.len() <= key.size(),
         "Signature exceeds maximum size",
@@ -214,8 +209,7 @@ fn verify_digest(digest: &[u8], signatures: &Signatures, cert: &Certificate) -> 
         };
         let without_padding = &data[..size as usize];
 
-        let scheme = Pkcs1v15Sign::new::<Sha256>();
-        match public_key.verify(scheme, digest, without_padding) {
+        match public_key.verify_sig(SignatureAlgorithm::Sha256WithRsa, digest, without_padding) {
             Ok(_) => return Ok(()),
             Err(e) => last_error = Some(e),
         }
@@ -292,7 +286,7 @@ pub struct PayloadWriter<W: Write> {
     h_partial: Context,
     /// Includes signatures (hashes are for properties file).
     h_full: Context,
-    key: RsaPrivateKey,
+    key: RsaSigningKey,
 }
 
 /// Write data to a writer and one or more hashers.
@@ -315,7 +309,7 @@ impl<W: Write> PayloadWriter<W> {
     /// fields are ignored and internally recomputed to guarantee that there are
     /// no gaps. All partitions' install operation data is written to the blob
     /// section in order.
-    pub fn new(mut inner: W, mut header: PayloadHeader, key: RsaPrivateKey) -> Result<Self> {
+    pub fn new(mut inner: W, mut header: PayloadHeader, key: RsaSigningKey) -> Result<Self> {
         let mut blob_size = 0;
 
         // The blob must contain all data in sequential order with no gaps.

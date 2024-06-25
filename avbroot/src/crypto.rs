@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+ * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
  * SPDX-License-Identifier: GPL-3.0-only
  */
 
@@ -9,6 +9,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
+    process::{Command, ExitStatus, Stdio},
     time::Duration,
 };
 
@@ -22,12 +23,16 @@ use cms::{
 };
 use pkcs8::{
     pkcs5::{pbes2, scrypt},
-    DecodePrivateKey, EncodePrivateKey, EncodePublicKey, EncryptedPrivateKeyInfo, LineEnding,
-    PrivateKeyInfo,
+    DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, EncryptedPrivateKeyInfo,
+    LineEnding, PrivateKeyInfo,
 };
 use rand::RngCore;
-use rsa::{pkcs1v15::SigningKey, Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
-use sha2::Sha256;
+use rsa::{
+    pkcs1v15::SigningKey, traits::PublicKeyParts, Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey,
+};
+use serde::{Deserialize, Serialize};
+use sha1::Sha1;
+use sha2::{Digest, Sha256, Sha512};
 use thiserror::Error;
 use x509_cert::{
     builder::{Builder, CertificateBuilder, Profile},
@@ -40,6 +45,20 @@ use x509_cert::{
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("Signature algorithm not supported: {0:?}")]
+    UnsupportedAlgorithm(SignatureAlgorithm),
+    #[error("RSA key size ({}) not supported", .0 * 8)]
+    UnsupportedKey(usize),
+    #[error("Invalid digest length ({0} bytes) for {1:?}")]
+    InvalidDigestLength(usize, SignatureAlgorithm),
+    #[error("Invalid signature length ({0} bytes) for {1:?}")]
+    InvalidSignatureLength(usize, SignatureAlgorithm),
+    #[error("Failed to run command: {0}")]
+    CommandSpawnFailed(String, #[source] io::Error),
+    #[error("Command failed with status: {1}: {0}")]
+    CommandExecutionFailed(String, ExitStatus),
+    #[error("Signature from signing helper does not match public key: {0:?}")]
+    SigningHelperBadSignature(PathBuf),
     #[error("Passphrases do not match")]
     ConfirmPassphrase,
     #[error("Failed to read environment variable: {0:?}")]
@@ -54,6 +73,10 @@ pub enum Error {
     SaveKeyEncrypted(#[source] pkcs8::Error),
     #[error("Failed to save unencrypted private key")]
     SaveKeyUnencrypted(#[source] pkcs8::Error),
+    #[error("Failed to RSA sign digest")]
+    RsaSign(#[source] rsa::Error),
+    #[error("Failed to RSA verify signature")]
+    RsaVerify(#[source] rsa::Error),
     #[error("X509 error")]
     X509(#[from] x509_cert::builder::Error),
     #[error("SPKI error")]
@@ -68,6 +91,34 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum SignatureAlgorithm {
+    Sha1WithRsa,
+    Sha256WithRsa,
+    Sha512WithRsa,
+}
+
+impl SignatureAlgorithm {
+    /// Length of digest required by the signing algorithm.
+    pub fn digest_len(self) -> usize {
+        match self {
+            Self::Sha1WithRsa => Sha1::output_size(),
+            Self::Sha256WithRsa => Sha256::output_size(),
+            Self::Sha512WithRsa => Sha512::output_size(),
+        }
+    }
+
+    /// Compute the digest of the specified data.
+    pub fn hash(self, data: &[u8]) -> Vec<u8> {
+        match self {
+            Self::Sha1WithRsa => Sha1::digest(data).to_vec(),
+            Self::Sha256WithRsa => Sha256::digest(data).to_vec(),
+            Self::Sha512WithRsa => Sha512::digest(data).to_vec(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub enum PassphraseSource {
     Prompt(String),
     EnvVar(OsString),
@@ -107,6 +158,181 @@ impl PassphraseSource {
         };
 
         Ok(passphrase)
+    }
+}
+
+fn check_key_size(size: usize) -> Result<()> {
+    // RustCrypto does not support 8192-bit keys.
+    if size > 4096 / 8 {
+        return Err(Error::UnsupportedKey(size));
+    }
+
+    Ok(())
+}
+
+/// Copied from rsa-0.9.6 since the function is not exported.
+fn pkcs1v15_sign_pad(prefix: &[u8], hashed: &[u8], k: usize) -> rsa::Result<Vec<u8>> {
+    let hash_len = hashed.len();
+    let t_len = prefix.len() + hashed.len();
+    if k < t_len + 11 {
+        return Err(rsa::Error::MessageTooLong);
+    }
+
+    // EM = 0x00 || 0x01 || PS || 0x00 || T
+    let mut em = vec![0xff; k];
+    em[0] = 0;
+    em[1] = 1;
+    em[k - t_len - 1] = 0;
+    em[k - t_len..k - hash_len].copy_from_slice(prefix);
+    em[k - hash_len..k].copy_from_slice(hashed);
+
+    Ok(em)
+}
+
+#[derive(Clone)]
+pub enum RsaSigningKey {
+    Internal(RsaPrivateKey),
+    External {
+        program: PathBuf,
+        public_key_file: PathBuf,
+        public_key: RsaPublicKey,
+        passphrase_source: PassphraseSource,
+    },
+}
+
+impl RsaSigningKey {
+    /// Size of key in bytes.
+    pub fn size(&self) -> usize {
+        match self {
+            Self::Internal(key) => key.size(),
+            Self::External { public_key, .. } => public_key.size(),
+        }
+    }
+
+    /// Get the public key portion of the signing key.
+    pub fn to_public_key(&self) -> RsaPublicKey {
+        match self {
+            RsaSigningKey::Internal(key) => key.to_public_key(),
+            RsaSigningKey::External { public_key, .. } => public_key.clone(),
+        }
+    }
+
+    /// Sign the digest with the specified signature algorithm.
+    pub fn sign(&self, algo: SignatureAlgorithm, digest: &[u8]) -> Result<Vec<u8>> {
+        if digest.len() != algo.digest_len() {
+            return Err(Error::InvalidDigestLength(digest.len(), algo));
+        }
+
+        check_key_size(self.size())?;
+
+        let scheme = match algo {
+            // We don't support signing with insecure algorithms.
+            SignatureAlgorithm::Sha1WithRsa => return Err(Error::UnsupportedAlgorithm(algo)),
+            SignatureAlgorithm::Sha256WithRsa => Pkcs1v15Sign::new::<Sha256>(),
+            SignatureAlgorithm::Sha512WithRsa => Pkcs1v15Sign::new::<Sha512>(),
+        };
+
+        match self {
+            Self::Internal(key) => key.sign(scheme, digest).map_err(Error::RsaSign),
+            Self::External {
+                program,
+                public_key,
+                public_key_file,
+                passphrase_source,
+            } => {
+                let key_bits = public_key.size() * 8;
+                let algo_str = match algo {
+                    SignatureAlgorithm::Sha1WithRsa => unreachable!(),
+                    SignatureAlgorithm::Sha256WithRsa => format!("SHA256_RSA{key_bits}"),
+                    SignatureAlgorithm::Sha512WithRsa => format!("SHA512_RSA{key_bits}"),
+                };
+
+                let mut command = Command::new(program);
+                command.arg(algo_str);
+                command.arg(public_key_file);
+
+                match passphrase_source {
+                    PassphraseSource::Prompt(_) => {}
+                    PassphraseSource::EnvVar(v) => {
+                        command.arg("env");
+                        command.arg(v);
+                    }
+                    PassphraseSource::File(p) => {
+                        command.arg("file");
+                        command.arg(p);
+                    }
+                }
+
+                command.stdin(Stdio::piped());
+                command.stdout(Stdio::piped());
+                command.stderr(Stdio::inherit());
+
+                let mut child = command
+                    .spawn()
+                    .map_err(|e| Error::CommandSpawnFailed(format!("{command:?}"), e))?;
+
+                // We don't bother with spawning a thread. The pipe capacity on
+                // all major OSs is significantly larger than the digest, so we
+                // don't risk deadlocking even if the process doesn't read from
+                // stdin.
+                //
+                // Pipe capacities:
+                // * Linux: 64 KiB
+                // * macOS: 4 KiB, 16 KiB (usually), or 64 KiB
+                // * Windows: 4 KiB
+
+                let padded_digest = pkcs1v15_sign_pad(&scheme.prefix, digest, public_key.size())?;
+                child.stdin.as_mut().unwrap().write_all(&padded_digest)?;
+
+                let child = child.wait_with_output()?;
+
+                if !child.status.success() {
+                    return Err(Error::CommandExecutionFailed(
+                        format!("{command:?}"),
+                        child.status,
+                    ));
+                } else if child.stdout.len() != self.size() {
+                    return Err(Error::InvalidSignatureLength(child.stdout.len(), algo));
+                }
+
+                // Check that the helper signed with the proper key.
+                if let Err(e) = self.to_public_key().verify_sig(algo, digest, &child.stdout) {
+                    return match e {
+                        Error::RsaVerify(_) => {
+                            Err(Error::SigningHelperBadSignature(public_key_file.clone()))
+                        }
+                        e => Err(e),
+                    };
+                }
+
+                Ok(child.stdout)
+            }
+        }
+    }
+}
+
+pub trait RsaPublicKeyExt {
+    fn verify_sig(&self, algo: SignatureAlgorithm, digest: &[u8], signature: &[u8]) -> Result<()>;
+}
+
+impl RsaPublicKeyExt for RsaPublicKey {
+    /// Verify the signature against the specified key.
+    fn verify_sig(&self, algo: SignatureAlgorithm, digest: &[u8], signature: &[u8]) -> Result<()> {
+        // Check this explicitly so we can provide a better error message.
+        if digest.len() != algo.digest_len() {
+            return Err(Error::InvalidDigestLength(digest.len(), algo));
+        }
+
+        check_key_size(self.size())?;
+
+        let scheme = match algo {
+            SignatureAlgorithm::Sha1WithRsa => Pkcs1v15Sign::new::<Sha1>(),
+            SignatureAlgorithm::Sha256WithRsa => Pkcs1v15Sign::new::<Sha256>(),
+            SignatureAlgorithm::Sha512WithRsa => Pkcs1v15Sign::new::<Sha512>(),
+        };
+
+        self.verify(scheme, digest, signature)
+            .map_err(Error::RsaVerify)
     }
 }
 
@@ -228,6 +454,16 @@ pub fn write_pem_cert_file(path: &Path, cert: &Certificate) -> Result<()> {
     write_pem_cert(writer, cert)
 }
 
+/// Read PEM-encoded PKCS8 public key from a reader.
+pub fn read_pem_public_key(mut reader: impl Read) -> Result<RsaPublicKey> {
+    let mut data = String::new();
+    reader.read_to_string(&mut data)?;
+
+    let key = RsaPublicKey::from_public_key_pem(&data)?;
+
+    Ok(key)
+}
+
 /// Write PEM-encoded PKCS8 public key to a writer.
 pub fn write_pem_public_key(mut writer: impl Write, key: &RsaPublicKey) -> Result<()> {
     let data = key.to_public_key_pem(LineEnding::LF)?;
@@ -235,6 +471,14 @@ pub fn write_pem_public_key(mut writer: impl Write, key: &RsaPublicKey) -> Resul
     writer.write_all(data.as_bytes())?;
 
     Ok(())
+}
+
+/// Read PEM-encoded PKCS8 public key from a file.
+pub fn read_pem_public_key_file(path: &Path) -> Result<RsaPublicKey> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+
+    read_pem_public_key(reader)
 }
 
 /// Write PEM-encoded PKCS8 public key to a file.
@@ -351,7 +595,7 @@ pub fn get_public_key(cert: &Certificate) -> Result<RsaPublicKey> {
 }
 
 /// Check if a certificate matches a private key.
-pub fn cert_matches_key(cert: &Certificate, key: &RsaPrivateKey) -> Result<bool> {
+pub fn cert_matches_key(cert: &Certificate, key: &RsaSigningKey) -> Result<bool> {
     let public_key = get_public_key(cert)?;
 
     Ok(key.to_public_key() == public_key)
@@ -389,12 +633,11 @@ pub fn get_cms_certs(sd: &SignedData) -> Vec<Certificate> {
 /// a transport mechanism for a raw signature. Thus, we need to ensure that the
 /// signature covers nothing but the raw data.
 pub fn cms_sign_external(
-    key: &RsaPrivateKey,
+    key: &RsaSigningKey,
     cert: &Certificate,
     digest: &[u8],
 ) -> Result<ContentInfo> {
-    let scheme = Pkcs1v15Sign::new::<Sha256>();
-    let signature = key.sign(scheme, digest)?;
+    let signature = key.sign(SignatureAlgorithm::Sha256WithRsa, digest)?;
 
     let digest_algorithm = AlgorithmIdentifierOwned {
         oid: const_oid::db::rfc5912::ID_SHA_256,

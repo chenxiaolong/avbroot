@@ -21,7 +21,6 @@ use cap_std::{ambient_authority, fs::Dir};
 use cap_tempfile::TempDir;
 use clap::{value_parser, ArgAction, Args, Parser, Subcommand};
 use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
-use rsa::RsaPrivateKey;
 use tempfile::NamedTempFile;
 use topological_sort::TopologicalSort;
 use tracing::{debug_span, info, warn};
@@ -30,7 +29,7 @@ use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::{
     cli,
-    crypto::{self, PassphraseSource},
+    crypto::{self, PassphraseSource, RsaSigningKey},
     format::{
         avb::{self, Descriptor, Header},
         ota::{self, SigningWriter, ZipEntry},
@@ -197,7 +196,7 @@ fn patch_boot_images<'a, 'b: 'a>(
     required_images: &'b RequiredImages,
     input_files: &mut HashMap<String, InputFile>,
     boot_patchers: Vec<Box<dyn BootImagePatch + Sync>>,
-    key_avb: &RsaPrivateKey,
+    key_avb: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let input_files = Mutex::new(input_files);
@@ -241,7 +240,7 @@ fn patch_system_image<'a, 'b: 'a>(
     required_images: &'b RequiredImages,
     input_files: &mut HashMap<String, InputFile>,
     cert_ota: &Certificate,
-    key_avb: &RsaPrivateKey,
+    key_avb: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<(&'b str, Vec<Range<u64>>)> {
     let Some(target) = required_images.iter_system().next() else {
@@ -565,7 +564,7 @@ fn update_vbmeta_headers(
     headers: &mut HashMap<String, Header>,
     order: &mut [(String, HashSet<String>)],
     clear_vbmeta_flags: bool,
-    key: &RsaPrivateKey,
+    key: &RsaSigningKey,
     block_size: u64,
 ) -> Result<()> {
     for (name, deps) in order {
@@ -722,8 +721,8 @@ fn patch_ota_payload(
     external_images: &HashMap<String, PathBuf>,
     boot_patchers: Vec<Box<dyn BootImagePatch + Sync>>,
     clear_vbmeta_flags: bool,
-    key_avb: &RsaPrivateKey,
-    key_ota: &RsaPrivateKey,
+    key_avb: &RsaSigningKey,
+    key_ota: &RsaSigningKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
@@ -916,8 +915,8 @@ fn patch_ota_zip(
     external_images: &HashMap<String, PathBuf>,
     mut boot_patchers: Vec<Box<dyn BootImagePatch + Sync>>,
     clear_vbmeta_flags: bool,
-    key_avb: &RsaPrivateKey,
-    key_ota: &RsaPrivateKey,
+    key_avb: &RsaSigningKey,
+    key_ota: &RsaSigningKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<(OtaMetadata, u64)> {
@@ -1218,10 +1217,38 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         cli.pass_ota_env_var.as_deref(),
     );
 
-    let key_avb = crypto::read_pem_key_file(&cli.key_avb, &source_avb)
-        .with_context(|| format!("Failed to load key: {:?}", cli.key_avb))?;
-    let key_ota = crypto::read_pem_key_file(&cli.key_ota, &source_ota)
-        .with_context(|| format!("Failed to load key: {:?}", cli.key_ota))?;
+    let (key_avb, key_ota) = if let Some(helper) = &cli.signing_helper {
+        let public_key_avb = crypto::read_pem_public_key_file(&cli.key_avb)
+            .with_context(|| format!("Failed to load key: {:?}", cli.key_avb))?;
+        let public_key_ota = crypto::read_pem_public_key_file(&cli.key_ota)
+            .with_context(|| format!("Failed to load key: {:?}", cli.key_ota))?;
+
+        let key_avb = RsaSigningKey::External {
+            program: helper.clone(),
+            public_key_file: cli.key_avb.clone(),
+            public_key: public_key_avb,
+            passphrase_source: source_avb,
+        };
+        let key_ota = RsaSigningKey::External {
+            program: helper.clone(),
+            public_key_file: cli.key_ota.clone(),
+            public_key: public_key_ota,
+            passphrase_source: source_ota,
+        };
+
+        (key_avb, key_ota)
+    } else {
+        let private_key_avb = crypto::read_pem_key_file(&cli.key_avb, &source_avb)
+            .with_context(|| format!("Failed to load key: {:?}", cli.key_avb))?;
+        let private_key_ota = crypto::read_pem_key_file(&cli.key_ota, &source_ota)
+            .with_context(|| format!("Failed to load key: {:?}", cli.key_ota))?;
+
+        let key_avb = RsaSigningKey::Internal(private_key_avb);
+        let key_ota = RsaSigningKey::Internal(private_key_ota);
+
+        (key_avb, key_ota)
+    };
+
     let cert_ota = crypto::read_pem_cert_file(&cli.cert_ota)
         .with_context(|| format!("Failed to load certificate: {:?}", cli.cert_ota))?;
 
@@ -1748,7 +1775,10 @@ pub struct PatchCli {
     #[arg(short, long, value_name = "FILE", value_parser, help_heading = HEADING_PATH)]
     pub output: Option<PathBuf>,
 
-    /// Private key for signing vbmeta images.
+    /// Signing key for vbmeta headers.
+    ///
+    /// This should normally be a private key. However, if --signing-helper is
+    /// used, then it should be a public key instead.
     #[arg(
         long,
         alias = "privkey-avb",
@@ -1758,7 +1788,10 @@ pub struct PatchCli {
     )]
     pub key_avb: PathBuf,
 
-    /// Private key for signing the OTA.
+    /// Signing key for the OTA.
+    ///
+    /// This should normally be a private key. However, if --signing-helper is
+    /// used, then it should be a public key instead.
     #[arg(
         long,
         alias = "privkey-ota",
@@ -1815,6 +1848,15 @@ pub struct PatchCli {
         help_heading = HEADING_KEY
     )]
     pub pass_ota_file: Option<PathBuf>,
+
+    /// External program for signing.
+    ///
+    /// If this option is specified, then --key-avb and --key-ota must refer to
+    /// public keys. The program will be invoked as:
+    ///
+    /// <program> <algo> <public key> [file <pass file>|env <pass env>]
+    #[arg(long, value_name = "PROGRAM", value_parser, help_heading = HEADING_KEY)]
+    pub signing_helper: Option<PathBuf>,
 
     /// Use partition image from a file instead of the original payload.
     #[arg(

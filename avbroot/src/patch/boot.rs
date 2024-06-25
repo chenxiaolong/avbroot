@@ -23,14 +23,14 @@ use liblzma::{
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use regex::bytes::Regex;
 use ring::digest::Context;
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use rsa::RsaPublicKey;
 use thiserror::Error;
 use tracing::{debug, debug_span, trace, warn, Span};
 use x509_cert::Certificate;
 use zip::{result::ZipError, ZipArchive};
 
 use crate::{
-    crypto,
+    crypto::{self, RsaSigningKey},
     format::{
         avb::{self, AppendedDescriptorMut, Footer, Header},
         bootimage::{self, BootImage, BootImageExt, RamdiskMeta},
@@ -1122,7 +1122,7 @@ pub fn patch_boot_images<'a>(
     names: &[&'a str],
     open_input: impl Fn(&str) -> io::Result<Box<dyn ReadSeek>> + Sync,
     open_output: impl Fn(&str) -> io::Result<Box<dyn WriteSeek>> + Sync,
-    key: &RsaPrivateKey,
+    key: &RsaSigningKey,
     patchers: &[Box<dyn BootImagePatch + Sync>],
     cancel_signal: &AtomicBool,
 ) -> Result<HashSet<&'a str>> {
