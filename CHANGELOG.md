@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.4.0
 
 * Fix (unreachable) minor error handling logic when attempting to use unsupported AVB signing algorithms ([PR #311])
 * Add support for performing signing operations with external programs ([Issue #310], [PR #312])
