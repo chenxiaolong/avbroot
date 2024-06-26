@@ -55,6 +55,9 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
                     .with_context(|| format!("Failed to load key: {p:?}"))?;
 
                 private_key.to_public_key()
+            } else if let Some(p) = &c.input.public_key {
+                crypto::read_pem_public_key_file(p)
+                    .with_context(|| format!("Failed to load public key: {p:?}"))?
             } else if let Some(p) = &c.input.cert {
                 let certificate = crypto::read_pem_cert_file(p)
                     .with_context(|| format!("Failed to load certificate: {p:?}"))?;
@@ -92,6 +95,10 @@ struct PublicKeyInputGroup {
     /// Path to private key.
     #[arg(short, long, value_name = "FILE", value_parser)]
     key: Option<PathBuf>,
+
+    /// Path to public key.
+    #[arg(short, long, value_name = "FILE", value_parser, conflicts_with_all = ["pass_env_var", "pass_file"])]
+    public_key: Option<PathBuf>,
 
     /// Path to certificate.
     #[arg(short, long, value_name = "FILE", value_parser, conflicts_with_all = ["pass_env_var", "pass_file"])]
