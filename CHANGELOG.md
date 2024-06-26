@@ -10,6 +10,8 @@
 ### Unreleased
 
 * Fix (unreachable) minor error handling logic when attempting to use unsupported AVB signing algorithms ([PR #311])
+* Add support for performing signing operations with external programs ([Issue #310], [PR #312])
+  * See the linked issue for an example of how to sign with a Yubikey.
 
 ### Version 3.3.0
 
@@ -222,6 +224,7 @@ Behind-the-scenes changes:
 [Issue #291]: https://github.com/chenxiaolong/avbroot/issues/291
 [Issue #301]: https://github.com/chenxiaolong/avbroot/issues/301
 [Issue #306]: https://github.com/chenxiaolong/avbroot/issues/306
+[Issue #310]: https://github.com/chenxiaolong/avbroot/issues/310
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -314,3 +317,4 @@ Behind-the-scenes changes:
 [PR #307]: https://github.com/chenxiaolong/avbroot/pull/307
 [PR #309]: https://github.com/chenxiaolong/avbroot/pull/309
 [PR #311]: https://github.com/chenxiaolong/avbroot/pull/311
+[PR #312]: https://github.com/chenxiaolong/avbroot/pull/312
