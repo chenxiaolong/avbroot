@@ -35,7 +35,11 @@ avbroot applies the following patches to the partition images:
 
     Repeat: **_ALWAYS leave `OEM unlocking` enabled if rooted._**
 
-* Any operation that causes an improperly-signed boot image to be flashed will result in the device being unbootable and unrecoverable without unlocking the bootloader again (and thus, triggering a data wipe). This includes the `Direct install` method for updating Magisk. Magisk updates **must** be done by repatching the OTA, not via the app.
+* Any operation that causes an improperly-signed boot image to be flashed will result in the device being unbootable and unrecoverable without unlocking the bootloader again (and thus, triggering a data wipe). A couple ways an improperly-signed boot image could be flashed include:
+
+    * The `Direct install` method for updating Magisk. Magisk updates **must** be done by repatching the OTA, not via the app.
+
+    * The `Uninstall Magisk` feature in Magisk. If root access is no longer needed, Magisk **must** be removed by repatching the OTA with the `--rootless` option, not via the app.
 
     If the boot image is ever modified, **do not reboot**. [Open an issue](https://github.com/chenxiaolong/avbroot/issues/new) for support and be very clear about what steps were done that lead to the situation. If Android is still running and root access works, it might be possible to recover without wiping and starting over.
 
