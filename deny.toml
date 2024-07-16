@@ -62,8 +62,6 @@ include-workspace = true
 bypass = [
     # Copies of unmodified crashwrangler objects for old macOS versions.
     { name = "honggfuzz", allow-globs = ["honggfuzz/third_party/mac/CrashReport_*.o"] },
-    # Test files for liblzma's test suite
-    { name = "liblzma-sys", allow-globs = ["xz/tests/compress_prepared_bcj_*"] },
 ]
 
 [sources]
