@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update all dependencies ([PR #321])
+
 ### Version 3.4.0
 
 * Fix (unreachable) minor error handling logic when attempting to use unsupported AVB signing algorithms ([PR #311])
@@ -318,3 +322,4 @@ Behind-the-scenes changes:
 [PR #309]: https://github.com/chenxiaolong/avbroot/pull/309
 [PR #311]: https://github.com/chenxiaolong/avbroot/pull/311
 [PR #312]: https://github.com/chenxiaolong/avbroot/pull/312
+[PR #321]: https://github.com/chenxiaolong/avbroot/pull/321
