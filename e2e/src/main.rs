@@ -830,12 +830,16 @@ fn create_fake_magisk(output: &Path) -> Result<()> {
 
     for path in [
         "assets/stub.apk",
+        "lib/arm64-v8a/libinit-ld.so",
         "lib/arm64-v8a/libmagisk64.so",
         "lib/arm64-v8a/libmagiskinit.so",
+        "lib/armeabi-v7a/libinit-ld.so",
         "lib/armeabi-v7a/libmagisk32.so",
         "lib/armeabi-v7a/libmagiskinit.so",
+        "lib/x86/libinit-ld.so",
         "lib/x86/libmagisk32.so",
         "lib/x86/libmagiskinit.so",
+        "lib/x86_64/libinit-ld.so",
         "lib/x86_64/libmagisk64.so",
         "lib/x86_64/libmagiskinit.so",
     ] {

@@ -161,6 +161,7 @@ impl MagiskRootPatcher {
     const VER_XZ_BACKUP: Range<u32> =
         26403..Self::VERS_SUPPORTED[Self::VERS_SUPPORTED.len() - 1].end;
 
+    const ZIP_INIT_LD: &'static str = "lib/arm64-v8a/libinit-ld.so";
     const ZIP_LIBMAGISK: &'static str = "lib/arm64-v8a/libmagisk.so";
     const ZIP_LIBMAGISK32: &'static str = "lib/armeabi-v7a/libmagisk32.so";
     const ZIP_LIBMAGISK64: &'static str = "lib/arm64-v8a/libmagisk64.so";
@@ -460,6 +461,13 @@ impl BootImagePatch for MagiskRootPatcher {
         if zip.file_names().any(|n| n == Self::ZIP_STUB) {
             debug!("Magisk stub found");
             xz_files.insert(Self::ZIP_STUB, b"overlay.d/sbin/stub.xz");
+        }
+
+        // Add init-ld, which only exists after Magisk commit
+        // 33aebb59763b6ec27209563035303700e998633d
+        if zip.file_names().any(|n| n == Self::ZIP_INIT_LD) {
+            debug!("Magisk init-ld found");
+            xz_files.insert(Self::ZIP_INIT_LD, b"overlay.d/sbin/init-ld.xz");
         }
 
         for (source, target) in xz_files {
