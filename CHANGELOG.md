@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Update all dependencies ([PR #321])
+* Add support for Magisk 27006 ([PR #323])
 
 ### Version 3.4.0
 
@@ -323,3 +324,4 @@ Behind-the-scenes changes:
 [PR #311]: https://github.com/chenxiaolong/avbroot/pull/311
 [PR #312]: https://github.com/chenxiaolong/avbroot/pull/312
 [PR #321]: https://github.com/chenxiaolong/avbroot/pull/321
+[PR #323]: https://github.com/chenxiaolong/avbroot/pull/323
