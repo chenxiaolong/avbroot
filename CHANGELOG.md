@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.4.1
 
 * Update all dependencies ([PR #321])
 * Add support for Magisk 27006 ([PR #323])
