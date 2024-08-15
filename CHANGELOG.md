@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update all dependencies ([PR #329])
+
 ### Version 3.4.1
 
 * Update all dependencies ([PR #321])
@@ -325,3 +329,4 @@ Behind-the-scenes changes:
 [PR #312]: https://github.com/chenxiaolong/avbroot/pull/312
 [PR #321]: https://github.com/chenxiaolong/avbroot/pull/321
 [PR #323]: https://github.com/chenxiaolong/avbroot/pull/323
+[PR #329]: https://github.com/chenxiaolong/avbroot/pull/329
