@@ -623,7 +623,7 @@ fn update_vbmeta_headers(
 /// If `ranges` is [`None`], then the entire file is compressed. Otherwise, only
 /// the chunks containing the specified ranges are compressed. In the latter
 /// scenario, unmodified chunks must be copied from the original payload.
-fn compress_image(
+pub fn compress_image(
     name: &str,
     file: &mut PSeekFile,
     header: &mut PayloadHeader,
@@ -900,7 +900,7 @@ fn patch_ota_payload(
         .with_context(|| format!("Failed to copy from original payload: {name}"))?;
     }
 
-    let (_, properties, metadata_size) = payload_writer
+    let (_, _, properties, metadata_size) = payload_writer
         .finish()
         .context("Failed to finalize payload")?;
 
@@ -1091,7 +1091,7 @@ fn patch_ota_zip(
     Ok((metadata, payload_metadata_size.unwrap()))
 }
 
-fn extract_ota_zip(
+pub fn extract_payload(
     raw_reader: &PSeekFile,
     directory: &Dir,
     payload_offset: u64,
@@ -1442,7 +1442,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
     let directory = Dir::open_ambient_dir(&cli.directory, authority)
         .with_context(|| format!("Failed to open directory: {:?}", cli.directory))?;
 
-    extract_ota_zip(
+    extract_payload(
         &raw_reader,
         &directory,
         payload_offset,
@@ -1654,7 +1654,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         .cloned()
         .collect::<BTreeSet<_>>();
 
-    extract_ota_zip(
+    extract_payload(
         &raw_reader,
         &temp_dir,
         pf_payload.offset,
@@ -1864,7 +1864,7 @@ pub struct PatchCli {
         value_names = ["PARTITION", "FILE"],
         value_parser = value_parser!(OsString),
         num_args = 2,
-        help_heading = HEADING_PATH,
+        help_heading = HEADING_PATH
     )]
     pub replace: Vec<OsString>,
 

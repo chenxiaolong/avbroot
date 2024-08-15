@@ -688,7 +688,7 @@ fn create_payload(
             .with_context(|| format!("Failed to copy from image: {name}"))?;
     }
 
-    let (_, properties, metadata_size) = payload_writer
+    let (_, _, properties, metadata_size) = payload_writer
         .finish()
         .context("Failed to finalize payload")?;
 

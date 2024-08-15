@@ -26,6 +26,7 @@ use rayon::{
     prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
 };
 use ring::digest::{Context, Digest};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use x509_cert::Certificate;
 
@@ -104,11 +105,13 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PayloadHeader {
     pub version: u64,
     pub manifest: DeltaArchiveManifest,
+    #[serde(skip)]
     pub metadata_signature_size: u32,
+    #[serde(skip)]
     pub blob_offset: u64,
 }
 
@@ -384,12 +387,12 @@ impl<W: Write> PayloadWriter<W> {
     }
 
     /// Finalize the payload. If this function is not called, the payload will
-    /// be left in an incomplete state. Returns the original writer, the
-    /// contents that should be written for `payload_properties.txt` and the
-    /// length of the header + manifest + manifest signature sections (for
-    /// constructing the `payload_metadata.bin` OTA metadata property files
+    /// be left in an incomplete state. Returns the original writer, the final
+    /// header, the contents that should be written for `payload_properties.txt`
+    /// and the length of the header + manifest + manifest signature sections
+    /// (for constructing the `payload_metadata.bin` OTA metadata property files
     /// entry).
-    pub fn finish(mut self) -> Result<(W, String, u64)> {
+    pub fn finish(mut self) -> Result<(W, PayloadHeader, String, u64)> {
         // Append payload signature.
         let payload_partial_hash = self.h_partial.clone().finish();
         let payload_sig = sign_digest(payload_partial_hash.as_ref(), &self.key)?;
@@ -413,7 +416,7 @@ impl<W: Write> PayloadWriter<W> {
             self.metadata_size as u64,
         );
 
-        Ok((self.inner, properties, metadata_with_sig_size))
+        Ok((self.inner, self.header, properties, metadata_with_sig_size))
     }
 
     /// Prepare for writing the next source data blob corresponding to an

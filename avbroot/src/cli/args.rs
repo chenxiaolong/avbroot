@@ -164,7 +164,7 @@ pub fn main(logging_initialized: &AtomicBool, cancel_signal: &AtomicBool) -> Res
         Command::HashTree(c) => hashtree::hash_tree_main(&c, cancel_signal),
         Command::Key(c) => key::key_main(&c),
         Command::Ota(c) => ota::ota_main(&c, cancel_signal),
-        Command::Payload(c) => payload::payload_main(&c),
+        Command::Payload(c) => payload::payload_main(&c, cancel_signal),
         // Deprecated aliases.
         Command::Patch(c) => ota::patch_subcommand(&c, cancel_signal),
         Command::Extract(c) => ota::extract_subcommand(&c, cancel_signal),

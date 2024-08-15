@@ -255,6 +255,36 @@ This will check if the input file has any corrupted blocks. Currently, the comma
 
 ## `avbroot payload`
 
+### Unpacking a payload binary
+
+```bash
+avbroot payload unpack -i <input payload>
+```
+
+This subcommand unpacks the payload header information to `payload.toml` and the partition images to the `payload_images` directory.
+
+Only full payload binaries can be unpacked. Delta payload binaries from incremental OTAs are not supported.
+
+### Packing a payload binary
+
+```bash
+avbroot payload pack -o <output payload> --key <OTA private key>
+```
+
+This subcommand packs a new payload binary from the `payload.toml` file and `payload_images` directory. Any `.img` files in the `payload_images` directory that don't have a corresponding entry in `payload.toml` are silently ignored.
+
+Packing a payload binary requires compressing all of the partition images, which is very CPU intensive. If re-signing an existing payload binary without making any other modifications is all that's needed, use the `repack` subcommand instead.
+
+### Repacking a payload binary
+
+```bash
+avbroot payload repack -i <input payload> -o <output payload> --key <OTA private key>
+```
+
+This subcommand is logically equivalent to `avbroot payload unpack` followed by `avbroot payload pack`, except significantly more efficient. Instead of decompressing and recompressing all partition images, the raw data is directly copied from the input payload binary.
+
+This is useful for re-signing a payload binary without making any other changes.
+
 ### Showing payload header information
 
 ```bash

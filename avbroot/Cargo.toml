@@ -71,6 +71,7 @@ features = ["deflate"]
 rustix = { version = "0.38.9", default-features = false, features = ["process"] }
 
 [build-dependencies]
+constcat = "0.5.0"
 prost-build = "0.13.1"
 protox = "0.7.0"
 

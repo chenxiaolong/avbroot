@@ -303,7 +303,7 @@ struct UnpackCli {
     #[arg(short, long, value_name = "FILE", value_parser)]
     input: PathBuf,
 
-    /// Path to output cpio info TOML.
+    /// Path to output info TOML.
     #[arg(long, value_name = "FILE", value_parser, default_value = "cpio.toml")]
     output_info: PathBuf,
 

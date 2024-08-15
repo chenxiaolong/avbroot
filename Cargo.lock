@@ -124,6 +124,7 @@ dependencies = [
  "clap_complete",
  "cms",
  "const-oid",
+ "constcat",
  "ctrlc",
  "flate2",
  "gf256",
@@ -397,6 +398,12 @@ name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
+
+[[package]]
+name = "constcat"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f2e5af989b1955b092db01462980c0a286217f86817e12b2c09aea46bd03651"
 
 [[package]]
 name = "cpufeatures"
