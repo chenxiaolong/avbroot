@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.5.0
 
 * Update all dependencies ([PR #329])
 * Add new unpack and pack commands for `payload.bin` files ([Issue #328], [PR #331])
