@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Update all dependencies ([PR #329])
+* Add new unpack and pack commands for `payload.bin` files ([Issue #328], [PR #331])
 
 ### Version 3.4.1
 
@@ -234,6 +235,7 @@ Behind-the-scenes changes:
 [Issue #301]: https://github.com/chenxiaolong/avbroot/issues/301
 [Issue #306]: https://github.com/chenxiaolong/avbroot/issues/306
 [Issue #310]: https://github.com/chenxiaolong/avbroot/issues/310
+[Issue #328]: https://github.com/chenxiaolong/avbroot/issues/328
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -330,3 +332,4 @@ Behind-the-scenes changes:
 [PR #321]: https://github.com/chenxiaolong/avbroot/pull/321
 [PR #323]: https://github.com/chenxiaolong/avbroot/pull/323
 [PR #329]: https://github.com/chenxiaolong/avbroot/pull/329
+[PR #331]: https://github.com/chenxiaolong/avbroot/pull/331
