@@ -34,7 +34,7 @@ use crate::{
         avb::{self, Descriptor, Header},
         ota::{self, SigningWriter, ZipEntry},
         padding,
-        payload::{self, PayloadHeader, PayloadWriter},
+        payload::{self, PayloadHeader, PayloadWriter, VabcAlgo},
     },
     patch::{
         boot::{
@@ -676,12 +676,11 @@ pub fn compress_image(
     // Otherwise, compress the entire image. If VABC is enabled, we need to
     // update the CoW size estimate or else the CoW block device may run out of
     // space during flashing.
-    let need_cow = partition.estimate_cow_size.is_some();
-    if need_cow {
+    let vabc_algo = if partition.estimate_cow_size.is_some() {
         info!("Needs updated CoW size estimate: {name}");
 
-        // Only CoW v2 + lz4 seems to exist in the wild currently, so that is
-        // all we support.
+        // Only CoW v2 seems to exist in the wild currently, so that is all we
+        // support.
         let Some(dpm) = &header.manifest.dynamic_partition_metadata else {
             bail!("Dynamic partition metadata is missing");
         };
@@ -696,13 +695,17 @@ pub fn compress_image(
         }
 
         let compression = dpm.vabc_compression_param();
-        if compression != "lz4" {
+        let Some(vabc_algo) = VabcAlgo::new(compression) else {
             bail!("Unsupported VABC compression: {compression}");
-        }
-    }
+        };
+
+        Some(vabc_algo)
+    } else {
+        None
+    };
 
     let (partition_info, operations, cow_estimate) =
-        payload::compress_image(&*file, &writer, name, block_size, need_cow, cancel_signal)?;
+        payload::compress_image(&*file, &writer, name, block_size, vabc_algo, cancel_signal)?;
 
     partition.new_partition_info = Some(partition_info);
     partition.operations = operations;

@@ -6,6 +6,7 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result};
+use avbroot::format::payload::VabcAlgo;
 use serde::{Deserialize, Serialize};
 use toml_edit::DocumentMut;
 
@@ -109,6 +110,7 @@ pub struct Partition {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
+    pub vabc_algo: Option<VabcAlgo>,
     pub partitions: BTreeMap<String, Partition>,
     pub hashes: Hashes,
 }

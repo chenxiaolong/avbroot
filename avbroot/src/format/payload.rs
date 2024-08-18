@@ -5,6 +5,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     ops::Range,
     sync::atomic::AtomicBool,
@@ -887,19 +888,50 @@ fn compress_chunk(raw_data: &[u8], cancel_signal: &AtomicBool) -> Result<(Vec<u8
     Ok((data, digest_compressed))
 }
 
-fn compress_cow_size(mut raw_data: &[u8], block_size: u32) -> u64 {
-    let mut total = 0;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum VabcAlgo {
+    Lz4,
+    Gzip,
+}
 
-    while !raw_data.is_empty() {
-        let n = raw_data.len().min(block_size as usize);
-        let compressed = lz4_flex::block::compress(&raw_data[..n]);
-
-        total += compressed.len().min(n) as u64;
-
-        raw_data = &raw_data[n..];
+impl VabcAlgo {
+    pub fn new(name: &str) -> Option<Self> {
+        match name {
+            "lz4" => Some(Self::Lz4),
+            "gz" => Some(Self::Gzip),
+            _ => None,
+        }
     }
 
-    total
+    fn compressed_size(&self, mut raw_data: &[u8], block_size: u32) -> u64 {
+        let mut total = 0;
+
+        while !raw_data.is_empty() {
+            let n = raw_data.len().min(block_size as usize);
+            let compressed = match self {
+                Self::Lz4 => lz4_flex::block::compress(&raw_data[..n]),
+                // We use the miniz_oxide backend for flate2, but flate2 doesn't
+                // expose a nice function for compressing to a vec, so just use
+                // miniz_oxide directly.
+                Self::Gzip => miniz_oxide::deflate::compress_to_vec_zlib(&raw_data[..n], 9),
+            };
+
+            total += compressed.len().min(n) as u64;
+
+            raw_data = &raw_data[n..];
+        }
+
+        total
+    }
+}
+
+impl fmt::Display for VabcAlgo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Lz4 => f.write_str("lz4"),
+            Self::Gzip => f.write_str("gz"),
+        }
+    }
 }
 
 /// Compress the image and return the corresponding information to insert into
@@ -910,18 +942,18 @@ fn compress_cow_size(mut raw_data: &[u8], block_size: u32) -> u64 {
 /// update [`InstallOperation::data_offset`] in each operation manually because
 /// the initial values are relative to 0.
 ///
-/// If `need_cow_estimate` is true, the VABC CoW v2 + lz4 size estimate will be
-/// computed. The caller must update [`PartitionUpdate::estimate_cow_size`] with
-/// this value or else update_engine may fail to flash the partition due to
-/// running out of space on the CoW block device. CoW v2 + other algorithms and
-/// also CoW v3 are currently unsupported because there currently are no known
-/// OTAs that use those configurations.
+/// If `vabc_algo` is set, the VABC CoW v2 size estimate will be computed. The
+/// caller must update [`PartitionUpdate::estimate_cow_size`] with this value or
+/// else update_engine may fail to flash the partition due to running out of
+/// space on the CoW block device. CoW v2 + other algorithms and also CoW v3 are
+/// currently unsupported because there currently are no known OTAs that use
+/// those configurations.
 pub fn compress_image(
     input: &(dyn ReadSeekReopen + Sync),
     output: &(dyn WriteSeekReopen + Sync),
     partition_name: &str,
     block_size: u32,
-    need_cow_estimate: bool,
+    vabc_algo: Option<VabcAlgo>,
     cancel_signal: &AtomicBool,
 ) -> Result<(PartitionInfo, Vec<InstallOperation>, Option<u64>)> {
     const CHUNK_SIZE: u64 = 2 * 1024 * 1024;
@@ -980,8 +1012,8 @@ pub fn compress_image(
             .map(
                 |(raw_offset, raw_data)| -> Result<(Vec<u8>, InstallOperation, u64)> {
                     let (data, digest_compressed) = compress_chunk(&raw_data, cancel_signal)?;
-                    let cow_size = if need_cow_estimate {
-                        compress_cow_size(&raw_data, block_size)
+                    let cow_size = if let Some(algo) = vabc_algo {
+                        algo.compressed_size(&raw_data, block_size)
                     } else {
                         0
                     };
@@ -1028,11 +1060,25 @@ pub fn compress_image(
         hash: Some(digest_uncompressed.as_ref().to_vec()),
     };
 
-    let cow_estimate = if need_cow_estimate {
-        // Because lz4_flex compresses better than official lz4.
-        let fudge = cow_estimate / 100;
+    let cow_estimate = if vabc_algo.is_some() {
+        // lz4_flex and miniz_oxide usually compress better than the lz4 and
+        // zlib implementations used by libsnapshot_cow. Make up for this by
+        // adding percentage-based overhead.
+        cow_estimate += cow_estimate / 100;
 
-        Some(cow_estimate + fudge)
+        // We also need to account for constant overhead, especially with
+        // smaller partitions. We can match what delta_generator normally adds
+        // in CowWriterV2::InitPos() exactly. Since we only ever create full
+        // OTAs, we can assume that all CoW operations are kCowReplaceOp.
+
+        // sizeof(CowHeader).
+        cow_estimate += 38;
+        // header_.buffer_size (equal to BUFFER_REGION_DEFAULT_SIZE).
+        cow_estimate += 2 * 1024 * 1024;
+        // CowOptions::cluster_ops * sizeof(CowOperationV2).
+        cow_estimate += 200 * 20;
+
+        Some(cow_estimate)
     } else {
         None
     };

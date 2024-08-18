@@ -577,6 +577,7 @@ fn create_payload(
     partitions: &BTreeMap<String, Partition>,
     inputs: &BTreeMap<String, PSeekFile>,
     ota_info: &OtaInfo,
+    profile: &Profile,
     key_ota: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
@@ -594,14 +595,14 @@ fn create_payload(
             .map(PSeekFile::new)
             .with_context(|| format!("Failed to create temp file for: {name}"))?;
 
-        let (partition_info, operations, cow_estimate) = payload::compress_image(
-            file,
-            &writer,
-            name,
-            4096,
-            dynamic_partitions_names.contains(name),
-            cancel_signal,
-        )?;
+        let vabc_algo = if dynamic_partitions_names.contains(name) {
+            profile.vabc_algo
+        } else {
+            None
+        };
+
+        let (partition_info, operations, cow_estimate) =
+            payload::compress_image(file, &writer, name, 4096, vabc_algo, cancel_signal)?;
 
         compressed.insert(name, writer);
 
@@ -645,7 +646,7 @@ fn create_payload(
                 }],
                 snapshot_enabled: Some(true),
                 vabc_enabled: Some(true),
-                vabc_compression_param: Some("lz4".to_owned()),
+                vabc_compression_param: profile.vabc_algo.map(|a| a.to_string()),
                 cow_version: Some(2),
                 vabc_feature_set: None,
             }),
@@ -746,6 +747,7 @@ fn create_ota(
                     &profile.partitions,
                     &inputs,
                     ota_info,
+                    profile,
                     key_ota,
                     cancel_signal,
                 )

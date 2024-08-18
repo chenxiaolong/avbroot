@@ -12,6 +12,9 @@ security_patch_level = "2024-01-01"
 # Google Pixel 7 Pro
 # What's unique: init_boot (boot v4) + vendor_boot (vendor v4)
 
+[profile.pixel_v4_gki]
+vabc_algo = "Lz4"
+
 [profile.pixel_v4_gki.partitions.boot]
 avb.signed = true
 data.type = "boot"
@@ -46,11 +49,14 @@ data.version = "vendor_v4"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v4_gki.hashes]
-original = "6b140c378d21eae2fa4fc581bce13a689b21bd32f5fba865698d1fd322f2f8c6"
-patched = "a68b3a44c0cf015a225f92837c05fd0dec6e159584c5880eff30d12daa7123ff"
+original = "c00f891f941f3dddb28966f7b07f3acea773bee104dace82b37c2d1341f09422"
+patched = "ce9d8ee97828d233809742a5d3f23aa27b042675b1935ca9e3df0592c55788fd"
 
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
+
+[profile.pixel_v4_non_gki]
+vabc_algo = "Lz4"
 
 [profile.pixel_v4_non_gki.partitions.boot]
 avb.signed = true
@@ -80,11 +86,14 @@ data.version = "vendor_v4"
 data.ramdisks = [["init", "otacerts", "first_stage", "dsu_key_dir"], ["dlkm"]]
 
 [profile.pixel_v4_non_gki.hashes]
-original = "31963e6f81986c6686111f50e36b89e4d85ee5c02bc8e5ecd560528bc98d6fe7"
-patched = "a13173a006ad94b25db682bb14fde2e36891417727d6541bdf5f9bca57d26751"
+original = "4d692bc777b568b0626d3c08d2e6f83f1b472db5ad903486daaec6a78d0cc26e"
+patched = "e27673e4f30933710c11d51f0e73849068cbe9bc9f54e6076bdd93f9a5c8ea0a"
 
 # Google Pixel 4a 5G
 # What's unique: boot (boot v3) + vendor_boot (vendor v3)
+
+[profile.pixel_v3]
+vabc_algo = "Lz4"
 
 [profile.pixel_v3.partitions.boot]
 avb.signed = true
@@ -115,11 +124,14 @@ data.version = "vendor_v3"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v3.hashes]
-original = "e684aacb54464098c1b8e3f499efe35dff10ea792e89d71a83404620d0108b3e"
-patched = "49e810ae76154bccf2dc7d810b9eec19d23a5b8fa32381469660488d0a25121b"
+original = "f432dc7931520feb238474aa707dd5299747562ffe6129f3f763b5f11ac473ab"
+patched = "3850a2e73bd783a1ec4a70c59f37d2374e017c20df7ab4b591182b14d187c18e"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)
+
+[profile.pixel_v2]
+vabc_algo = "Gzip"
 
 [profile.pixel_v2.partitions.boot]
 avb.signed = false
@@ -144,5 +156,5 @@ data.type = "vbmeta"
 data.deps = ["system"]
 
 [profile.pixel_v2.hashes]
-original = "ee9568797d9195985f14753b89949d8ebb08c8863a32eceeeec6e8d94661b1cf"
-patched = "e413f1f87ee5ba53d402edad03b0df8af451b5b0323202a9d32b8327d433d340"
+original = "1b45235b58054009cc496f6c3ee11d3dc16ed5c388c861761e26a6fce83103a0"
+patched = "193b2dc70dd465d686f35c7b7f74d2cc1b06a55e48cf5c2e4df0f667e03032fc"
