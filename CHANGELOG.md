@@ -11,7 +11,7 @@
 
 * Add support for gzip compression when computing CoW size estimates ([Issue #332], [PR #333])
   * This allows `--replace` to successfully replace dynamic partitions on legacy devices, like the Pixel 4a 5G
-* Minor code cleanup ([PR #334])
+* Minor code cleanup ([PR #334], [PR #335])
 
 ### Version 3.5.0
 
@@ -342,3 +342,4 @@ Behind-the-scenes changes:
 [PR #331]: https://github.com/chenxiaolong/avbroot/pull/331
 [PR #333]: https://github.com/chenxiaolong/avbroot/pull/333
 [PR #334]: https://github.com/chenxiaolong/avbroot/pull/334
+[PR #335]: https://github.com/chenxiaolong/avbroot/pull/335
