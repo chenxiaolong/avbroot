@@ -38,39 +38,6 @@ pub enum Command {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum LogLevel {
-    Trace,
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
-
-impl LogLevel {
-    fn as_level(self) -> Level {
-        match self {
-            Self::Trace => Level::TRACE,
-            Self::Debug => Level::DEBUG,
-            Self::Info => Level::INFO,
-            Self::Warn => Level::WARN,
-            Self::Error => Level::ERROR,
-        }
-    }
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Info
-    }
-}
-
-impl fmt::Display for LogLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.to_possible_value().ok_or(fmt::Error)?.get_name())
-    }
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum LogFormat {
     Short,
     Medium,
@@ -96,8 +63,8 @@ pub struct Cli {
     pub command: Command,
 
     /// Lowest log message severity to output.
-    #[arg(long, global = true, value_name = "LEVEL", default_value_t)]
-    pub log_level: LogLevel,
+    #[arg(long, global = true, value_name = "LEVEL", default_value_t = Level::INFO)]
+    pub log_level: Level,
 
     /// Output format for log messages.
     #[arg(long, global = true, value_name = "FORMAT", default_value_t)]
@@ -124,11 +91,11 @@ impl FormatTime for ShortUptime {
     }
 }
 
-pub fn init_logging(log_level: LogLevel, log_format: LogFormat) {
+pub fn init_logging(log_level: Level, log_format: LogFormat) {
     let builder = tracing_subscriber::fmt()
         .with_writer(io::stderr)
         .with_ansi(io::stderr().is_terminal())
-        .with_max_level(log_level.as_level());
+        .with_max_level(log_level);
 
     match log_format {
         LogFormat::Short => {

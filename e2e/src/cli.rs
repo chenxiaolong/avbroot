@@ -5,8 +5,9 @@
 
 use std::{ffi::OsString, path::PathBuf};
 
-use avbroot::cli::args::{LogFormat, LogLevel};
+use avbroot::cli::args::LogFormat;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use tracing::Level;
 
 #[derive(Debug, Args)]
 pub struct ProfileGroup {
@@ -69,8 +70,8 @@ pub struct Cli {
     pub command: Command,
 
     /// Lowest log message severity to output.
-    #[arg(long, global = true, value_name = "LEVEL", default_value_t)]
-    pub log_level: LogLevel,
+    #[arg(long, global = true, value_name = "LEVEL", default_value_t = Level::INFO)]
+    pub log_level: Level,
 
     /// Output format for log messages.
     #[arg(long, global = true, value_name = "FORMAT", default_value_t = LogFormat::Medium)]
