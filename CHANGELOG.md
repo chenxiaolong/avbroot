@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.6.0
 
 * Add support for gzip compression when computing CoW size estimates ([Issue #332], [PR #333])
   * This allows `--replace` to successfully replace dynamic partitions on legacy devices, like the Pixel 4a 5G
