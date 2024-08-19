@@ -69,6 +69,7 @@ default-features = false
 features = ["deflate"]
 
 [target.'cfg(unix)'.dependencies]
+libc = "0.2.158"
 rustix = { version = "0.38.9", default-features = false, features = ["process"] }
 
 [build-dependencies]

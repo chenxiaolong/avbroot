@@ -59,6 +59,10 @@ pub enum Error {
     CommandExecutionFailed(String, ExitStatus),
     #[error("Signature from signing helper does not match public key: {0:?}")]
     SigningHelperBadSignature(PathBuf),
+    #[error("Passphrase prompt requires an interactive terminal")]
+    NotInteractive(#[source] io::Error),
+    #[error("Failed to prompt for passphrase")]
+    PassphrasePrompt(#[source] io::Error),
     #[error("Passphrases do not match")]
     ConfirmPassphrase,
     #[error("Failed to read environment variable: {0:?}")]
@@ -136,13 +140,29 @@ impl PassphraseSource {
         }
     }
 
+    fn prompt(prompt: &str) -> Result<String> {
+        match rpassword::prompt_password(prompt) {
+            Ok(p) => Ok(p),
+            Err(e) => {
+                #[cfg(unix)]
+                if let Some(errno) = e.raw_os_error() {
+                    if errno == libc::ENXIO || errno == libc::ENOTTY {
+                        return Err(Error::NotInteractive(e));
+                    }
+                }
+
+                Err(Error::PassphrasePrompt(e))
+            }
+        }
+    }
+
     pub fn acquire(&self, confirm: bool) -> Result<String> {
         let passphrase = match self {
             Self::Prompt(p) => {
-                let first = rpassword::prompt_password(p)?;
+                let first = Self::prompt(p)?;
 
                 if confirm {
-                    let second = rpassword::prompt_password("Confirm: ")?;
+                    let second = Self::prompt("Confirm: ")?;
 
                     if first != second {
                         return Err(Error::ConfirmPassphrase);
