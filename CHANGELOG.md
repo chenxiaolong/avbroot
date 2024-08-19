@@ -7,6 +7,11 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for gzip compression when computing CoW size estimates ([Issue #332], [PR #333])
+  * This allows `--replace` to successfully replace dynamic partitions on legacy devices, like the Pixel 4a 5G
+
 ### Version 3.5.0
 
 * Update all dependencies ([PR #329])
@@ -236,6 +241,7 @@ Behind-the-scenes changes:
 [Issue #306]: https://github.com/chenxiaolong/avbroot/issues/306
 [Issue #310]: https://github.com/chenxiaolong/avbroot/issues/310
 [Issue #328]: https://github.com/chenxiaolong/avbroot/issues/328
+[Issue #332]: https://github.com/chenxiaolong/avbroot/issues/332
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -333,3 +339,4 @@ Behind-the-scenes changes:
 [PR #323]: https://github.com/chenxiaolong/avbroot/pull/323
 [PR #329]: https://github.com/chenxiaolong/avbroot/pull/329
 [PR #331]: https://github.com/chenxiaolong/avbroot/pull/331
+[PR #333]: https://github.com/chenxiaolong/avbroot/pull/333
