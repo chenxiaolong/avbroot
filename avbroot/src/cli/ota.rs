@@ -729,15 +729,13 @@ fn patch_ota_payload(
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
-    let header = PayloadHeader::from_reader(payload.reopen_boxed()?)
+    let mut header = PayloadHeader::from_reader(payload.reopen_boxed()?)
         .context("Failed to load OTA payload header")?;
     if !header.is_full_ota() {
         bail!("Payload is a delta OTA, not a full OTA");
     }
 
-    let header = Mutex::new(header);
-    let mut header_locked = header.lock().unwrap();
-    let all_partitions = header_locked
+    let all_partitions = header
         .manifest
         .partitions
         .iter()
@@ -755,7 +753,7 @@ fn patch_ota_payload(
     // Determine what images need to be patched. For simplicity, we pre-read all
     // vbmeta images since they're tiny. They're discarded later if the they
     // don't need to be modified.
-    let required_images = RequiredImages::new(&header_locked.manifest);
+    let required_images = RequiredImages::new(&header.manifest);
     let vbmeta_images = required_images.iter_vbmeta().collect::<HashSet<_>>();
 
     // The set of source images to be inserted into the new payload, replacing
@@ -767,7 +765,7 @@ fn patch_ota_payload(
         payload,
         &required_images,
         external_images,
-        &header_locked,
+        &header,
         cancel_signal,
     )?;
 
@@ -809,7 +807,7 @@ fn patch_ota_payload(
         &mut vbmeta_order,
         clear_vbmeta_flags,
         key_avb,
-        header_locked.manifest.block_size().into(),
+        header.manifest.block_size().into(),
     )?;
 
     // Unmodified vbmeta images no longer need to be kept around either.
@@ -821,7 +819,7 @@ fn patch_ota_payload(
             let modified_operations = compress_image(
                 &name,
                 &mut input_file.file,
-                &mut header_locked,
+                &mut header,
                 // We can only perform the optimization of avoiding
                 // recompression if the image came from the original payload.
                 if name == system_target && !external_images.contains_key(&name) {
@@ -839,7 +837,7 @@ fn patch_ota_payload(
 
     info!("Generating new OTA payload");
 
-    let mut payload_writer = PayloadWriter::new(writer, header_locked.clone(), key_ota.clone())
+    let mut payload_writer = PayloadWriter::new(writer, header.clone(), key_ota.clone())
         .context("Failed to write payload header")?;
     let mut orig_payload_reader = payload.reopen_boxed().context("Failed to open payload")?;
 
@@ -857,7 +855,7 @@ fn patch_ota_payload(
 
         let pi = payload_writer.partition_index().unwrap();
         let oi = payload_writer.operation_index().unwrap();
-        let orig_partition = &header_locked.manifest.partitions[pi];
+        let orig_partition = &header.manifest.partitions[pi];
         let orig_operation = &orig_partition.operations[oi];
         let data_offset = orig_operation
             .data_offset
@@ -887,7 +885,7 @@ fn patch_ota_payload(
 
         // Otherwise, copy from the original payload.
         let data_offset = data_offset
-            .checked_add(header_locked.blob_offset)
+            .checked_add(header.blob_offset)
             .ok_or_else(|| anyhow!("data_offset overflow in partition #{pi} operation #{oi}"))?;
 
         orig_payload_reader
