@@ -5,11 +5,13 @@
 
 use std::{
     collections::BTreeMap,
+    fmt,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     iter,
     sync::atomic::AtomicBool,
 };
 
+use clap::ValueEnum;
 use cms::signed_data::SignedData;
 use const_oid::{db::rfc5912, ObjectIdentifier};
 use memchr::memmem;
@@ -374,6 +376,18 @@ fn add_payload_metadata_entry(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ZipMode {
+    Streaming,
+    Seekable,
+}
+
+impl fmt::Display for ZipMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.to_possible_value().ok_or(fmt::Error)?.get_name())
+    }
+}
+
 /// Add metadata files to the output OTA zip. `zip_entries` is the list of
 /// [`ZipEntry`] already written to `zip_writer`. `next_offset` is the current
 /// file offset (where the next zip entry's local header begins).
@@ -389,6 +403,7 @@ pub fn add_metadata(
     next_offset: u64,
     metadata: &OtaMetadata,
     payload_metadata_size: u64,
+    zip_mode: ZipMode,
 ) -> Result<OtaMetadata> {
     let mut metadata = metadata.clone();
     let options = FileOptions::default().compression_method(CompressionMethod::Stored);
@@ -409,7 +424,11 @@ pub fn add_metadata(
     // Add the placeholders to a temporary zip to compute final property files.
     let (temp_legacy_offset, temp_modern_offset) = {
         let (legacy_raw, modern_raw) = serialize_metadata(&metadata)?;
-        let mut writer = ZipWriter::new_streaming(Cursor::new(Vec::new()));
+        let raw_writer = Cursor::new(Vec::new());
+        let mut writer = match zip_mode {
+            ZipMode::Streaming => ZipWriter::new_streaming(raw_writer),
+            ZipMode::Seekable => ZipWriter::new(raw_writer),
+        };
 
         writer.start_file_with_extra_data(PATH_METADATA, options)?;
         let legacy_offset = writer.end_extra_data()?;
@@ -637,17 +656,83 @@ pub fn parse_zip_ota_info(
     Ok((metadata, certificate, header, properties))
 }
 
+/// Ensure that we're using a non-zip64 EOCD and there's no archive comment.
+fn validate_eocd(eocd: &[u8]) -> io::Result<()> {
+    if &eocd[..4] != b"PK\x05\x06" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "EOCD magic not found",
+        ));
+    } else if &eocd[20..22] != b"\0\0" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Archive comment is not 0 bytes",
+        ));
+    }
+
+    Ok(())
+}
+
+/// Compute the digital signature for the specified digest, formatted as a zip
+/// file archive comment. The returned buffer includes both the 2-byte comment
+/// size field and the comment itself. It should be written to the end of the
+/// zip file after truncating the original 2-byte comment size field.
+fn compute_signature_comment(
+    key: &RsaSigningKey,
+    cert: &Certificate,
+    digest: ring::digest::Digest,
+) -> Result<Vec<u8>> {
+    let cms_signature = crypto::cms_sign_external(key, cert, digest.as_ref())?;
+    let cms_signature_der = cms_signature.to_der()?;
+
+    // Includes placeholder for the EOCD comment size field.
+    let mut buf = vec![0; 2];
+
+    // NULL-terminated readable message and actual signature.
+    buf.extend(COMMENT_MESSAGE);
+    buf.extend(&cms_signature_der);
+
+    // 6-byte OTA footer.
+    let comment_size = buf.len() - 2 + 6;
+
+    // Absolute value of the offset of the signature from the end of the archive
+    // comment.
+    buf.extend((cms_signature_der.len() as u16 + 6).to_le_bytes());
+
+    // Magic value.
+    buf.extend(b"\xff\xff");
+
+    // Archive comment size (for use by the OTA signature verifier).
+    buf.extend(((comment_size) as u16).to_le_bytes());
+
+    if let Some(o) = memmem::find(&buf[2..], ZIP_EOCD_MAGIC) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Archive comment contains EOCD magic at offset {o}"),
+        )
+        .into());
+    }
+
+    // Archive comment size (for the EOCD comment size field).
+    buf[..2].copy_from_slice(&((comment_size) as u16).to_le_bytes());
+
+    Ok(buf)
+}
+
 /// A writer that produces a signapk-style signed zip file with a whole-file
 /// signature stored in the zip archive comment. The data will be left in an
 /// unusable state if [`Self::finish()`] is not called.
-pub struct SigningWriter<W: Write> {
+///
+/// This writer works with streaming zip files created with data descriptors.
+/// The data is hashed as it is being written.
+pub struct StreamingSigningWriter<W> {
     inner: HashingWriter<W>,
     // Android only supports non-zip64 EOCD.
     queue: [u8; 22],
     used: usize,
 }
 
-impl<W: Write> SigningWriter<W> {
+impl<W: Write> StreamingSigningWriter<W> {
     pub fn new(inner: W) -> Self {
         Self {
             inner: HashingWriter::new(inner, Context::new(&ring::digest::SHA256)),
@@ -661,15 +746,9 @@ impl<W: Write> SigningWriter<W> {
             return Err(
                 io::Error::new(io::ErrorKind::InvalidData, "Too small to contain EOCD").into(),
             );
-        } else if &self.queue[..4] != b"PK\x05\x06" {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "EOCD magic not found").into());
-        } else if &self.queue[20..22] != b"\0\0" {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Archive comment is not 0 bytes",
-            )
-            .into());
         }
+
+        validate_eocd(&self.queue)?;
 
         // Chop off the archive comment size field and write the remaining data.
         self.inner.write_all(&self.queue[..20])?;
@@ -677,43 +756,14 @@ impl<W: Write> SigningWriter<W> {
         let (mut raw_writer, context) = self.inner.finish();
         let digest = context.finish();
 
-        let cms_signature = crypto::cms_sign_external(key, cert, digest.as_ref())?;
-        let cms_signature_der = cms_signature.to_der()?;
-
-        let mut comment = COMMENT_MESSAGE.to_vec();
-        comment.extend(&cms_signature_der);
-
-        let comment_size = comment.len() + 6;
-
-        // Absolute value of the offset of the signature from the end of the
-        // archive comment.
-        comment.extend((cms_signature_der.len() as u16 + 6).to_le_bytes());
-
-        // Magic value.
-        comment.extend(b"\xff\xff");
-
-        // EOCD archive comment size.
-        comment.extend(((comment_size) as u16).to_le_bytes());
-
-        if let Some(o) = memmem::find(&comment, ZIP_EOCD_MAGIC) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Archive comment contains EOCD magic at offset {o}"),
-            )
-            .into());
-        }
-
-        // Write EOCD comment size field, which was removed before.
-        raw_writer.write_all(&((comment_size) as u16).to_le_bytes())?;
-
-        // Finally, write the comment.
-        raw_writer.write_all(&comment)?;
+        let size_and_comment = compute_signature_comment(key, cert, digest)?;
+        raw_writer.write_all(&size_and_comment)?;
 
         Ok(raw_writer)
     }
 }
 
-impl<W: Write> Write for SigningWriter<W> {
+impl<W: Write> Write for StreamingSigningWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let (front, back) = buf.split_at(buf.len().saturating_sub(self.queue.len()));
         if front.is_empty() {
@@ -743,5 +793,173 @@ impl<W: Write> Write for SigningWriter<W> {
 
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
+    }
+}
+
+/// A writer that produces a signapk-style signed zip file with a whole-file
+/// signature stored in the zip archive comment. The data will be left in an
+/// unusable state if [`Self::finish()`] is not called.
+///
+/// This writer works with zip files written without data descriptors. The data
+/// is hashed during [`Self::finish()`].
+pub struct SeekableSigningWriter<W> {
+    inner: W,
+}
+
+impl<W: Read + Write + Seek> SeekableSigningWriter<W> {
+    pub fn new(inner: W) -> Self {
+        Self { inner }
+    }
+
+    pub fn finish(
+        mut self,
+        key: &RsaSigningKey,
+        cert: &Certificate,
+        cancel_signal: &AtomicBool,
+    ) -> Result<W> {
+        let file_size = self.seek(SeekFrom::End(0))?;
+
+        // Android only supports non-zip64 EOCD.
+        if file_size < 22 {
+            return Err(
+                io::Error::new(io::ErrorKind::InvalidData, "Too small to contain EOCD").into(),
+            );
+        }
+
+        self.seek_relative(-22)?;
+        let mut eocd = [0u8; 22];
+        self.read_exact(&mut eocd)?;
+
+        validate_eocd(&eocd)?;
+
+        // Compute the digest of everything up until the comment size field.
+        let mut hashing_writer = HashingWriter::new(
+            io::sink(),
+            ring::digest::Context::new(&ring::digest::SHA256),
+        );
+
+        self.rewind()?;
+        stream::copy_n(&mut self, &mut hashing_writer, file_size - 2, cancel_signal)?;
+
+        let digest = hashing_writer.finish().1.finish();
+
+        let size_and_comment = compute_signature_comment(key, cert, digest)?;
+        self.inner.write_all(&size_and_comment)?;
+
+        Ok(self.inner)
+    }
+}
+
+impl<W: Read> Read for SeekableSigningWriter<W> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl<W: Write> Write for SeekableSigningWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<W: Seek> Seek for SeekableSigningWriter<W> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+#[allow(clippy::large_enum_variant)]
+enum SigningWriterInner<W> {
+    Streaming {
+        inner: StreamingSigningWriter<W>,
+    },
+    Seekable {
+        inner: SeekableSigningWriter<W>,
+        /// We need to store this because [`SigningWriter::finish`] needs to be
+        /// in `impl<W: Write>`, where [`SeekableSigningWriter::finish`] is not
+        /// available.
+        finish: fn(
+            SeekableSigningWriter<W>,
+            key: &RsaSigningKey,
+            cert: &Certificate,
+            cancel_signal: &AtomicBool,
+        ) -> Result<W>,
+    },
+}
+
+/// A writer that produces a signapk-style signed zip file with a whole-file
+/// signature stored in the zip archive comment. The data will be left in an
+/// unusable state if [`Self::finish()`] is not called.
+///
+/// This is a partially type-erased wrapper around [`StreamingSigningWriter`]
+/// and [`SeekableSigningWriter`].
+pub struct SigningWriter<W>(SigningWriterInner<W>);
+
+impl<W: Write> SigningWriter<W> {
+    pub fn new_streaming(inner: W) -> Self {
+        Self(SigningWriterInner::Streaming {
+            inner: StreamingSigningWriter::new(inner),
+        })
+    }
+
+    pub fn finish(
+        self,
+        key: &RsaSigningKey,
+        cert: &Certificate,
+        cancel_signal: &AtomicBool,
+    ) -> Result<W> {
+        match self.0 {
+            SigningWriterInner::Streaming { inner } => inner.finish(key, cert),
+            SigningWriterInner::Seekable { inner, finish } => {
+                finish(inner, key, cert, cancel_signal)
+            }
+        }
+    }
+}
+
+impl<W: Read + Write + Seek> SigningWriter<W> {
+    pub fn new_seekable(inner: W) -> Self {
+        Self(SigningWriterInner::Seekable {
+            inner: SeekableSigningWriter::new(inner),
+            finish: SeekableSigningWriter::finish,
+        })
+    }
+}
+
+impl<W: Read> Read for SigningWriter<W> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match &mut self.0 {
+            SigningWriterInner::Streaming { .. } => panic!("Called with streaming writer"),
+            SigningWriterInner::Seekable { inner, .. } => inner.read(buf),
+        }
+    }
+}
+
+impl<W: Write> Write for SigningWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match &mut self.0 {
+            SigningWriterInner::Streaming { inner } => inner.write(buf),
+            SigningWriterInner::Seekable { inner, .. } => inner.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match &mut self.0 {
+            SigningWriterInner::Streaming { inner } => inner.flush(),
+            SigningWriterInner::Seekable { inner, .. } => inner.flush(),
+        }
+    }
+}
+
+impl<W: Seek> Seek for SigningWriter<W> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match &mut self.0 {
+            SigningWriterInner::Streaming { .. } => panic!("Called with streaming writer"),
+            SigningWriterInner::Seekable { inner, .. } => inner.seek(pos),
+        }
     }
 }

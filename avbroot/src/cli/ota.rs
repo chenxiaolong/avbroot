@@ -32,7 +32,7 @@ use crate::{
     crypto::{self, PassphraseSource, RsaSigningKey},
     format::{
         avb::{self, Descriptor, Header},
-        ota::{self, SigningWriter, ZipEntry},
+        ota::{self, SigningWriter, ZipEntry, ZipMode},
         padding,
         payload::{self, PayloadHeader, PayloadWriter, VabcAlgo},
     },
@@ -47,8 +47,8 @@ use crate::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
     },
     stream::{
-        self, CountingWriter, FromReader, HashingWriter, HolePunchingWriter, PSeekFile,
-        ReadSeekReopen, Reopen, SectionReader, ToWriter, WriteSeekReopen,
+        self, CountingWriter, FromReader, HashingWriter, PSeekFile, ReadSeekReopen, Reopen,
+        SectionReader, ToWriter, WriteSeekReopen,
     },
     util,
 };
@@ -916,6 +916,7 @@ fn patch_ota_zip(
     external_images: &HashMap<String, PathBuf>,
     mut boot_patchers: Vec<Box<dyn BootImagePatch + Sync>>,
     clear_vbmeta_flags: bool,
+    zip_mode: ZipMode,
     key_avb: &RsaSigningKey,
     key_ota: &RsaSigningKey,
     cert_ota: &Certificate,
@@ -1078,7 +1079,16 @@ fn patch_ota_zip(
 
     info!("Generating new OTA metadata");
 
-    let data_descriptor_size = if last_entry_used_zip64 { 24 } else { 16 };
+    let data_descriptor_size = match zip_mode {
+        ZipMode::Streaming => {
+            if last_entry_used_zip64 {
+                24
+            } else {
+                16
+            }
+        }
+        ZipMode::Seekable => 0,
+    };
     let metadata = ota::add_metadata(
         &entries,
         zip_writer,
@@ -1086,6 +1096,7 @@ fn patch_ota_zip(
         entries.last().map(|e| e.offset + e.size).unwrap() + data_descriptor_size,
         &metadata.unwrap(),
         payload_metadata_size.unwrap(),
+        zip_mode,
     )
     .context("Failed to write new OTA metadata")?;
 
@@ -1313,10 +1324,16 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     )
     .context("Failed to open temporary output file")?;
     let temp_path = temp_writer.path().to_owned();
-    let hole_punching_writer = HolePunchingWriter::new(temp_writer);
-    let buffered_writer = BufWriter::new(hole_punching_writer);
-    let signing_writer = SigningWriter::new(buffered_writer);
-    let mut zip_writer = ZipWriter::new_streaming(signing_writer);
+    let mut zip_writer = match cli.zip_mode {
+        ZipMode::Streaming => {
+            let signing_writer = SigningWriter::new_streaming(temp_writer);
+            ZipWriter::new_streaming(signing_writer)
+        }
+        ZipMode::Seekable => {
+            let signing_writer = SigningWriter::new_seekable(temp_writer);
+            ZipWriter::new(signing_writer)
+        }
+    };
 
     let (metadata, payload_metadata_size) = patch_ota_zip(
         &raw_reader,
@@ -1325,6 +1342,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &external_images,
         boot_patchers,
         cli.clear_vbmeta_flags,
+        cli.zip_mode,
         &key_avb,
         &key_ota,
         &cert_ota,
@@ -1335,13 +1353,9 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     let signing_writer = zip_writer
         .finish()
         .context("Failed to finalize output zip")?;
-    let buffered_writer = signing_writer
-        .finish(&key_ota, &cert_ota)
+    let mut temp_writer = signing_writer
+        .finish(&key_ota, &cert_ota, cancel_signal)
         .context("Failed to sign output zip")?;
-    let hole_punching_writer = buffered_writer
-        .into_inner()
-        .context("Failed to flush output zip")?;
-    let mut temp_writer = hole_punching_writer.into_inner();
     temp_writer.flush().context("Failed to flush output zip")?;
 
     // We do a lot of low-level hackery. Reopen and verify offsets.
@@ -1914,6 +1928,24 @@ pub struct PatchCli {
     /// Forcibly clear vbmeta flags if they disable AVB.
     #[arg(long, help_heading = HEADING_OTHER)]
     pub clear_vbmeta_flags: bool,
+
+    /// Zip creation mode for the output OTA zip.
+    ///
+    /// The streaming mode produces zip files that contain data descriptors.
+    /// The zip file is hashed as it is being written. This mode is the default
+    /// and works with the vast majority of devices.
+    ///
+    /// The seekable mode produces zip files that do not use data descriptors.
+    /// The zip file is reread and hashed after it has been fully written. The
+    /// output file is more likely to be compatible with devices that have
+    /// broken zip file parsers.
+    #[arg(
+        long,
+        value_name = "MODE",
+        default_value_t = ZipMode::Streaming,
+        help_heading = HEADING_OTHER
+    )]
+    pub zip_mode: ZipMode,
 
     /// (Deprecated: no longer needed)
     #[arg(

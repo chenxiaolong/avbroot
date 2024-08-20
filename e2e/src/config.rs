@@ -112,7 +112,8 @@ pub struct Partition {
 pub struct Profile {
     pub vabc_algo: Option<VabcAlgo>,
     pub partitions: BTreeMap<String, Partition>,
-    pub hashes: Hashes,
+    pub hashes_streaming: Hashes,
+    pub hashes_seekable: Hashes,
 }
 
 #[derive(Serialize, Deserialize)]

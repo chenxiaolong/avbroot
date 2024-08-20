@@ -11,8 +11,8 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     env,
     ffi::{OsStr, OsString},
-    fs::{self, File},
-    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
+    fs::{self, File, OpenOptions},
+    io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -35,7 +35,7 @@ use avbroot::{
         },
         compression::{CompressedFormat, CompressedWriter},
         cpio::{self, CpioEntry, CpioEntryData},
-        ota::{self, SigningWriter, ZipEntry},
+        ota::{self, SigningWriter, ZipEntry, ZipMode},
         padding,
         payload::{self, PayloadHeader, PayloadWriter},
     },
@@ -696,15 +696,19 @@ fn create_payload(
     Ok((properties, metadata_size))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_ota(
     output: &Path,
     ota_info: &OtaInfo,
     profile: &Profile,
+    zip_mode: ZipMode,
     key_avb: &RsaSigningKey,
     key_ota: &RsaSigningKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
+    info!("Generating OTA: {output:?}");
+
     let inputs = create_partition_images(
         &profile.partitions,
         ota_info,
@@ -713,11 +717,23 @@ fn create_ota(
         cancel_signal,
     )?;
 
-    let raw_writer =
-        File::create(output).with_context(|| format!("Failed to open for writing: {output:?}"))?;
-    let buffered_writer = BufWriter::new(raw_writer);
-    let signing_writer = SigningWriter::new(buffered_writer);
-    let mut zip_writer = ZipWriter::new_streaming(signing_writer);
+    let raw_writer = OpenOptions::new()
+        .read(zip_mode == ZipMode::Seekable)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(output)
+        .with_context(|| format!("Failed to open for writing: {output:?}"))?;
+    let mut zip_writer = match zip_mode {
+        ZipMode::Streaming => {
+            let signing_writer = SigningWriter::new_streaming(raw_writer);
+            ZipWriter::new_streaming(signing_writer)
+        }
+        ZipMode::Seekable => {
+            let signing_writer = SigningWriter::new_seekable(raw_writer);
+            ZipWriter::new(signing_writer)
+        }
+    };
     let options = FileOptions::default()
         .compression_method(CompressionMethod::Stored)
         .large_file(false);
@@ -802,13 +818,18 @@ fn create_ota(
         spl_downgrade: false,
     };
 
+    let data_descriptor_size = match zip_mode {
+        ZipMode::Streaming => 16,
+        ZipMode::Seekable => 0,
+    };
     ota::add_metadata(
         &entries,
         &mut zip_writer,
         // Offset where next entry would begin.
-        entries.last().map(|e| e.offset + e.size).unwrap() + 16,
+        entries.last().map(|e| e.offset + e.size).unwrap() + data_descriptor_size,
         &metadata,
         payload_metadata_size.unwrap(),
+        zip_mode,
     )
     .context("Failed to write new OTA metadata")?;
 
@@ -816,7 +837,7 @@ fn create_ota(
         .finish()
         .context("Failed to finalize output zip")?;
     let mut buffered_writer = signing_writer
-        .finish(key_ota, cert_ota)
+        .finish(key_ota, cert_ota, cancel_signal)
         .context("Failed to sign output zip")?;
     buffered_writer
         .flush()
@@ -986,10 +1007,12 @@ impl KeySet {
     new_keys_with_prefix!(new_for_test, "TEST_KEY_DO_NOT_USE_");
 }
 
+#[allow(clippy::too_many_arguments)]
 fn patch_image(
     input_file: &Path,
     output_file: &Path,
     system_image_file: &Path,
+    zip_mode: ZipMode,
     extra_args: &[&OsStr],
     keys: &KeySet,
     signing_helper: bool,
@@ -1002,6 +1025,8 @@ fn patch_image(
     } else {
         (&keys.avb_key_file, &keys.ota_key_file)
     };
+
+    let zip_mode_arg = zip_mode.to_string();
 
     // We're intentionally using the CLI interface.
     let mut args: Vec<&OsStr> = vec![
@@ -1024,6 +1049,8 @@ fn patch_image(
         OsStr::new("--cert-ota"),
         keys.ota_cert_file.as_os_str(),
         OsStr::new("--dsu"),
+        OsStr::new("--zip-mode"),
+        OsStr::new(&zip_mode_arg),
     ];
 
     let argv0: OsString;
@@ -1130,93 +1157,99 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
     ];
 
     for name in profiles {
-        let _span = info_span!("profile", name).entered();
-
         if Path::new(name).file_name() != Some(OsStr::new(name)) {
             bail!("Unsafe profile name: {name}");
         }
 
-        info!("Generating OTA");
-
         let profile = &config.profile[name];
 
-        // Can't used NamedTempFile because avbroot does atomic replaces.
-        let profile_dir = work_dir.join(name);
-        let out_original = profile_dir.join("ota.zip");
-        let out_magisk = profile_dir.join("ota_magisk.zip");
-        let out_prepatched = profile_dir.join("ota_prepatched.zip");
+        for (zip_mode, hashes) in [
+            (ZipMode::Streaming, &profile.hashes_streaming),
+            (ZipMode::Seekable, &profile.hashes_seekable),
+        ] {
+            let _span = info_span!("profile", name, %zip_mode).entered();
 
-        fs::create_dir_all(&profile_dir)
-            .with_context(|| format!("Failed to create directory: {profile_dir:?}"))?;
+            // Can't used NamedTempFile because avbroot does atomic replaces.
+            let profile_dir = work_dir.join(name);
+            let out_original = profile_dir.join("ota.zip");
+            let out_magisk = profile_dir.join("ota_magisk.zip");
+            let out_prepatched = profile_dir.join("ota_prepatched.zip");
 
-        create_ota(
-            &out_original,
-            &config.ota_info,
-            profile,
-            &orig_keys.avb_key,
-            &orig_keys.ota_key,
-            &orig_keys.ota_cert,
-            cancel_signal,
-        )
-        .with_context(|| format!("[{name}] Failed to create OTA"))?;
+            fs::create_dir_all(&profile_dir)
+                .with_context(|| format!("Failed to create directory: {profile_dir:?}"))?;
 
-        verify_image(&out_original, &orig_keys, cancel_signal)
-            .with_context(|| format!("[{name}] Failed to verify original OTA"))?;
+            create_ota(
+                &out_original,
+                &config.ota_info,
+                profile,
+                zip_mode,
+                &orig_keys.avb_key,
+                &orig_keys.ota_key,
+                &orig_keys.ota_cert,
+                cancel_signal,
+            )
+            .with_context(|| format!("[{name}] Failed to create OTA"))?;
 
-        verify_hash(&out_original, &profile.hashes.original.0, cancel_signal)
-            .with_context(|| format!("[{name}] Failed to verify original OTA hash"))?;
+            verify_image(&out_original, &orig_keys, cancel_signal)
+                .with_context(|| format!("[{name}] Failed to verify original OTA"))?;
 
-        // Patch once using Magisk.
-        extract_image(&out_original, &profile_dir, cancel_signal)
-            .with_context(|| format!("[{name}] Failed to extract OTA"))?;
+            verify_hash(&out_original, &hashes.original.0, cancel_signal)
+                .with_context(|| format!("[{name}] Failed to verify original OTA hash"))?;
 
-        let system_image = profile_dir.join("system.img");
+            // Patch once using Magisk.
+            extract_image(&out_original, &profile_dir, cancel_signal)
+                .with_context(|| format!("[{name}] Failed to extract OTA"))?;
 
-        patch_image(
-            &out_original,
-            &out_magisk,
-            &system_image,
-            &args_magisk,
-            &test_keys,
-            false,
-            cancel_signal,
-        )
-        .with_context(|| format!("[{name}] Failed to patch OTA"))?;
+            let system_image = profile_dir.join("system.img");
 
-        verify_image(&out_magisk, &test_keys, cancel_signal)
-            .with_context(|| format!("[{name}] Failed to verify patched OTA"))?;
+            patch_image(
+                &out_original,
+                &out_magisk,
+                &system_image,
+                zip_mode,
+                &args_magisk,
+                &test_keys,
+                false,
+                cancel_signal,
+            )
+            .with_context(|| format!("[{name}] Failed to patch OTA"))?;
 
-        verify_hash(&out_magisk, &profile.hashes.patched.0, cancel_signal)
-            .with_context(|| format!("[{name}] Failed to verify patched OTA hash"))?;
+            verify_image(&out_magisk, &test_keys, cancel_signal)
+                .with_context(|| format!("[{name}] Failed to verify patched OTA"))?;
 
-        // Patch again, but this time, use the previously patched boot image
-        // instead of applying the Magisk patch.
-        extract_image(&out_magisk, &profile_dir, cancel_signal)
-            .with_context(|| format!("[{name}] Failed to extract OTA"))?;
+            verify_hash(&out_magisk, &hashes.patched.0, cancel_signal)
+                .with_context(|| format!("[{name}] Failed to verify patched OTA hash"))?;
 
-        let mut magisk_image = profile_dir.join("init_boot.img");
-        if !magisk_image.exists() {
-            magisk_image = profile_dir.join("boot.img");
+            // Patch again, but this time, use the previously patched boot image
+            // instead of applying the Magisk patch.
+            extract_image(&out_magisk, &profile_dir, cancel_signal)
+                .with_context(|| format!("[{name}] Failed to extract OTA"))?;
+
+            let mut magisk_image = profile_dir.join("init_boot.img");
+            if !magisk_image.exists() {
+                magisk_image = profile_dir.join("boot.img");
+            }
+
+            let args_prepatched = [OsStr::new("--prepatched"), magisk_image.as_os_str()];
+
+            patch_image(
+                &out_original,
+                &out_prepatched,
+                &system_image,
+                zip_mode,
+                &args_prepatched,
+                &test_keys,
+                true,
+                cancel_signal,
+            )
+            .with_context(|| format!("[{name}] Failed to patch OTA"))?;
+
+            verify_image(&out_prepatched, &test_keys, cancel_signal)
+                .with_context(|| format!("[{name}] Failed to verify patched OTA"))?;
+
+            verify_hash(&out_prepatched, &hashes.patched.0, cancel_signal)
+                .with_context(|| format!("[{name}] Failed to verify patched OTA hash"))?;
         }
-
-        let args_prepatched = [OsStr::new("--prepatched"), magisk_image.as_os_str()];
-
-        patch_image(
-            &out_original,
-            &out_prepatched,
-            &system_image,
-            &args_prepatched,
-            &test_keys,
-            true,
-            cancel_signal,
-        )
-        .with_context(|| format!("[{name}] Failed to patch OTA"))?;
-
-        verify_image(&out_prepatched, &test_keys, cancel_signal)
-            .with_context(|| format!("[{name}] Failed to verify patched OTA"))?;
-
-        verify_hash(&out_prepatched, &profile.hashes.patched.0, cancel_signal)
-            .with_context(|| format!("[{name}] Failed to verify patched OTA hash"))?;
     }
 
     Ok(())

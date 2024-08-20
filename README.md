@@ -436,6 +436,12 @@ avbroot ota extract \
     --all
 ```
 
+### Zip write mode
+
+By default, avbroot uses streaming writes for the output OTA during patching. This means it computes the sha256 digest for the digital signature as the file is being written. This mode causes the zip file to contain data descriptors, which is part of the zip standard and works on the vast majority of devices. However, some devices may have broken zip file parsers and fail to properly read OTA zip files containing data descriptors. If this is the case, pass in `--zip-mode seekable` when patching.
+
+The seekable mode writes zip files without data descriptors, but as the name implies, requires seeking around the file instead of writing it sequentially. The sha256 digest for the digital signature is computed after the zip file has been fully written.
+
 ### Signing with an external program
 
 avbroot supports delegating all RSA signing operations to an external program with the `--signing-helper` option. When using this option, the `--key-avb` and `--key-ota` options must be given a public key instead of a private key.

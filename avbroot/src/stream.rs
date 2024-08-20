@@ -211,7 +211,7 @@ impl<W: Write + Reopen> Reopen for BufWriter<W> {
 
 /// A reader wrapper that implements [`Seek`], but only for reporting the
 /// current file position.
-pub struct CountingReader<R: Read> {
+pub struct CountingReader<R> {
     inner: R,
     offset: u64,
 }
@@ -249,7 +249,7 @@ impl<R: Read> Seek for CountingReader<R> {
 
 /// A writer wrapper that implements [`Seek`], but only for reporting the
 /// current file position.
-pub struct CountingWriter<W: Write> {
+pub struct CountingWriter<W> {
     inner: W,
     offset: u64,
 }
@@ -290,7 +290,7 @@ impl<W: Write> Seek for CountingWriter<W> {
 }
 
 /// A reader wrapper that hashes data as it's being read.
-pub struct HashingReader<R: Read> {
+pub struct HashingReader<R> {
     inner: R,
     context: Context,
 }
@@ -314,7 +314,7 @@ impl<R: Read> Read for HashingReader<R> {
 }
 
 /// A writer wrapper that hashes data as it's being written.
-pub struct HashingWriter<W: Write> {
+pub struct HashingWriter<W> {
     inner: W,
     context: Context,
 }
@@ -342,7 +342,7 @@ impl<W: Write> Write for HashingWriter<W> {
 }
 
 /// A reader wrapper that only allows reading a specific section of a file.
-pub struct SectionReader<R: Read + Seek> {
+pub struct SectionReader<R> {
     inner: R,
     start: u64,
     size: u64,
@@ -413,38 +413,6 @@ impl<R: Read + Seek> Seek for SectionReader<R> {
 
         let raw_pos = self.inner.seek(SeekFrom::Start(self.start + self.pos))?;
         Ok(raw_pos - self.start)
-    }
-}
-
-/// A writer wrapper that seeks instead of writing when a write buffer consists
-/// solely of zeros.
-#[derive(Debug)]
-pub struct HolePunchingWriter<W: Write + Seek> {
-    inner: W,
-}
-
-impl<W: Write + Seek> HolePunchingWriter<W> {
-    pub fn new(inner: W) -> Self {
-        Self { inner }
-    }
-
-    pub fn into_inner(self) -> W {
-        self.inner
-    }
-}
-
-impl<W: Write + Seek> Write for HolePunchingWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if util::is_zero(buf) {
-            self.inner.seek(SeekFrom::Current(buf.len() as i64))?;
-            Ok(buf.len())
-        } else {
-            self.inner.write(buf)
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
     }
 }
 
@@ -720,9 +688,8 @@ mod tests {
     use ring::digest::Context;
 
     use super::{
-        CountingReader, CountingWriter, HashingReader, HashingWriter, HolePunchingWriter,
-        PSeekFile, ReadDiscardExt, ReadStringExt, Reopen, SectionReader, SharedCursor,
-        WriteStringExt, WriteZerosExt,
+        CountingReader, CountingWriter, HashingReader, HashingWriter, PSeekFile, ReadDiscardExt,
+        ReadStringExt, Reopen, SectionReader, SharedCursor, WriteStringExt, WriteZerosExt,
     };
 
     const FOOBAR_SHA256: [u8; 32] = [
@@ -880,21 +847,6 @@ mod tests {
 
         let mut raw_reader = reader.into_inner();
         assert_eq!(raw_reader.stream_position().unwrap(), 6);
-    }
-
-    #[test]
-    fn hole_punching_writer() {
-        let raw_writer = Cursor::new(b"foobar foobar".to_owned());
-        let mut writer = HolePunchingWriter::new(raw_writer);
-
-        writer.write_all(b"hello").unwrap();
-        writer.write_all(b"").unwrap();
-        writer.write_all(b"\0").unwrap();
-        writer.write_all(b"\0\0").unwrap();
-        writer.write_all(b"world").unwrap();
-
-        let raw_writer = writer.into_inner();
-        assert_eq!(&raw_writer.into_inner(), b"hellor fworld");
     }
 
     #[test]
