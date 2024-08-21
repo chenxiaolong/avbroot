@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Print a useful error message when trying to prompt for a passphrase without an interactive terminal ([PR #336])
+* Add a new `--zip-mode seekable` option to allow writing OTA zip files without data descriptors ([Issue #328], [PR #337])
 
 ### Version 3.6.0
 
@@ -348,3 +349,4 @@ Behind-the-scenes changes:
 [PR #334]: https://github.com/chenxiaolong/avbroot/pull/334
 [PR #335]: https://github.com/chenxiaolong/avbroot/pull/335
 [PR #336]: https://github.com/chenxiaolong/avbroot/pull/336
+[PR #337]: https://github.com/chenxiaolong/avbroot/pull/337
