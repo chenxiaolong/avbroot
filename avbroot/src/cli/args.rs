@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tracing::{debug, Level};
 use tracing_subscriber::fmt::{format::Writer, time::FormatTime};
 
-use crate::cli::{avb, boot, completion, cpio, fec, hashtree, key, ota, payload};
+use crate::cli::{avb, boot, completion, cpio, fec, hashtree, key, lp, ota, payload};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
@@ -27,6 +27,7 @@ pub enum Command {
     Fec(fec::FecCli),
     HashTree(hashtree::HashTreeCli),
     Key(key::KeyCli),
+    Lp(lp::LpCli),
     Ota(ota::OtaCli),
     Payload(payload::PayloadCli),
     /// (Deprecated: Use `avbroot ota patch` instead.)
@@ -130,6 +131,7 @@ pub fn main(logging_initialized: &AtomicBool, cancel_signal: &AtomicBool) -> Res
         Command::Fec(c) => fec::fec_main(&c, cancel_signal),
         Command::HashTree(c) => hashtree::hash_tree_main(&c, cancel_signal),
         Command::Key(c) => key::key_main(&c),
+        Command::Lp(c) => lp::lp_main(&c, cancel_signal),
         Command::Ota(c) => ota::ota_main(&c, cancel_signal),
         Command::Payload(c) => payload::payload_main(&c, cancel_signal),
         // Deprecated aliases.

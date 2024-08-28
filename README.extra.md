@@ -253,6 +253,58 @@ avbroot hash-tree verify -i <input data file> -H <input hash tree file>
 
 This will check if the input file has any corrupted blocks. Currently, the command cannot report which specific blocks are corrupted, only whether the file is valid.
 
+## `avbroot lp`
+
+This set of commands is for working with LP (logical partition) images. These are the containers for dynamically-allocated partitions, like `system`. All LP images are supported:
+
+* Empty images: These are the `super_empty.img` images in the factory images for newer Google Pixel devices. They define the layout of the `super` partition, but don't contain any actual data. They also do not contain a backup copy of the metadata. As an optimization, `fastboot` can fill in the actual data during flashing to avoid needing to reboot to fastbootd mode.
+* Normal images backed by a single device: These are standalone `super.img` images and are how logical partitions are physically stored on disk in most newer devices. They contain a backup copy of all metadata as well as actual partition data.
+* Normal images backed by multiple devices: These are images split across multiple files/partitions and are used on devices where support for LP was retrofitted. For example, the LP setup on newer Android builds for the Google Pixel 3a XL reuse the legacy `system` and `vendor` partitions because there is no `super` partition. These are similar to the single-file LP setups, except that data can be stored across all of the LP images. However, the metadata is only stored on the first LP image.
+
+### Unpacking an LP image
+
+```bash
+avbroot lp unpack -i <input LP image> [-i <input LP image>]...
+```
+
+This subcommand unpacks the LP metadata to `lp.toml` and the partition images to the `lp_images` directory.
+
+If there are multiple images, they must be specified in order. If the order is not known, run `avbroot lp info` on each of the images. The one that successfully parses is the first image and the `block_devices` field in the output specifies the full ordering.
+
+An LP image can have multiple slots. If the LP image originated from a factory image or OTA, all slots are likely identical. If the LP image was dumped from a real device that installed OTA updates in the past, the slots may differ. If the slots are not identical, then the `--slot` option is required to specify which slot to unpack.
+
+When unpacking an empty image, files are still created in the `lp_images` directory. These files are sparse files that don't contain any actual data, but do have the correct file size. They are necessary when packing a new LP image so that avbroot can determine the size of each partition.
+
+### Packing an LP image
+
+```bash
+avbroot lp pack -o <output LP image> [-o <output LP image>]...
+```
+
+This subcommand packs a new LP image from the `lp.toml` file and `lp_images` directory. Any `.img` files in the `lp_images` directory that don't have a corresponding entry in `lp.toml` are silently ignored.
+
+All metadata slots in the newly packed LP image will be identical.
+
+The partition images in `lp_images` are required even when packing an empty image. They can be sparse files that contain no data, but must have the proper size.
+
+### Repacking an LP image
+
+```bash
+avbroot lp repack [-i <input LP image>] [-i <input LP image>]... -o <output LP image> [-o <output LP image>]...
+```
+
+This subcommand is logically equivalent to `avbroot lp unpack` followed by `avbroot lp pack`, except more efficient. Instead of unpacking and packing all partition images, the raw data is directly copied from the old LP image to the new LP image.
+
+When `--slot` is specified, this is useful for discarding unwanted metadata slots and the partition data exclusive to them.
+
+### Showing LP image metadata
+
+```bash
+avbroot lp info -i <first LP image>
+```
+
+This subcommand shows the LP image metadata, including all metadata slots. If there are multiple images, only the first one is needed because it is the only one that stores the metadata.
+
 ## `avbroot payload`
 
 ### Unpacking a payload binary

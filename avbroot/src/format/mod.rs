@@ -9,6 +9,7 @@ pub mod compression;
 pub mod cpio;
 pub mod fec;
 pub mod hashtree;
+pub mod lp;
 pub mod ota;
 pub mod padding;
 pub mod payload;

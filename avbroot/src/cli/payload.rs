@@ -461,7 +461,7 @@ enum PayloadCommand {
     Info(InfoCli),
 }
 
-/// Inspect OTA payloads.
+/// Pack, unpack, and inspect OTA payloads.
 #[derive(Debug, Parser)]
 pub struct PayloadCli {
     #[command(subcommand)]
