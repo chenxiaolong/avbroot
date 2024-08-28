@@ -190,6 +190,11 @@ fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool
     display_metadata(lp_cli, &metadata);
     write_info(&cli.output_info, &metadata)?;
 
+    // For empty images, there's no data to unpack.
+    if metadata.image_type == ImageType::Empty {
+        return Ok(());
+    }
+
     let authority = ambient_authority();
     Dir::create_ambient_dir_all(&cli.output_images, authority)
         .with_context(|| format!("Failed to create directory: {:?}", cli.output_images))?;
@@ -232,12 +237,6 @@ fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool
 
         paths.push(group_paths);
         files.push(group_files);
-    }
-
-    // For empty images, the outputs have already been truncated and there's no
-    // data to unpack.
-    if metadata.image_type == ImageType::Empty {
-        return Ok(());
     }
 
     slot.groups
@@ -309,10 +308,6 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
         }
     }
 
-    let authority = ambient_authority();
-    let directory = Dir::open_ambient_dir(&cli.input_images, authority)
-        .with_context(|| format!("Failed to open directory: {:?}", cli.input_images))?;
-
     for group in &slot.groups {
         for partition in &group.partitions {
             let name = &partition.name;
@@ -327,47 +322,53 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
     let mut paths = vec![];
     let mut files = vec![];
 
-    for group in &mut slot.groups {
-        let mut group_paths = vec![];
-        let mut group_files = vec![];
+    if metadata.image_type == ImageType::Normal {
+        let authority = ambient_authority();
+        let directory = Dir::open_ambient_dir(&cli.input_images, authority)
+            .with_context(|| format!("Failed to open directory: {:?}", cli.input_images))?;
 
-        for partition in &mut group.partitions {
-            let path = format!("{}.img", partition.name);
+        for group in &mut slot.groups {
+            let mut group_paths = vec![];
+            let mut group_files = vec![];
 
-            let mut file = directory
-                .open(&path)
-                .map(|f| PSeekFile::new(f.into_std()))
-                .with_context(|| format!("Failed to open for reading: {path:?}"))?;
+            for partition in &mut group.partitions {
+                let path = format!("{}.img", partition.name);
 
-            let size = file
-                .seek(SeekFrom::End(0))
-                .with_context(|| format!("Failed to seek file: {path:?}"))?;
+                let mut file = directory
+                    .open(&path)
+                    .map(|f| PSeekFile::new(f.into_std()))
+                    .with_context(|| format!("Failed to open for reading: {path:?}"))?;
 
-            if size % u64::from(SECTOR_SIZE) != 0 {
-                bail!("File size is not {SECTOR_SIZE}B aligned: {size}: {path:?}");
+                let size = file
+                    .seek(SeekFrom::End(0))
+                    .with_context(|| format!("Failed to seek file: {path:?}"))?;
+
+                if size % u64::from(SECTOR_SIZE) != 0 {
+                    bail!("File size is not {SECTOR_SIZE}B aligned: {size}: {path:?}");
+                }
+
+                // This will be filled out properly later during reallocation.
+                partition.extents.push(Extent {
+                    num_sectors: size / u64::from(SECTOR_SIZE),
+                    extent_type: ExtentType::Linear {
+                        start_sector: 0,
+                        block_device_index: 0,
+                    },
+                });
+
+                group_paths.push(path);
+                group_files.push(file);
             }
 
-            // This will be filled out properly later during reallocation.
-            partition.extents.push(Extent {
-                num_sectors: size / u64::from(SECTOR_SIZE),
-                extent_type: ExtentType::Linear {
-                    start_sector: 0,
-                    block_device_index: 0,
-                },
-            });
-
-            group_paths.push(path);
-            group_files.push(file);
+            paths.push(group_paths);
+            files.push(group_files);
         }
 
-        paths.push(group_paths);
-        files.push(group_files);
+        // Now that we have all the partition sizes, actually allocate extents
+        // for them on the block devices.
+        slot.reallocate_extents()
+            .context("Failed to allocate extents")?;
     }
-
-    // Now that we have all the partition sizes, actually allocate extents for
-    // them on the block devices.
-    slot.reallocate_extents()
-        .context("Failed to allocate extents")?;
 
     // Display only the selected slot and make the rest identical.
     let _ = slot;
@@ -380,8 +381,7 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
         .to_writer(&mut outputs[0])
         .with_context(|| format!("Failed to write LP image metadata: {:?}", cli.output[0]))?;
 
-    // For empty images, there's no data to pack. The inputs were only used for
-    // computing the extents.
+    // For empty images, there's no data to pack.
     if metadata.image_type == ImageType::Empty {
         return Ok(());
     }
@@ -553,11 +553,9 @@ pub fn lp_main(cli: &LpCli, cancel_signal: &AtomicBool) -> Result<()> {
 
 /// Unpack an LP image.
 ///
-/// Each partition is extracted to `<partition name>.img` in the output images
-/// directory. This is the case even when unpacking empty LP images. In this
-/// scenario, the partition images are sparse files containing no data.
-///
-/// The LP image metadata is written to the info TOML file.
+/// The LP image metadata is written to the info TOML file. For normal images,
+/// each partition is extracted to `<partition name>.img` in the output images
+/// directory. For empty images, the output images directory is unused.
 ///
 /// If any partition names are unsafe to use in a path, the extraction process
 /// will fail and exit. Extracted files are never written outside of the tree
@@ -599,9 +597,8 @@ struct UnpackCli {
 /// of the value of `metadata_slot_count`, as required by the file format.
 ///
 /// The new LP image will *only* contain images listed in the info TOML file and
-/// they are added in the order listed. Note that the input partition images are
-/// required even when packing an empty LP image. They can be sparse files that
-/// contain no data, but must have the proper size.
+/// they are added in the order listed. The input images directory is not used
+/// when packing an empty image.
 #[derive(Debug, Parser)]
 struct PackCli {
     /// Path to output LP images.

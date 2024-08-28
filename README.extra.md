@@ -267,13 +267,11 @@ This set of commands is for working with LP (logical partition) images. These ar
 avbroot lp unpack -i <input LP image> [-i <input LP image>]...
 ```
 
-This subcommand unpacks the LP metadata to `lp.toml` and the partition images to the `lp_images` directory.
+This subcommand unpacks the LP metadata to `lp.toml` and the partition images to the `lp_images` directory (for normal images).
 
 If there are multiple images, they must be specified in order. If the order is not known, run `avbroot lp info` on each of the images. The one that successfully parses is the first image and the `block_devices` field in the output specifies the full ordering.
 
 An LP image can have multiple slots. If the LP image originated from a factory image or OTA, all slots are likely identical. If the LP image was dumped from a real device that installed OTA updates in the past, the slots may differ. If the slots are not identical, then the `--slot` option is required to specify which slot to unpack.
-
-When unpacking an empty image, files are still created in the `lp_images` directory. These files are sparse files that don't contain any actual data, but do have the correct file size. They are necessary when packing a new LP image so that avbroot can determine the size of each partition.
 
 ### Packing an LP image
 
@@ -281,11 +279,9 @@ When unpacking an empty image, files are still created in the `lp_images` direct
 avbroot lp pack -o <output LP image> [-o <output LP image>]...
 ```
 
-This subcommand packs a new LP image from the `lp.toml` file and `lp_images` directory. Any `.img` files in the `lp_images` directory that don't have a corresponding entry in `lp.toml` are silently ignored.
+This subcommand packs a new LP image from the `lp.toml` file and `lp_images` directory (for normal images). Any `.img` files in the `lp_images` directory that don't have a corresponding entry in `lp.toml` are silently ignored.
 
 All metadata slots in the newly packed LP image will be identical.
-
-The partition images in `lp_images` are required even when packing an empty image. They can be sparse files that contain no data, but must have the proper size.
 
 ### Repacking an LP image
 
