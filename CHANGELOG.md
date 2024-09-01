@@ -12,6 +12,7 @@
 * Print a useful error message when trying to prompt for a passphrase without an interactive terminal ([PR #336])
 * Add a new `--zip-mode seekable` option to allow writing OTA zip files without data descriptors ([Issue #328], [PR #337])
 * Add new commands for packing and unpacking logical partition images (`super.img`) ([PR #342], [PR #343])
+* Add new commands for packing and unpacking Android sparse images ([PR #347])
 
 ### Version 3.6.0
 
@@ -353,3 +354,4 @@ Behind-the-scenes changes:
 [PR #337]: https://github.com/chenxiaolong/avbroot/pull/337
 [PR #342]: https://github.com/chenxiaolong/avbroot/pull/342
 [PR #343]: https://github.com/chenxiaolong/avbroot/pull/343
+[PR #347]: https://github.com/chenxiaolong/avbroot/pull/347
