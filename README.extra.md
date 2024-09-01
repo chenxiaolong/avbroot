@@ -286,7 +286,7 @@ All metadata slots in the newly packed LP image will be identical.
 ### Repacking an LP image
 
 ```bash
-avbroot lp repack [-i <input LP image>] [-i <input LP image>]... -o <output LP image> [-o <output LP image>]...
+avbroot lp repack -i <input LP image> [-i <input LP image>]... -o <output LP image> [-o <output LP image>]...
 ```
 
 This subcommand is logically equivalent to `avbroot lp unpack` followed by `avbroot lp pack`, except more efficient. Instead of unpacking and packing all partition images, the raw data is directly copied from the old LP image to the new LP image.
@@ -340,3 +340,47 @@ avbroot payload info -i <payload>
 ```
 
 This subcommand shows all of the payload header fields (which will likely be extremely long).
+
+## `avbroot sparse`
+
+This set of commands is for working with Android sparse images. All features of the file format are supported, including hole chunks and CRC32 checksums.
+
+### Unpacking a sparse image
+
+```bash
+avbroot sparse unpack -o <input sparse image> -o <output raw image>
+```
+
+This subcommand unpacks a sparse image to a raw image. If the sparse image contains CRC32 checksums, they will be validated during unpacking. If the sparse image contains holes, the output image will be created as a native sparse file.
+
+Certain fastboot factory images may have multiple sparse images, like `super_1.img`, `super_2.img`, etc., where they all touch a disjoint set of regions on the same partition. These can be unpacked by running this subcommand for each sparse image and specifying the `--preserve` option along with using the same output file. This preserves the existing data in the output file when unpacking each sparse image.
+
+### Packing a sparse image
+
+```bash
+avbroot sparse pack -i <input raw image> -o <output sparse image>
+```
+
+This subcommand packs a new sparse image from a raw image. The default block size is 4096 bytes, which can be changed with the `--block-size` option.
+
+By default, this will pack the entire input file. However, on Linux, there is an optimization where all holes in the input file, if it is a native sparse file, will be stored as hole chunks instead of `0`-filled chunks in the output sparse image.
+
+To pack a partial sparse image, such as those used in the special fastboot factory images mentioned above, pass in `--region <start> <end>`. This option can be specified multiple times to pack multiple regions.
+
+Unlike AOSP's `img2simg` tool, which never writes CRC32 checksums, this subcommand will write checksums if the input file has no holes and the entire file is being packed.
+
+### Repacking a sparse image
+
+```bash
+avbroot sparse repack -i <input sparse image> -o <output sparse image>
+```
+
+This subcommand is logically equivalent to `avbroot sparse unpack` followed by `avbroot sparse pack`, except more efficient. This is useful for roundtrip testing of avbroot's sparse file parser.
+
+### Showing sparse image metadata
+
+```bash
+avbroot sparse info -i <input sparse image>
+```
+
+This subcommand shows the sparse image metadata, including the header and all chunks.

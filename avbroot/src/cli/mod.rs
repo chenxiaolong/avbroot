@@ -14,3 +14,4 @@ pub mod key;
 pub mod lp;
 pub mod ota;
 pub mod payload;
+pub mod sparse;

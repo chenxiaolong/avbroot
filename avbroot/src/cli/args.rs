@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tracing::{debug, Level};
 use tracing_subscriber::fmt::{format::Writer, time::FormatTime};
 
-use crate::cli::{avb, boot, completion, cpio, fec, hashtree, key, lp, ota, payload};
+use crate::cli::{avb, boot, completion, cpio, fec, hashtree, key, lp, ota, payload, sparse};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
@@ -30,6 +30,7 @@ pub enum Command {
     Lp(lp::LpCli),
     Ota(ota::OtaCli),
     Payload(payload::PayloadCli),
+    Sparse(sparse::SparseCli),
     /// (Deprecated: Use `avbroot ota patch` instead.)
     Patch(ota::PatchCli),
     /// (Deprecated: Use `avbroot ota extract` instead.)
@@ -134,6 +135,7 @@ pub fn main(logging_initialized: &AtomicBool, cancel_signal: &AtomicBool) -> Res
         Command::Lp(c) => lp::lp_main(&c, cancel_signal),
         Command::Ota(c) => ota::ota_main(&c, cancel_signal),
         Command::Payload(c) => payload::payload_main(&c, cancel_signal),
+        Command::Sparse(c) => sparse::sparse_main(&c, cancel_signal),
         // Deprecated aliases.
         Command::Patch(c) => ota::patch_subcommand(&c, cancel_signal),
         Command::Extract(c) => ota::extract_subcommand(&c, cancel_signal),

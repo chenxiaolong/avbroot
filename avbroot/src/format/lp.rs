@@ -166,7 +166,7 @@ const _: () = assert!(mem::size_of::<RawGeometry>() < GEOMETRY_SIZE as usize);
 impl fmt::Debug for RawGeometry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawGeometry")
-            .field("magic", &format_args!("{:#08x}", self.magic.get()))
+            .field("magic", &format_args!("{:#010x}", self.magic.get()))
             .field("struct_size", &self.struct_size.get())
             .field("checksum", &hex::encode(self.checksum))
             .field("metadata_max_size", &self.metadata_max_size.get())
@@ -182,7 +182,7 @@ impl RawGeometry {
     fn validate(&self) -> Result<()> {
         if self.magic.get() != GEOMETRY_MAGIC {
             return Err(Error::Geometry(format!(
-                "Invalid magic: {:#08x}",
+                "Invalid magic: {:#010x}",
                 self.magic.get(),
             )));
         }
@@ -332,7 +332,7 @@ struct RawHeader {
 impl fmt::Debug for RawHeader {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawHeader")
-            .field("magic", &format_args!("{:#08x}", self.magic.get()))
+            .field("magic", &format_args!("{:#010x}", self.magic.get()))
             .field("major_version", &self.major_version.get())
             .field("minor_version", &self.minor_version.get())
             .field("header_size", &self.header_size.get())
@@ -392,7 +392,7 @@ impl RawHeader {
     fn validate(&self, geometry: &RawGeometry) -> Result<()> {
         if self.magic.get() != HEADER_MAGIC {
             return Err(Error::Header(format!(
-                "Invalid magic: {:#08x}",
+                "Invalid magic: {:#010x}",
                 self.magic.get(),
             )));
         }

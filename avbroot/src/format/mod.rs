@@ -13,4 +13,5 @@ pub mod lp;
 pub mod ota;
 pub mod padding;
 pub mod payload;
+pub mod sparse;
 pub mod verityrs;
