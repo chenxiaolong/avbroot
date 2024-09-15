@@ -21,6 +21,7 @@ use cms::{
         SignedData, SignerIdentifier, SignerInfo, SignerInfos,
     },
 };
+use passterm::PromptError;
 use pkcs8::{
     pkcs5::{pbes2, scrypt},
     DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, EncryptedPrivateKeyInfo,
@@ -62,7 +63,7 @@ pub enum Error {
     #[error("Passphrase prompt requires an interactive terminal")]
     NotInteractive(#[source] io::Error),
     #[error("Failed to prompt for passphrase")]
-    PassphrasePrompt(#[source] io::Error),
+    PassphrasePrompt(#[source] PromptError),
     #[error("Passphrases do not match")]
     ConfirmPassphrase,
     #[error("Failed to read environment variable: {0:?}")]
@@ -141,14 +142,18 @@ impl PassphraseSource {
     }
 
     fn prompt(prompt: &str) -> Result<String> {
-        match rpassword::prompt_password(prompt) {
+        match passterm::prompt_password_tty(Some(prompt)) {
             Ok(p) => Ok(p),
             Err(e) => {
                 #[cfg(unix)]
-                if let Some(errno) = e.raw_os_error() {
-                    if errno == libc::ENXIO || errno == libc::ENOTTY {
-                        return Err(Error::NotInteractive(e));
+                if let PromptError::IOError(io_e) = e {
+                    if let Some(errno) = io_e.raw_os_error() {
+                        if errno == libc::ENXIO || errno == libc::ENOTTY {
+                            return Err(Error::NotInteractive(io_e));
+                        }
                     }
+
+                    return Err(Error::PassphrasePrompt(PromptError::IOError(io_e)));
                 }
 
                 Err(Error::PassphrasePrompt(e))
