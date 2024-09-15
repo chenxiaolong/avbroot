@@ -24,13 +24,13 @@ use crate::{
     stream::{self, FromReader, PSeekFile},
 };
 
-fn open_reader(path: &Path) -> Result<(BufReader<File>, PayloadHeader)> {
+fn open_reader(path: &Path, allow_delta: bool) -> Result<(BufReader<File>, PayloadHeader)> {
     let mut reader = File::open(path)
         .map(BufReader::new)
         .with_context(|| format!("Failed to open payload for reading: {path:?}"))?;
     let header = PayloadHeader::from_reader(&mut reader)
         .with_context(|| format!("Failed to read payload header: {path:?}"))?;
-    if !header.is_full_ota() {
+    if !allow_delta && !header.is_full_ota() {
         bail!("Payload is a delta OTA, not a full OTA");
     }
 
@@ -106,7 +106,7 @@ fn unpack_subcommand(
     cli: &UnpackCli,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let (mut reader, header) = open_reader(&cli.input)?;
+    let (mut reader, header) = open_reader(&cli.input, false)?;
     let payload_size = reader
         .seek(SeekFrom::End(0))
         .with_context(|| format!("Failed to get file size: {:?}", cli.input))?;
@@ -253,7 +253,7 @@ fn repack_subcommand(
 ) -> Result<()> {
     let signing_key = load_key(&cli.key)?;
 
-    let (mut reader, header) = open_reader(&cli.input)?;
+    let (mut reader, header) = open_reader(&cli.input, true)?;
 
     info!("Generating new OTA payload");
 
@@ -309,7 +309,7 @@ fn repack_subcommand(
 }
 
 fn info_subcommand(payload_cli: &PayloadCli, cli: &InfoCli) -> Result<()> {
-    let (_, header) = open_reader(&cli.input)?;
+    let (_, header) = open_reader(&cli.input, true)?;
 
     display_header(payload_cli, &header);
 

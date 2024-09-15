@@ -303,6 +303,8 @@ This subcommand shows the LP image metadata, including all metadata slots. If th
 
 ## `avbroot payload`
 
+This set of commands is for working with payload binary files (`payload.bin`). The `unpack` and `pack` commands can only work with full payloads because they require the complete data to be available, but the `repack` and `info` commands also work with delta payloads.
+
 ### Unpacking a payload binary
 
 ```bash
