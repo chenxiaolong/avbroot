@@ -14,6 +14,7 @@
 * Add new commands for packing and unpacking logical partition images (`super.img`) ([PR #342], [PR #343])
 * Add new commands for packing and unpacking Android sparse images ([PR #347])
 * Allow `avbroot payload repack` and `avbroot payload info` commands to read delta payloads ([PR #354])
+* Switch to passterm library for password prompts ([PR #355])
 
 ### Version 3.6.0
 
@@ -357,3 +358,4 @@ Behind-the-scenes changes:
 [PR #343]: https://github.com/chenxiaolong/avbroot/pull/343
 [PR #347]: https://github.com/chenxiaolong/avbroot/pull/347
 [PR #354]: https://github.com/chenxiaolong/avbroot/pull/354
+[PR #355]: https://github.com/chenxiaolong/avbroot/pull/355
