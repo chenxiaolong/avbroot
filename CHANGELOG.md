@@ -9,6 +9,9 @@
 
 ### Unreleased
 
+* Fix a nasty regression since version 2.0.0 where recovery mode's `otacerts.zip` modifications were lost when using `--prepatched` with Magisk on some older devices, like the Pixel 4a ([Issue #356], [PR #357])
+    * This affected older devices without `vendor_boot` or `recovery` partitions.
+    * **This caused sideloading patched OTA updates from recovery mode to break on the affected devices.** To fix the problem without wiping the device and starting fresh, please follow the [steps in the PR](https://github.com/chenxiaolong/avbroot/pull/357#issuecomment-2365343050).
 * Print a useful error message when trying to prompt for a passphrase without an interactive terminal ([PR #336])
 * Add a new `--zip-mode seekable` option to allow writing OTA zip files without data descriptors ([Issue #328], [PR #337])
 * Add new commands for packing and unpacking logical partition images (`super.img`) ([PR #342], [PR #343])
@@ -252,6 +255,7 @@ Behind-the-scenes changes:
 [Issue #310]: https://github.com/chenxiaolong/avbroot/issues/310
 [Issue #328]: https://github.com/chenxiaolong/avbroot/issues/328
 [Issue #332]: https://github.com/chenxiaolong/avbroot/issues/332
+[Issue #356]: https://github.com/chenxiaolong/avbroot/issues/356
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -359,3 +363,4 @@ Behind-the-scenes changes:
 [PR #347]: https://github.com/chenxiaolong/avbroot/pull/347
 [PR #354]: https://github.com/chenxiaolong/avbroot/pull/354
 [PR #355]: https://github.com/chenxiaolong/avbroot/pull/355
+[PR #357]: https://github.com/chenxiaolong/avbroot/pull/357
