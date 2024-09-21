@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.7.0
 
 * Fix a nasty regression since version 2.0.0 where recovery mode's `otacerts.zip` modifications were lost when using `--prepatched` with Magisk on some older devices, like the Pixel 4a ([Issue #356], [PR #357])
     * This affected older devices without `vendor_boot` or `recovery` partitions.
