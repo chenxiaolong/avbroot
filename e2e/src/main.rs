@@ -14,6 +14,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    slice,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -33,7 +34,7 @@ use avbroot::{
             self, BootImage, BootImageV0Through2, BootImageV3Through4, RamdiskMeta, V1Extra,
             V2Extra, V4Extra, VendorBootImageV3Through4, VendorV4Extra,
         },
-        compression::{CompressedFormat, CompressedWriter},
+        compression::{CompressedFormat, CompressedReader, CompressedWriter},
         cpio::{self, CpioEntry, CpioEntryData},
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         padding,
@@ -46,7 +47,7 @@ use avbroot::{
             DeltaArchiveManifest, DynamicPartitionGroup, DynamicPartitionMetadata, PartitionUpdate,
         },
     },
-    stream::{self, CountingWriter, HashingReader, PSeekFile, Reopen, ToWriter},
+    stream::{self, CountingWriter, FromReader, HashingReader, PSeekFile, Reopen, ToWriter},
 };
 use clap::Parser;
 use rsa::{rand_core::OsRng, traits::PublicKeyParts, BigUint};
@@ -1100,6 +1101,56 @@ fn verify_image(input_file: &Path, keys: &KeySet, cancel_signal: &AtomicBool) ->
     Ok(())
 }
 
+fn clean_boot_image_certs(path: &Path, cancel_signal: &AtomicBool) -> Result<()> {
+    info!("Removing OTA certs and DSU public keys: {path:?}");
+
+    let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+    let mut boot_image = BootImage::from_reader(&mut file)?;
+
+    let ramdisks = match &mut boot_image {
+        BootImage::V0Through2(b) => slice::from_mut(&mut b.ramdisk),
+        BootImage::V3Through4(b) => slice::from_mut(&mut b.ramdisk),
+        BootImage::VendorV3Through4(b) => &mut b.ramdisks,
+    };
+
+    if ramdisks.is_empty() {
+        bail!("No ramdisk found: {path:?}");
+    }
+
+    let raw_ramdisk_reader = Cursor::new(&ramdisks[0]);
+    let ramdisk_reader = CompressedReader::new(raw_ramdisk_reader, false)?;
+    let ramdisk_format = ramdisk_reader.format();
+    let mut entries = cpio::load(ramdisk_reader, false, cancel_signal)?;
+
+    // Wipe out OTA certificates.
+    if let Some(entry) = entries
+        .iter_mut()
+        .find(|e| e.path == b"system/etc/security/otacerts.zip")
+    {
+        let mut zip_writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let empty_zip = zip_writer.finish()?.into_inner();
+
+        entry.data = CpioEntryData::Data(empty_zip);
+    }
+
+    // Wipe out DSU public keys.
+    entries.retain(|e| !e.path.starts_with(b"first_stage_ramdisk/avb/"));
+
+    let raw_ramdisk_writer = Cursor::new(Vec::new());
+    let mut ramdisk_writer = CompressedWriter::new(raw_ramdisk_writer, ramdisk_format)?;
+    cpio::save(&mut ramdisk_writer, &entries, false, cancel_signal)?;
+
+    let raw_ramdisk_writer = ramdisk_writer.finish()?;
+    ramdisks[0] = raw_ramdisk_writer.into_inner();
+
+    // We're creating an input for --prepatched, so no need for AVB metadata.
+    file.set_len(0)?;
+    file.rewind()?;
+    boot_image.to_writer(&mut file)?;
+
+    Ok(())
+}
+
 fn filter_profiles<'a>(config: &'a Config, cli: &'a ProfileGroup) -> Result<BTreeSet<&'a str>> {
     let mut profiles = config
         .profile
@@ -1229,6 +1280,9 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
             if !magisk_image.exists() {
                 magisk_image = profile_dir.join("boot.img");
             }
+
+            // Wipe out changes that we expect to be made to prepatched images.
+            clean_boot_image_certs(&magisk_image, cancel_signal)?;
 
             let args_prepatched = [OsStr::new("--prepatched"), magisk_image.as_os_str()];
 

@@ -1284,7 +1284,6 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     }
 
     let mut boot_patchers = Vec::<Box<dyn BootImagePatch + Sync>>::new();
-    boot_patchers.push(Box::new(OtaCertPatcher::new(cert_ota.clone())));
 
     if let Some(magisk) = &cli.root.magisk {
         boot_patchers.push(Box::new(
@@ -1297,6 +1296,8 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
             .context("Failed to create Magisk boot image patcher")?,
         ));
     } else if let Some(prepatched) = &cli.root.prepatched {
+        // NOTE: This patcher must run first! Otherwise, it'll wipe out any
+        // ramdisk changes made by other patchers.
         boot_patchers.push(Box::new(PrepatchedImagePatcher::new(
             prepatched,
             cli.ignore_prepatched_compat + 1,
@@ -1304,6 +1305,8 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     } else {
         assert!(cli.root.rootless);
     };
+
+    boot_patchers.push(Box::new(OtaCertPatcher::new(cert_ota.clone())));
 
     if cli.dsu {
         boot_patchers.push(Box::new(DsuPubKeyPatcher::new(key_avb.to_public_key())));
