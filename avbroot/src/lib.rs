@@ -1,7 +1,5 @@
-/*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
- * SPDX-License-Identifier: GPL-3.0-only
- */
+// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-License-Identifier: GPL-3.0-only
 
 //! Since avbroot is primarily an application and not a library, the semver
 //! versioning covers the CLI only. All Rust APIs can change at any time, even

@@ -1,7 +1,5 @@
-/*
- * SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
- * SPDX-License-Identifier: GPL-3.0-only
- */
+// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
     io::{Cursor, Read, Seek, Write},

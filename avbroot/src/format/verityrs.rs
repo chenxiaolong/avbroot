@@ -1,7 +1,5 @@
-/*
- * SPDX-FileCopyrightText: 2023 Andrew Gunnerson
- * SPDX-License-Identifier: GPL-3.0-only
- */
+// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-License-Identifier: GPL-3.0-only
 
 // The gf256 library uses compile-time proc macro code generation. Since
 // dm-verity supports RS(255, 231) through RS(255, 253), we'll generate RS

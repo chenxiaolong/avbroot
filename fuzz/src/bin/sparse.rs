@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Andrew Gunnerson
+// SPDX-License-Identifier: GPL-3.0-only
+
 #[cfg(not(windows))]
 mod fuzz {
     use std::io::{self, Cursor};

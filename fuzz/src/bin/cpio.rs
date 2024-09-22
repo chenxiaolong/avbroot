@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-License-Identifier: GPL-3.0-only
+
 #[cfg(not(windows))]
 mod fuzz {
     use std::{io::Cursor, sync::atomic::AtomicBool};
