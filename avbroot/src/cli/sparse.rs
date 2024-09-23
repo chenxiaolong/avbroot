@@ -381,6 +381,7 @@ fn pack_subcommand(
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
+            #[allow(clippy::single_range_in_vec_init)]
             (vec![0..file_size], true)
         }
     };
