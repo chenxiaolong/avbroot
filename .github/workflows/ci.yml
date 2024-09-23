@@ -85,6 +85,8 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.artifact.name }}
 
       - name: Clippy
         shell: bash
