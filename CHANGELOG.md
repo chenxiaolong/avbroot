@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for Magisk 28000 ([PR #362])
+
 ### Version 3.7.0
 
 * Fix a nasty regression since version 2.0.0 where recovery mode's `otacerts.zip` modifications were lost when using `--prepatched` with Magisk on some older devices, like the Pixel 4a ([Issue #356], [PR #357])
@@ -364,3 +368,4 @@ Behind-the-scenes changes:
 [PR #354]: https://github.com/chenxiaolong/avbroot/pull/354
 [PR #355]: https://github.com/chenxiaolong/avbroot/pull/355
 [PR #357]: https://github.com/chenxiaolong/avbroot/pull/357
+[PR #362]: https://github.com/chenxiaolong/avbroot/pull/362
