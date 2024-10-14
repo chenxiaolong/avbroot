@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add `avbroot avb digest` subcommand for computing the special vbmeta digest ([PR #363])
+
 ### Version 3.7.1
 
 * Add support for Magisk 28000 ([PR #362])
@@ -369,3 +373,4 @@ Behind-the-scenes changes:
 [PR #355]: https://github.com/chenxiaolong/avbroot/pull/355
 [PR #357]: https://github.com/chenxiaolong/avbroot/pull/357
 [PR #362]: https://github.com/chenxiaolong/avbroot/pull/362
+[PR #363]: https://github.com/chenxiaolong/avbroot/pull/363
