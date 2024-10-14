@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.8.0
 
 * Add `avbroot avb digest` subcommand for computing the special vbmeta digest ([PR #363])
 * Update all dependencies ([PR #364])
