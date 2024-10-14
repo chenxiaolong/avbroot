@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Add `avbroot avb digest` subcommand for computing the special vbmeta digest ([PR #363])
+* Update all dependencies ([PR #364])
 
 ### Version 3.7.1
 
@@ -374,3 +375,4 @@ Behind-the-scenes changes:
 [PR #357]: https://github.com/chenxiaolong/avbroot/pull/357
 [PR #362]: https://github.com/chenxiaolong/avbroot/pull/362
 [PR #363]: https://github.com/chenxiaolong/avbroot/pull/363
+[PR #364]: https://github.com/chenxiaolong/avbroot/pull/364
