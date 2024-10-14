@@ -55,8 +55,8 @@ topological-sort = "0.2.2"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 x509-cert = { version = "0.2.4", features = ["builder"] }
-zerocopy = "0.7.35"
-zerocopy-derive = "0.7.35"
+zerocopy = "0.8.5"
+zerocopy-derive = "0.8.5"
 
 # There are multiple upstream bugs that cause infinite loops in the Drop
 # implementation of write::BzDecoder. Unfortunately, the project is no longer

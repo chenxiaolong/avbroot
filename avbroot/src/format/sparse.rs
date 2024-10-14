@@ -11,7 +11,8 @@ use std::{
 use crc32fast::Hasher;
 use dlv_list::{Index, VecList};
 use thiserror::Error;
-use zerocopy::{byteorder::little_endian, AsBytes, FromBytes, FromZeroes, Unaligned};
+use zerocopy::{byteorder::little_endian, FromZeros, IntoBytes};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 /// Magic value for [`RawHeader::magic`].
 const HEADER_MAGIC: u32 = 0xed26ff3a;
@@ -47,7 +48,7 @@ pub enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 /// Raw on-disk layout for the header.
-#[derive(Clone, Copy, FromZeroes, FromBytes, AsBytes, Unaligned)]
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(packed)]
 struct RawHeader {
     /// Magic value. This should be equal to [`HEADER_MAGIC`].
@@ -131,7 +132,7 @@ impl RawHeader {
 }
 
 /// Raw on-disk layout for the chunk header.
-#[derive(Clone, Copy, FromZeroes, FromBytes, AsBytes, Unaligned)]
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(packed)]
 struct RawChunk {
     /// Chunk type. Must be [`CHUNK_TYPE_RAW`], [`CHUNK_TYPE_FILL`],
@@ -657,7 +658,7 @@ impl<R: Read> SparseReader<R> {
     /// and skipping chunks is needed, use [`Self::new_seekable`] instead.
     pub fn new(mut inner: R, crc_mode: CrcMode) -> Result<Self> {
         let mut header = RawHeader::new_zeroed();
-        inner.read_exact(header.as_bytes_mut())?;
+        inner.read_exact(header.as_mut_bytes())?;
 
         header.validate()?;
 
@@ -719,7 +720,7 @@ impl<R: Read> SparseReader<R> {
         }
 
         let mut raw_chunk = RawChunk::new_zeroed();
-        self.inner.read_exact(raw_chunk.as_bytes_mut())?;
+        self.inner.read_exact(raw_chunk.as_mut_bytes())?;
 
         raw_chunk.validate(self.chunk, &self.header, self.block)?;
 
@@ -734,7 +735,7 @@ impl<R: Read> SparseReader<R> {
             }
             CHUNK_TYPE_FILL => {
                 let mut fill_value = little_endian::U32::new_zeroed();
-                self.inner.read_exact(fill_value.as_bytes_mut())?;
+                self.inner.read_exact(fill_value.as_mut_bytes())?;
 
                 if let Some(hasher) = &mut self.hasher {
                     hash_fill_chunk(&raw_chunk, fill_value, &self.header, hasher);
@@ -751,7 +752,7 @@ impl<R: Read> SparseReader<R> {
             }
             CHUNK_TYPE_CRC32 => {
                 let mut expected = little_endian::U32::new_zeroed();
-                self.inner.read_exact(expected.as_bytes_mut())?;
+                self.inner.read_exact(expected.as_mut_bytes())?;
 
                 if let Some(hasher) = &mut self.hasher {
                     let actual = hasher.clone().finalize();

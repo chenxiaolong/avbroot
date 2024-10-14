@@ -13,7 +13,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use crc32fast::Hasher;
-use zerocopy::{little_endian, AsBytes};
+use zerocopy::{little_endian, IntoBytes};
 
 use crate::{
     format::{

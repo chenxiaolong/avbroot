@@ -14,7 +14,8 @@ use bitflags::bitflags;
 use bstr::ByteSlice;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use zerocopy::{byteorder::little_endian, AsBytes, FromBytes, FromZeroes, Unaligned};
+use zerocopy::{byteorder::little_endian, FromBytes, FromZeros, Immutable, IntoBytes};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     format::padding,
@@ -139,7 +140,7 @@ impl PartitionAttributes {
 }
 
 /// Raw on-disk layout for the metadata geometry.
-#[derive(Clone, Copy, FromZeroes, FromBytes, AsBytes, Unaligned)]
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(packed)]
 struct RawGeometry {
     /// Magic value. This should be equal to [`GEOMETRY_MAGIC`].
@@ -233,7 +234,7 @@ impl RawGeometry {
 }
 
 /// Raw on-disk layout for a table descriptor within a [`RawHeader`].
-#[derive(Clone, Copy, FromZeroes, FromBytes, AsBytes, Unaligned)]
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(packed)]
 struct RawTableDescriptor {
     /// Offset relative to the end of the [`RawHeader`].
@@ -259,7 +260,7 @@ impl RawTableDescriptor {
     /// buffer. `buf` must have size [`RawHeader::tables_size`] and the header
     /// containing this descriptor must have already passed
     /// [`RawHeader::validate`]. Otherwise, this function may panic.
-    fn slice_from_buf<'a, T: FromBytes + 'a>(&self, buf: &'a [u8]) -> &'a [T] {
+    fn slice_from_buf<'a, T: FromBytes + Immutable + 'a>(&self, buf: &'a [u8]) -> &'a [T] {
         let offset = self.offset.get() as usize;
         let entry_size = self.entry_size.get() as usize;
         let size = self.num_entries.get() as usize * entry_size;
@@ -267,12 +268,12 @@ impl RawTableDescriptor {
 
         assert_eq!(mem::size_of::<T>(), entry_size);
 
-        T::slice_from(buf).unwrap()
+        <[T]>::ref_from_bytes(buf).unwrap()
     }
 
     /// Update all fields to match the slice of items beginning at the specified
     /// table offset. Returns the starting offset for the next table.
-    fn update<T: AsBytes>(&mut self, items: &[T], offset: u32) -> Result<u32> {
+    fn update<T: IntoBytes>(&mut self, items: &[T], offset: u32) -> Result<u32> {
         let entry_size = mem::size_of::<T>() as u32;
         let num_entries: u32 = items
             .len()
@@ -292,7 +293,7 @@ impl RawTableDescriptor {
 }
 
 /// Raw on-disk layout for the metadata header.
-#[derive(Clone, Copy, FromZeroes, FromBytes, AsBytes, Unaligned)]
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(packed)]
 struct RawHeader {
     /// Magic value. This should be equal to [`HEADER_MAGIC`].
@@ -474,7 +475,7 @@ impl RawHeader {
 }
 
 /// A potentially invalid raw partition name string.
-#[derive(Clone, Copy, FromZeroes, FromBytes, AsBytes, Unaligned)]
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(packed)]
 struct PartitionName([u8; 36]);
 
@@ -546,7 +547,7 @@ impl FromStr for PartitionName {
 }
 
 /// Raw on-disk layout for an entry in the logical partitions table.
-#[derive(Clone, Copy, FromZeroes, FromBytes, AsBytes, Unaligned)]
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(packed)]
 struct RawPartition {
     /// Partition name in ASCII. This must be unique across all partitions.
@@ -639,7 +640,7 @@ impl RawPartition {
 }
 
 /// Raw on-disk layout for an entry in the extent table.
-#[derive(Clone, Copy, FromZeroes, FromBytes, AsBytes, Unaligned)]
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(packed)]
 struct RawExtent {
     /// Number of [`SECTOR_SIZE`]-byte sectors in this extent.
@@ -729,7 +730,7 @@ impl RawExtent {
 }
 
 /// Raw on-disk layout for an entry in the partition groups table.
-#[derive(Clone, Copy, FromZeroes, FromBytes, AsBytes, Unaligned)]
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(packed)]
 struct RawPartitionGroup {
     /// Partition group name in ASCII. This must be unique across all groups.
@@ -801,7 +802,7 @@ impl RawPartitionGroup {
 }
 
 /// Raw on-disk layout for an entry in the block devices table.
-#[derive(Clone, Copy, FromZeroes, FromBytes, AsBytes, Unaligned)]
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(packed)]
 struct RawBlockDevice {
     /// The first [`SECTOR_SIZE`]-byte sector where actual data for the logical
@@ -988,7 +989,7 @@ impl RawMetadata {
                 // Read the primary copy of the geometry.
                 reader.read_exact(&mut buf)?;
 
-                let mut geometry = RawGeometry::ref_from_prefix(&buf).unwrap();
+                let mut geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
 
                 match geometry.validate() {
                     Ok(_) => {
@@ -999,7 +1000,7 @@ impl RawMetadata {
                         // Try to parse the backup copy.
                         reader.read_exact(&mut buf)?;
 
-                        geometry = RawGeometry::ref_from_prefix(&buf).unwrap();
+                        geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
                         geometry.validate()?;
                     }
                 }
@@ -1010,7 +1011,7 @@ impl RawMetadata {
                 // This is an empty image for use with fastboot. These have no
                 // extra padding at the beginning of the file nor backup copies
                 // of the geometry and metadata structs.
-                let geometry = RawGeometry::ref_from_prefix(&buf).unwrap();
+                let geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
                 geometry.validate()?;
 
                 geometry
@@ -1030,9 +1031,9 @@ impl RawMetadata {
     ) -> Result<RawMetadataSlot> {
         let mut header = RawHeader::new_zeroed();
 
-        reader.read_exact(&mut header.as_bytes_mut()[..RawHeader::SIZE_V1_0])?;
+        reader.read_exact(&mut header.as_mut_bytes()[..RawHeader::SIZE_V1_0])?;
         if header.size() > RawHeader::SIZE_V1_0 {
-            reader.read_exact(&mut header.as_bytes_mut()[RawHeader::SIZE_V1_0..])?;
+            reader.read_exact(&mut header.as_mut_bytes()[RawHeader::SIZE_V1_0..])?;
         }
 
         // We'll end up validating this again at the end, but this initial
