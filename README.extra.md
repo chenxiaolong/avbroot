@@ -66,6 +66,16 @@ If `-p` is omitted, the signatures and hashes are checked only for validity, not
 
 By default, this command will not write to any file and fails if an image is corrupt or invalid. To attempt to repair corrupted dm-verity images, pass in `--repair`.
 
+### Computing vbmeta digest
+
+```bash
+avbroot avb digest -i <root vbmeta image>
+```
+
+This subcommand computes the vbmeta digest, which is defined as the SHA256 digest of the root vbmeta partition's header, followed by the chained partitions' headers (if any) in the order that they are listed. Chained partitions more than one level deep are ignored.
+
+This digest is equal to the value of the `ro.boot.vbmeta.digest` property or the `RootOfTrust.verifiedBootHash` hardware attestation field.
+
 ## `avbroot boot`
 
 ### Unpacking a boot image

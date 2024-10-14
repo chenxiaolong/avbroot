@@ -5,7 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     str,
     sync::atomic::AtomicBool,
@@ -28,7 +28,7 @@ use crate::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
         HashTreeDescriptor, Header, KernelCmdlineDescriptor,
     },
-    stream::{self, PSeekFile, Reopen},
+    stream::{self, check_cancel, PSeekFile, Reopen, ToWriter},
     util,
 };
 
@@ -600,6 +600,90 @@ pub fn verify_descriptors(
         .collect()
 }
 
+fn compute_digest_recursive(
+    directory: &Dir,
+    name: &str,
+    context: &mut ring::digest::Context,
+    max_depth: u8,
+    seen: &mut HashSet<String>,
+    cancel_signal: &AtomicBool,
+) -> Result<()> {
+    if max_depth == 0 {
+        return Ok(());
+    }
+
+    check_cancel(cancel_signal)?;
+
+    seen.insert(name.to_owned());
+
+    ensure_name_is_safe(name)?;
+
+    let path = format!("{name}.img");
+    let mut raw_reader = directory
+        .open(&path)
+        .map(BufReader::new)
+        .with_context(|| format!("Failed to open for reading: {path:?}"))?;
+    let (header, footer, _) = avb::load_image(&mut raw_reader)
+        .with_context(|| format!("Failed to load vbmeta structures: {path:?}"))?;
+
+    // We don't have a good way to get the length of the header, so we serialize
+    // what we just parsed and compare it to the raw file so ensure that the
+    // round-tripped data is identical.
+    let raw_header = {
+        let mut writer = Cursor::new(Vec::new());
+        header
+            .to_writer(&mut writer)
+            .with_context(|| format!("Failed to serialize header: {path:?}"))?;
+        writer.into_inner()
+    };
+
+    let header_offset = footer.map(|f| f.vbmeta_offset).unwrap_or_default();
+    raw_reader
+        .seek(SeekFrom::Start(header_offset))
+        .with_context(|| format!("Failed to seek file: {path:?}"))?;
+
+    let mut raw_header_orig = vec![0u8; raw_header.len()];
+    raw_reader
+        .read_exact(&mut raw_header_orig)
+        .with_context(|| format!("Failed to reread AVB header: {path:?}"))?;
+
+    if raw_header != raw_header_orig {
+        bail!("Serialized header does not match original header: {path:?}");
+    }
+
+    context.update(&raw_header);
+
+    for descriptor in &header.descriptors {
+        if let avb::Descriptor::ChainPartition(d) = descriptor {
+            compute_digest_recursive(
+                directory,
+                &d.partition_name,
+                context,
+                max_depth - 1,
+                seen,
+                cancel_signal,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Compute the vbmeta digest. This is defined as the digest of the header in
+/// the root vbmeta image, followed by the headers in the immediate chained
+/// partitions. This digest is not defined to be recursive, so headers of
+/// chained partitions more than one level deep are ignored.
+pub fn compute_digest(directory: &Dir, name: &str, cancel_signal: &AtomicBool) -> Result<[u8; 32]> {
+    let mut seen = HashSet::<String>::new();
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+
+    compute_digest_recursive(directory, name, &mut context, 2, &mut seen, cancel_signal)?;
+
+    let digest = context.finish();
+
+    Ok(digest.as_ref().try_into().unwrap())
+}
+
 fn unpack_subcommand(cli: &UnpackCli, cancel_signal: &AtomicBool) -> Result<()> {
     let (info, mut reader) = read_avb_image(&cli.input)?;
     display_info(&cli.display, &info);
@@ -736,6 +820,25 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
     Ok(())
 }
 
+fn digest_subcommand(cli: &DigestCli, cancel_signal: &AtomicBool) -> Result<()> {
+    let authority = ambient_authority();
+    let parent_path = util::parent_path(&cli.input);
+    let directory = Dir::open_ambient_dir(parent_path, authority)
+        .with_context(|| format!("Failed to open directory: {parent_path:?}"))?;
+    let name = cli
+        .input
+        .file_stem()
+        .with_context(|| format!("Path is not a file: {:?}", cli.input))?
+        .to_str()
+        .ok_or_else(|| anyhow!("Invalid UTF-8: {:?}", cli.input))?;
+
+    let digest = compute_digest(&directory, name, cancel_signal)?;
+
+    println!("{}", hex::encode(digest));
+
+    Ok(())
+}
+
 pub fn avb_main(cli: &AvbCli, cancel_signal: &AtomicBool) -> Result<()> {
     match &cli.command {
         AvbCommand::Unpack(c) => unpack_subcommand(c, cancel_signal),
@@ -743,6 +846,7 @@ pub fn avb_main(cli: &AvbCli, cancel_signal: &AtomicBool) -> Result<()> {
         AvbCommand::Repack(c) => repack_subcommand(c, cancel_signal),
         AvbCommand::Info(c) => info_subcommand(c),
         AvbCommand::Verify(c) => verify_subcommand(c, cancel_signal),
+        AvbCommand::Digest(c) => digest_subcommand(c, cancel_signal),
     }
 }
 
@@ -947,6 +1051,17 @@ struct VerifyCli {
     repair: bool,
 }
 
+/// Compute the vbmeta digest.
+///
+/// This value is equal to what is reported by the ro.boot.vbmeta.digest
+/// property on a real device.
+#[derive(Debug, Parser)]
+struct DigestCli {
+    /// Path to input AVB image.
+    #[arg(short, long, value_name = "FILE", value_parser)]
+    input: PathBuf,
+}
+
 #[derive(Debug, Subcommand)]
 enum AvbCommand {
     Unpack(UnpackCli),
@@ -955,6 +1070,7 @@ enum AvbCommand {
     #[command(alias = "dump")]
     Info(InfoCli),
     Verify(VerifyCli),
+    Digest(DigestCli),
 }
 
 /// Pack, unpack, and inspect AVB-protected images.
