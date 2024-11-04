@@ -201,7 +201,7 @@ fn patch_boot_images<'a, 'b: 'a>(
     let boot_partitions = required_images.iter_boot().collect::<Vec<_>>();
 
     info!(
-        "Patching boot images: {}",
+        "Candidate boot images: {}",
         joined(sorted(boot_partitions.iter())),
     );
 
@@ -1304,7 +1304,11 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         assert!(cli.root.rootless);
     };
 
-    boot_patchers.push(Box::new(OtaCertPatcher::new(cert_ota.clone())));
+    if cli.skip_recovery_ota_cert {
+        warn!("Not inserting OTA cert into recovery image; sideloading further updates may fail");
+    } else {
+        boot_patchers.push(Box::new(OtaCertPatcher::new(cert_ota.clone())));
+    }
 
     if cli.dsu {
         boot_patchers.push(Box::new(DsuPubKeyPatcher::new(key_avb.to_public_key())));
@@ -1921,6 +1925,17 @@ pub struct PatchCli {
         help_heading = HEADING_PREPATCHED
     )]
     pub ignore_prepatched_compat: u8,
+
+    /// Skip adding OTA certificate to recovery image.
+    ///
+    /// DO NOT USE THIS unless you've manually added the certificate to the
+    /// recovery image already. Otherwise, sideloading further updates will not
+    /// be possible.
+    ///
+    /// When this option is used with --rootless, the boot images in the OTA
+    /// will not be modified.
+    #[arg(long, help_heading = HEADING_OTHER)]
+    pub skip_recovery_ota_cert: bool,
 
     /// Add AVB public key to trusted keys for DSU.
     #[arg(long, help_heading = HEADING_OTHER)]
