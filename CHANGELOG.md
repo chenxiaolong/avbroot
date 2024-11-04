@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update all dependencies ([PR #368])
+
 ### Version 3.8.0
 
 * Add `avbroot avb digest` subcommand for computing the special vbmeta digest ([PR #363])
@@ -376,3 +380,4 @@ Behind-the-scenes changes:
 [PR #362]: https://github.com/chenxiaolong/avbroot/pull/362
 [PR #363]: https://github.com/chenxiaolong/avbroot/pull/363
 [PR #364]: https://github.com/chenxiaolong/avbroot/pull/364
+[PR #368]: https://github.com/chenxiaolong/avbroot/pull/368
