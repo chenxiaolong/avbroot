@@ -593,7 +593,9 @@ fn update_vbmeta_headers(
         // have no dependencies and are only being processed to ensure that the
         // flags are set to a sane value.
         if parent_header != &orig_parent_header {
-            parent_header.set_algo_for_key(key)?;
+            parent_header
+                .set_algo_for_key(key)
+                .with_context(|| format!("Failed to set signature algorithm: {name}"))?;
             parent_header
                 .sign(key)
                 .with_context(|| format!("Failed to sign vbmeta header for image: {name}"))?;

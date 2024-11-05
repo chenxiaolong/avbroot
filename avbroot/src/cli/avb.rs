@@ -398,7 +398,9 @@ fn sign_or_clear(info: &mut AvbInfo, orig_header: &Header, key_group: &KeyGroup)
                 RsaSigningKey::Internal(private_key)
             };
 
-            info.header.set_algo_for_key(&signing_key)?;
+            info.header
+                .set_algo_for_key(&signing_key)
+                .context("Failed to set signature algorithm")?;
             info.header
                 .sign(&signing_key)
                 .context("Failed to sign new AVB header")?;
