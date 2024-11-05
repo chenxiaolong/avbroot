@@ -11,6 +11,7 @@
 
 * Update all dependencies ([PR #368])
 * Add advanced option to skip replacing the OTA certificate in the recovery image ([Issue #366], [PR #367])
+* Improve error message when an incompatible RSA key is used for AVB signing ([Issue #366], [PR #369])
 
 ### Version 3.8.0
 
@@ -384,3 +385,4 @@ Behind-the-scenes changes:
 [PR #364]: https://github.com/chenxiaolong/avbroot/pull/364
 [PR #367]: https://github.com/chenxiaolong/avbroot/pull/367
 [PR #368]: https://github.com/chenxiaolong/avbroot/pull/368
+[PR #369]: https://github.com/chenxiaolong/avbroot/pull/369
