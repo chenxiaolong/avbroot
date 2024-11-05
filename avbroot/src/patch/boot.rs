@@ -1134,6 +1134,11 @@ pub fn patch_boot_images<'a>(
 ) -> Result<HashSet<&'a str>> {
     let parent_span = Span::current();
 
+    if patchers.is_empty() {
+        debug!("Skip loading boot images; nothing to patch");
+        return Ok(HashSet::new());
+    }
+
     // Preparse all images. Some patchers need to inspect every candidate.
     let mut images = load_boot_images(names, open_input)?;
 
