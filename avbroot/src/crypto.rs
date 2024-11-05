@@ -176,7 +176,7 @@ impl PassphraseSource {
             }
             Self::EnvVar(v) => env::var(v).map_err(|e| Error::InvalidEnvVar(v.clone(), e))?,
             Self::File(p) => fs::read_to_string(p)?
-                .trim_end_matches(&['\r', '\n'])
+                .trim_end_matches(['\r', '\n'])
                 .to_owned(),
         };
 
