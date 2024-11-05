@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Update all dependencies ([PR #368])
+* Add advanced option to skip replacing the OTA certificate in the recovery image ([Issue #366], [PR #367])
 
 ### Version 3.8.0
 
@@ -269,6 +270,7 @@ Behind-the-scenes changes:
 [Issue #328]: https://github.com/chenxiaolong/avbroot/issues/328
 [Issue #332]: https://github.com/chenxiaolong/avbroot/issues/332
 [Issue #356]: https://github.com/chenxiaolong/avbroot/issues/356
+[Issue #366]: https://github.com/chenxiaolong/avbroot/issues/366
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -380,4 +382,5 @@ Behind-the-scenes changes:
 [PR #362]: https://github.com/chenxiaolong/avbroot/pull/362
 [PR #363]: https://github.com/chenxiaolong/avbroot/pull/363
 [PR #364]: https://github.com/chenxiaolong/avbroot/pull/364
+[PR #367]: https://github.com/chenxiaolong/avbroot/pull/367
 [PR #368]: https://github.com/chenxiaolong/avbroot/pull/368
