@@ -300,6 +300,7 @@ fn compute_property_files(
     pf_name: &str,
     entries: &[ZipEntry],
     max_length: Option<usize>,
+    want_pb: bool,
 ) -> Result<String> {
     let compute = |path: &'static str| -> Result<String> {
         let entry = entries
@@ -334,10 +335,14 @@ fn compute_property_files(
 
     if max_length.is_none() {
         tokens.push(format!("metadata:{}", " ".repeat(15)));
-        tokens.push(format!("metadata.pb:{}", " ".repeat(15)));
+        if want_pb {
+            tokens.push(format!("metadata.pb:{}", " ".repeat(15)));
+        }
     } else {
         tokens.push(compute(PATH_METADATA)?);
-        tokens.push(compute(PATH_METADATA_PB)?);
+        if want_pb {
+            tokens.push(compute(PATH_METADATA_PB)?);
+        }
     }
 
     let mut joined = tokens.join(",");
@@ -415,7 +420,7 @@ pub fn add_metadata(
     for pf in [PF_NAME, PF_STREAMING_NAME] {
         metadata.property_files.insert(
             pf.to_owned(),
-            compute_property_files(pf, &zip_entries, None)?,
+            compute_property_files(pf, &zip_entries, None, true)?,
         );
     }
 
@@ -452,7 +457,7 @@ pub fn add_metadata(
 
     // Compute the final property files using the offsets of the fake entries.
     for (key, value) in &mut metadata.property_files {
-        *value = compute_property_files(key, &zip_entries, Some(value.len()))?;
+        *value = compute_property_files(key, &zip_entries, Some(value.len()), true)?;
     }
 
     // Add the final metadata files to the real zip.
@@ -494,8 +499,11 @@ pub fn verify_metadata(
 
     add_payload_metadata_entry(&mut zip_entries, payload_metadata_size)?;
 
+    let metadata_pb = zip_entries.iter().find(|e| e.name == PATH_METADATA_PB);
+
     for (key, value) in &metadata.property_files {
-        let new_value = compute_property_files(key, &zip_entries, Some(value.len()))?;
+        let new_value =
+            compute_property_files(key, &zip_entries, Some(value.len()), metadata_pb.is_some())?;
         if *value != new_value {
             return Err(Error::MismatchedPropertyFiles {
                 expected: value.clone(),
@@ -627,11 +635,20 @@ pub fn parse_zip_ota_info(
 ) -> Result<(OtaMetadata, Certificate, PayloadHeader, String)> {
     let mut zip = ZipArchive::new(reader)?;
 
-    let metadata = {
-        let mut entry = zip.by_name(PATH_METADATA_PB)?;
-        let mut buf = Vec::new();
-        entry.read_to_end(&mut buf)?;
-        OtaMetadata::decode(buf.as_slice())?
+    let metadata = match zip.by_name(PATH_METADATA_PB) {
+        Ok(mut entry) => {
+            let mut buf = Vec::new();
+            entry.read_to_end(&mut buf)?;
+            parse_protobuf_metadata(&buf)?
+        }
+        e @ Err(ZipError::FileNotFound) => {
+            drop(e);
+            let mut entry = zip.by_name(PATH_METADATA)?;
+            let mut buf = String::new();
+            entry.read_to_string(&mut buf)?;
+            parse_legacy_metadata(&buf)?
+        }
+        Err(e) => return Err(e.into()),
     };
 
     let certificate = {
