@@ -13,6 +13,7 @@
 * Add advanced option to skip replacing the OTA certificate in the recovery image ([Issue #366], [PR #367], [PR #371])
 * Improve error message when an incompatible RSA key is used for AVB signing ([Issue #366], [PR #369])
 * Fix clippy warnings ([PR #370])
+* Allow `avbroot ota verify` to verify OTAs that lack `META-INF/com/android/metadata.pb` ([Issue #366], [PR #373])
 
 ### Version 3.8.0
 
@@ -389,3 +390,4 @@ Behind-the-scenes changes:
 [PR #369]: https://github.com/chenxiaolong/avbroot/pull/369
 [PR #370]: https://github.com/chenxiaolong/avbroot/pull/370
 [PR #371]: https://github.com/chenxiaolong/avbroot/pull/371
+[PR #373]: https://github.com/chenxiaolong/avbroot/pull/373
