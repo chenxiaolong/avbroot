@@ -1690,9 +1690,11 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     verify_partition_hashes(&temp_dir, &header, &unique_images, cancel_signal)?;
 
-    info!("Checking ramdisk's otacerts.zip");
+    if cli.skip_recovery_ota_cert {
+        warn!("Not verifying recovery ramdisk's otacerts.zip");
+    } else {
+        info!("Checking recovery ramdisk's otacerts.zip");
 
-    {
         let required_images = RequiredImages::new(&header.manifest);
         let boot_images =
             boot::load_boot_images(&required_images.iter_boot().collect::<Vec<_>>(), |name| {
@@ -2025,6 +2027,15 @@ pub struct VerifyCli {
     /// valid, not that they are trusted.
     #[arg(long, value_name = "FILE", value_parser)]
     pub public_key_avb: Option<PathBuf>,
+
+    /// Skip verifying OTA certificate in recovery image.
+    ///
+    /// This should not be used unless the OTA uses a special boot image format
+    /// that avbroot cannot parse. This certificate check ensures that the OTA
+    /// is configured properly to allow sideloading further OTAs signed by the
+    /// same key.
+    #[arg(long, help_heading = HEADING_OTHER)]
+    pub skip_recovery_ota_cert: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
