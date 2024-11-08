@@ -206,10 +206,10 @@ fn verify_digest(digest: &[u8], signatures: &Signatures, cert: &Certificate) -> 
         let Some(data) = &signature.data else {
             continue;
         };
-        let Some(size) = signature.unpadded_signature_size else {
-            continue;
-        };
-        let without_padding = &data[..size as usize];
+        let size = signature
+            .unpadded_signature_size
+            .map_or(data.len(), |s| s as usize);
+        let without_padding = &data[..size];
 
         match public_key.verify_sig(SignatureAlgorithm::Sha256WithRsa, digest, without_padding) {
             Ok(_) => return Ok(()),
