@@ -14,6 +14,7 @@
 * Improve error message when an incompatible RSA key is used for AVB signing ([Issue #366], [PR #369])
 * Fix clippy warnings ([PR #370])
 * Allow `avbroot ota verify` to verify OTAs that lack `META-INF/com/android/metadata.pb` ([Issue #366], [PR #373])
+* Allow `avbroot ota verify` to verify OTAs where the payload signature does not set `unpadded_signature_size` ([Issue #366], [PR #374])
 
 ### Version 3.8.0
 
@@ -391,3 +392,4 @@ Behind-the-scenes changes:
 [PR #370]: https://github.com/chenxiaolong/avbroot/pull/370
 [PR #371]: https://github.com/chenxiaolong/avbroot/pull/371
 [PR #373]: https://github.com/chenxiaolong/avbroot/pull/373
+[PR #374]: https://github.com/chenxiaolong/avbroot/pull/374
