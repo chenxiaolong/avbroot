@@ -30,8 +30,6 @@ This subcommand packs a new AVB image from the `avb.toml` file and, for appended
 * To force an image to be signed, use `--key <path> --force`.
 * To force an image to be unsigned, use `--force` without specifying `--key`.
 
-Note that if the image is an appended image and its hash or hash tree descriptor uses an insecure algorithm, like `sha1`, then it will automatically be promoted to `sha256`.
-
 By default, for appended vbmeta images, the output image size will match the size of the original image that was unpacked. This size is specified by the `image_size` field in `avb.toml`. If the image is resizable (eg. `system`), then passing in `--recompute-size` will cause the `image_size` field to be ignored and the smallest possible output file that fits the raw image and AVB metadata will be built. This avoids wasting space if `raw.img` shrunk or allows the packing to work at all if `raw.img` grew. **Do not use this option for non-resizable images** (eg. `boot`) or else the device won't be able to boot.
 
 When packing an image, several of the fields in `avb.toml` may potentially be recomputed. To write a TOML file containing the new values, use `--output-info <output TOML>`. It is safe to overwrite the existing `avb.toml` if desired.

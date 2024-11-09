@@ -493,7 +493,7 @@ impl HashTreeImage {
     const VERSION: u16 = 1;
 
     fn digest_algorithm(name: &str) -> Result<&'static Algorithm> {
-        avb::digest_algorithm(name, false)
+        avb::digest_algorithm(name)
             .map_err(|_| Error::UnsupportedHashAlgorithm(name.to_owned().into_bytes()))
     }
 
