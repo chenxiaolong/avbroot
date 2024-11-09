@@ -178,23 +178,9 @@ pub fn patch_system_image(
         return Err(Error::OldZipNotFound);
     }
 
-    let update_ranges = if descriptor.hash_algorithm == "sha1" {
-        // Promote to a secure algorithm. SHA1 is allowed for verification only.
-        // The entire hash tree and FEC data will need to be recomputed.
-        let new_algorithm = "sha256".to_owned();
-
-        debug!(
-            "Changing insecure hash algorithm {} to {new_algorithm}",
-            descriptor.hash_algorithm,
-        );
-
-        descriptor.hash_algorithm = new_algorithm;
-        None
-    } else {
-        // Only need to update the hash tree and FEC data corresponding to the
-        // modified regions.
-        Some(modified_ranges.as_slice())
-    };
+    // Only need to update the hash tree and FEC data corresponding to the
+    // modified regions.
+    let update_ranges = Some(modified_ranges.as_slice());
 
     descriptor.update(input, output, update_ranges, cancel_signal)?;
 

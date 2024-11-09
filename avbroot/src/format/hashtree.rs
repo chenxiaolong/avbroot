@@ -456,8 +456,7 @@ impl HashTreeImage {
     const VERSION: u16 = 1;
 
     pub fn ring_algorithm(name: &str) -> Result<&'static Algorithm> {
-        avb::ring_algorithm(name, false)
-            .map_err(|_| Error::UnsupportedHashAlgorithm(name.to_owned()))
+        avb::ring_algorithm(name).map_err(|_| Error::UnsupportedHashAlgorithm(name.to_owned()))
     }
 
     /// Generate hash tree data for a file.
