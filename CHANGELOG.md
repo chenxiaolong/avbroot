@@ -15,6 +15,7 @@
 * Fix clippy warnings ([PR #370])
 * Allow `avbroot ota verify` to verify OTAs that lack `META-INF/com/android/metadata.pb` ([Issue #366], [PR #373])
 * Allow `avbroot ota verify` to verify OTAs where the payload signature does not set `unpadded_signature_size` ([Issue #366], [PR #374])
+* Allow `avbroot sparse` to parse sparse images with unknown fields (matches AOSP implementation) ([PR #376])
 
 ### Version 3.8.0
 
@@ -393,3 +394,4 @@ Behind-the-scenes changes:
 [PR #371]: https://github.com/chenxiaolong/avbroot/pull/371
 [PR #373]: https://github.com/chenxiaolong/avbroot/pull/373
 [PR #374]: https://github.com/chenxiaolong/avbroot/pull/374
+[PR #376]: https://github.com/chenxiaolong/avbroot/pull/376
