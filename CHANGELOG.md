@@ -9,7 +9,7 @@
 
 ### Unreleased
 
-* Update all dependencies ([PR #368])
+* Update all dependencies ([PR #368], [PR #377])
 * Add advanced option to skip replacing the OTA certificate in the recovery image ([Issue #366], [PR #367], [PR #371])
 * Improve error message when an incompatible RSA key is used for AVB signing ([Issue #366], [PR #369])
 * Fix clippy warnings ([PR #370])
@@ -395,3 +395,4 @@ Behind-the-scenes changes:
 [PR #373]: https://github.com/chenxiaolong/avbroot/pull/373
 [PR #374]: https://github.com/chenxiaolong/avbroot/pull/374
 [PR #376]: https://github.com/chenxiaolong/avbroot/pull/376
+[PR #377]: https://github.com/chenxiaolong/avbroot/pull/377
