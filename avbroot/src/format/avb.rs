@@ -101,7 +101,7 @@ pub enum Error {
     UnsupportedAlgorithm(AlgorithmType),
     #[error("Hashing algorithm not supported: {0:?}")]
     UnsupportedHashAlgorithm(String),
-    #[error("Incorrect key size ({}) for algorithm {1:?}", .0 * 8)]
+    #[error("Incorrect key size ({bytes}) for algorithm {1:?}", bytes = .0 * 8)]
     IncorrectKeySize(usize, AlgorithmType),
     #[error("RSA key size ({}) is not compatible with any AVB signing algorithm", .0 * 8)]
     UnsupportedKey(usize),

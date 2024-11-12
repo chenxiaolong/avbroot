@@ -49,7 +49,7 @@ serde = { version = "1.0.188", features = ["derive"] }
 sha1 = "0.10.5"
 sha2 = "0.10.7"
 tempfile = "3.8.0"
-thiserror = "1.0.47"
+thiserror = "2.0.3"
 toml_edit = { version = "0.22.9", features = ["serde"] }
 topological-sort = "0.2.2"
 tracing = "0.1.40"

@@ -50,7 +50,7 @@ pub enum Error {
     UnknownMagic([u8; 6]),
     #[error("Hard links are not supported: {:?}", .0.as_bstr())]
     HardLinksNotSupported(Vec<u8>),
-    #[error("Entry of type {0} should not have data: {:?}", .1.as_bstr())]
+    #[error("Entry of type {0} should not have data: {path:?}", path = .1.as_bstr())]
     EntryHasData(CpioEntryType, Vec<u8>),
     #[error("No inodes available for device {0:x},{1:x}")]
     DeviceFull(u32, u32),
