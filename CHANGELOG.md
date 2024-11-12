@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.9.0
 
 * Update all dependencies ([PR #368], [PR #377])
 * Add advanced option to skip replacing the OTA certificate in the recovery image ([Issue #366], [PR #367], [PR #371])
