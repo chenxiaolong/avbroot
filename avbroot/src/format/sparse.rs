@@ -14,6 +14,8 @@ use thiserror::Error;
 use zerocopy::{byteorder::little_endian, FromZeros, IntoBytes};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
+use crate::stream::ReadDiscardExt;
+
 /// Magic value for [`RawHeader::magic`].
 const HEADER_MAGIC: u32 = 0xed26ff3a;
 
@@ -108,15 +110,17 @@ impl RawHeader {
             )));
         }
 
-        if self.file_hdr_sz.get() != mem::size_of::<RawHeader>() as u16 {
+        if self.file_hdr_sz.get() < mem::size_of::<RawHeader>() as u16 {
             return Err(Error::Header(format!(
-                "Invalid file header size: {}",
+                "Invalid file header size: {} < {}",
                 self.file_hdr_sz.get(),
+                mem::size_of::<RawHeader>(),
             )));
-        } else if self.chunk_hdr_sz.get() != mem::size_of::<RawChunk>() as u16 {
+        } else if self.chunk_hdr_sz.get() < mem::size_of::<RawChunk>() as u16 {
             return Err(Error::Header(format!(
-                "Invalid chunk header size: {}",
+                "Invalid chunk header size: {} < {}",
                 self.chunk_hdr_sz.get(),
+                mem::size_of::<RawChunk>(),
             )));
         }
 
@@ -128,6 +132,14 @@ impl RawHeader {
         }
 
         Ok(())
+    }
+
+    fn excess_raw_header_bytes(&self) -> u16 {
+        self.file_hdr_sz.get() - mem::size_of::<RawHeader>() as u16
+    }
+
+    fn excess_raw_chunk_bytes(&self) -> u16 {
+        self.chunk_hdr_sz.get() - mem::size_of::<RawChunk>() as u16
     }
 }
 
@@ -180,7 +192,7 @@ impl RawChunk {
         };
 
         data_size
-            .checked_add(mem::size_of::<Self>() as u32)
+            .checked_add(header.chunk_hdr_sz.into())
             .ok_or_else(|| Error::Chunk(index, format!("Data size too large: {data_size}")))
     }
 
@@ -662,6 +674,8 @@ impl<R: Read> SparseReader<R> {
 
         header.validate()?;
 
+        inner.read_discard(header.excess_raw_header_bytes().into())?;
+
         Ok(Self {
             inner,
             seek: None,
@@ -723,6 +737,9 @@ impl<R: Read> SparseReader<R> {
         self.inner.read_exact(raw_chunk.as_mut_bytes())?;
 
         raw_chunk.validate(self.chunk, &self.header, self.block)?;
+
+        self.inner
+            .read_discard(self.header.excess_raw_chunk_bytes().into())?;
 
         let data: ChunkData;
 
