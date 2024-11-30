@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::io::{self, Read, Seek, Write};
@@ -44,4 +44,36 @@ pub fn write_zeros(mut writer: impl Write + Seek, page_size: u64) -> io::Result<
     writer.write_zeros_exact(padding)?;
 
     Ok(padding)
+}
+
+pub trait ZeroPadding {
+    /// Trim trailing zeros. Intermediate zeros before the last non-zero byte
+    /// are kept.
+    fn trim_end_padding(&self) -> &[u8];
+
+    /// Return the slice as an array padded with zeros at the end.
+    fn to_padded_array<const N: usize>(&self) -> Option<[u8; N]>;
+}
+
+impl ZeroPadding for [u8] {
+    fn trim_end_padding(&self) -> &[u8] {
+        let first_ending_zero = self
+            .iter()
+            .rposition(|b| *b != 0)
+            .map(|pos| pos + 1)
+            .unwrap_or_default();
+
+        &self[..first_ending_zero]
+    }
+
+    fn to_padded_array<const N: usize>(&self) -> Option<[u8; N]> {
+        if self.len() > N {
+            return None;
+        }
+
+        let mut result = [0u8; N];
+        result[..self.len()].copy_from_slice(self);
+
+        Some(result)
+    }
 }
