@@ -1,15 +1,15 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
     fmt,
     io::{self, Cursor, Read, SeekFrom, Write},
     ops::Range,
+    str,
     sync::atomic::AtomicBool,
 };
 
 use bstr::ByteSlice;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use num_traits::ToPrimitive;
 use rayon::{
     iter::{IndexedParallelIterator, ParallelIterator},
@@ -17,10 +17,15 @@ use rayon::{
 };
 use ring::digest::{Algorithm, Context};
 use thiserror::Error;
+use zerocopy::{little_endian, FromBytes, IntoBytes};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
-    format::{avb, padding},
-    stream::{self, FromReader, ReadSeekReopen, ReadStringExt, ToWriter, WriteStringExt},
+    format::{
+        avb,
+        padding::{self, ZeroPadding},
+    },
+    stream::{self, FromReader, ReadSeekReopen, ToWriter},
     util::{self, NumBytes},
 };
 
@@ -40,8 +45,8 @@ pub enum Error {
     InvalidHeaderMagic([u8; 16]),
     #[error("Invalid hash tree header version: {0}")]
     InvalidHeaderVersion(u16),
-    #[error("Hashing algorithm not supported: {0:?}")]
-    UnsupportedHashAlgorithm(String),
+    #[error("Hashing algorithm not supported: {:?}", .0.as_bstr())]
+    UnsupportedHashAlgorithm(Vec<u8>),
     #[error("{0:?} field is out of bounds")]
     FieldOutOfBounds(&'static str),
     #[error("I/O error")]
@@ -415,6 +420,28 @@ impl HashTree {
     }
 }
 
+/// Raw on-disk layout for our custom hash tree image header.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawHeader {
+    /// Magic value. This should be equal to [`HashTreeImage::MAGIC`].
+    magic: [u8; 16],
+    /// Image version. This should be equal to [`HashTreeImage::VERSION`].
+    version: little_endian::U16,
+    /// Size of the actual data.
+    image_size: little_endian::U64,
+    /// Block size.
+    block_size: little_endian::U32,
+    /// Hash algorithm.
+    algorithm: [u8; 16],
+    /// Salt size.
+    salt_size: little_endian::U16,
+    /// Root digest size.
+    root_digest_size: little_endian::U16,
+    /// Hash tree size.
+    hash_tree_size: little_endian::U32,
+}
+
 /// A type for reading and writing a custom hash tree image format.
 ///
 /// File format:
@@ -457,7 +484,7 @@ impl HashTreeImage {
 
     pub fn ring_algorithm(name: &str) -> Result<&'static Algorithm> {
         avb::ring_algorithm(name, false)
-            .map_err(|_| Error::UnsupportedHashAlgorithm(name.to_owned()))
+            .map_err(|_| Error::UnsupportedHashAlgorithm(name.to_owned().into_bytes()))
     }
 
     /// Generate hash tree data for a file.
@@ -530,40 +557,33 @@ impl<R: Read> FromReader<R> for HashTreeImage {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let mut magic = [0u8; 16];
-        reader.read_exact(&mut magic)?;
-        if magic != *Self::MAGIC {
-            return Err(Error::InvalidHeaderMagic(magic));
+        let header = RawHeader::read_from_io(&mut reader)?;
+
+        if header.magic != *Self::MAGIC {
+            return Err(Error::InvalidHeaderMagic(header.magic));
         }
 
-        let version = reader.read_u16::<LittleEndian>()?;
-        if version != Self::VERSION {
-            return Err(Error::InvalidHeaderVersion(version));
+        if header.version != Self::VERSION {
+            return Err(Error::InvalidHeaderVersion(header.version.get()));
         }
 
-        let image_size = reader.read_u64::<LittleEndian>()?;
-        let block_size = reader.read_u32::<LittleEndian>()?;
-        let algorithm = reader.read_string_padded(16)?;
-        let salt_size = reader.read_u16::<LittleEndian>()?;
-        let root_digest_size = reader.read_u16::<LittleEndian>()?;
-        let hash_tree_size = reader
-            .read_u32::<LittleEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::FieldOutOfBounds("hash_tree_size"))?;
+        let algorithm = header.algorithm.trim_end_padding();
+        let algorithm = str::from_utf8(algorithm)
+            .map_err(|_| Error::UnsupportedHashAlgorithm(algorithm.to_vec()))?;
 
-        let mut salt = vec![0u8; usize::from(salt_size)];
+        let mut salt = vec![0u8; usize::from(header.salt_size)];
         reader.read_exact(&mut salt)?;
 
-        let mut root_digest = vec![0u8; usize::from(root_digest_size)];
+        let mut root_digest = vec![0u8; usize::from(header.root_digest_size)];
         reader.read_exact(&mut root_digest)?;
 
-        let mut hash_tree = vec![0u8; hash_tree_size];
+        let mut hash_tree = vec![0u8; header.hash_tree_size.get() as usize];
         reader.read_exact(&mut hash_tree)?;
 
         Ok(Self {
-            image_size,
-            block_size,
-            algorithm,
+            image_size: header.image_size.get(),
+            block_size: header.block_size.get(),
+            algorithm: algorithm.to_owned(),
             salt,
             root_digest,
             hash_tree,
@@ -575,6 +595,12 @@ impl<W: Write> ToWriter<W> for HashTreeImage {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
+        let algorithm = self
+            .algorithm
+            .as_bytes()
+            .to_padded_array::<16>()
+            .ok_or_else(|| Error::UnsupportedHashAlgorithm(self.algorithm.as_bytes().to_vec()))?;
+
         let salt_size = self
             .salt
             .len()
@@ -591,14 +617,18 @@ impl<W: Write> ToWriter<W> for HashTreeImage {
             .to_u32()
             .ok_or_else(|| Error::FieldOutOfBounds("hash_tree_size"))?;
 
-        writer.write_all(Self::MAGIC)?;
-        writer.write_u16::<LittleEndian>(Self::VERSION)?;
-        writer.write_u64::<LittleEndian>(self.image_size)?;
-        writer.write_u32::<LittleEndian>(self.block_size)?;
-        writer.write_string_padded(&self.algorithm, 16)?;
-        writer.write_u16::<LittleEndian>(salt_size)?;
-        writer.write_u16::<LittleEndian>(root_digest_size)?;
-        writer.write_u32::<LittleEndian>(hash_tree_size)?;
+        let header = RawHeader {
+            magic: *Self::MAGIC,
+            version: Self::VERSION.into(),
+            image_size: self.image_size.into(),
+            block_size: self.block_size.into(),
+            algorithm,
+            salt_size: salt_size.into(),
+            root_digest_size: root_digest_size.into(),
+            hash_tree_size: hash_tree_size.into(),
+        };
+
+        header.write_to_io(&mut writer)?;
         writer.write_all(&self.salt)?;
         writer.write_all(&self.root_digest)?;
         writer.write_all(&self.hash_tree)?;
