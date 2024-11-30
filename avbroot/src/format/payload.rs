@@ -11,7 +11,6 @@ use std::{
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use byteorder::{BigEndian, ReadBytesExt};
 use bzip2::write::BzDecoder;
 use liblzma::{
     stream::{Check, Stream},
@@ -28,6 +27,8 @@ use ring::digest::{Context, Digest};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use x509_cert::Certificate;
+use zerocopy::{big_endian, FromBytes, IntoBytes};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
@@ -42,8 +43,8 @@ use crate::{
     util,
 };
 
-const OTA_MAGIC: &[u8; 4] = b"CrAU";
-const OTA_HEADER_SIZE: usize = OTA_MAGIC.len() + 8 + 8 + 4;
+const PAYLOAD_MAGIC: &[u8; 4] = b"CrAU";
+const PAYLOAD_VERSION: u64 = 2;
 
 const MANIFEST_MAX_SIZE: usize = 4 * 1024 * 1024;
 
@@ -104,6 +105,20 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// Raw on-disk layout for the payload header.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawHeader {
+    /// Magic value. This should be equal to [`PAYLOAD_MAGIC`].
+    magic: [u8; 4],
+    /// Image version. This should be equal to [`PAYLOAD_VERSION`].
+    file_format_version: big_endian::U64,
+    /// Size of the [`DeltaArchiveManifest`] blob.
+    manifest_size: big_endian::U64,
+    /// Size of the [`Signatures`] blob.
+    metadata_signature_size: big_endian::U32,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct PayloadHeader {
     pub version: u64,
@@ -131,19 +146,19 @@ impl<R: Read> FromReader<R> for PayloadHeader {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let mut magic = [0u8; 4];
-        reader.read_exact(&mut magic)?;
-        if magic != *OTA_MAGIC {
-            return Err(Error::UnknownMagic(magic));
+        let header = RawHeader::read_from_io(&mut reader)?;
+
+        if header.magic != *PAYLOAD_MAGIC {
+            return Err(Error::UnknownMagic(header.magic));
         }
 
-        let version = reader.read_u64::<BigEndian>()?;
-        if version != 2 {
-            return Err(Error::UnsupportedVersion(version));
+        if header.file_format_version != PAYLOAD_VERSION {
+            return Err(Error::UnsupportedVersion(header.file_format_version.get()));
         }
 
-        let manifest_size = reader
-            .read_u64::<BigEndian>()?
+        let manifest_size = header
+            .manifest_size
+            .get()
             .to_usize()
             .and_then(|s| {
                 if s <= MANIFEST_MAX_SIZE {
@@ -153,19 +168,18 @@ impl<R: Read> FromReader<R> for PayloadHeader {
                 }
             })
             .ok_or_else(|| Error::FieldOutOfBounds("manifest_size"))?;
-        let metadata_signature_size = reader.read_u32::<BigEndian>()?;
 
         let mut manifest_raw = vec![0u8; manifest_size];
         reader.read_exact(&mut manifest_raw)?;
         let manifest = DeltaArchiveManifest::decode(manifest_raw.as_slice())?;
 
         // Skip manifest signatures.
-        reader.read_discard_exact(metadata_signature_size.into())?;
+        reader.read_discard_exact(header.metadata_signature_size.into())?;
 
         Ok(Self {
-            version,
+            version: header.file_format_version.get(),
             manifest,
-            metadata_signature_size,
+            metadata_signature_size: header.metadata_signature_size.get(),
             blob_offset: reader.stream_position()?,
         })
     }
@@ -347,18 +361,13 @@ impl<W: Write> PayloadWriter<W> {
         let mut h_full = Context::new(&ring::digest::SHA256);
 
         // Write header to output file.
-        write_hash!(inner, [h_partial, h_full], OTA_MAGIC)?;
-        write_hash!(inner, [h_partial, h_full], &header.version.to_be_bytes())?;
-        write_hash!(
-            inner,
-            [h_partial, h_full],
-            &(manifest_raw_new.len() as u64).to_be_bytes(),
-        )?;
-        write_hash!(
-            inner,
-            [h_partial, h_full],
-            &(dummy_sig_size as u32).to_be_bytes()
-        )?;
+        let raw_header = RawHeader {
+            magic: *PAYLOAD_MAGIC,
+            file_format_version: header.version.into(),
+            manifest_size: (manifest_raw_new.len() as u64).into(),
+            metadata_signature_size: (dummy_sig_size as u32).into(),
+        };
+        write_hash!(inner, [h_partial, h_full], raw_header.as_bytes())?;
 
         // Write new manifest.
         write_hash!(inner, [h_partial, h_full], &manifest_raw_new)?;
@@ -374,7 +383,7 @@ impl<W: Write> PayloadWriter<W> {
             inner,
             header,
             metadata_hash,
-            metadata_size: OTA_HEADER_SIZE + manifest_raw_new.len(),
+            metadata_size: raw_header.as_bytes().len() + manifest_raw_new.len(),
             partition_index: None,
             operation_index: None,
             done: false,
