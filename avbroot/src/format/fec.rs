@@ -1,21 +1,23 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
     collections::HashSet,
     fmt,
-    io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
+    mem,
     ops::Range,
     sync::atomic::AtomicBool,
 };
 
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use num_traits::ToPrimitive;
 use rayon::{
     prelude::{IndexedParallelIterator, ParallelIterator},
     slice::{ParallelSlice, ParallelSliceMut},
 };
 use thiserror::Error;
+use zerocopy::{little_endian, FromBytes, IntoBytes};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     format::verityrs,
@@ -25,7 +27,6 @@ use crate::{
 
 // Not to be confused with the 255-byte RS block size.
 const FEC_BLOCK_SIZE: usize = 4096;
-const FEC_HEADER_SIZE: usize = 60;
 const FEC_MAGIC: u32 = 0xFECFECFE;
 const FEC_VERSION: u32 = 0;
 
@@ -574,6 +575,26 @@ impl Fec {
     }
 }
 
+/// Raw on-disk layout for the FEC image header.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawHeader {
+    /// Magic value. This should be equal to [`FEC_MAGIC`].
+    magic: little_endian::U32,
+    /// Image version. This should be equal to [`FEC_VERSION`].
+    version: little_endian::U32,
+    /// Size of this [`RawHeader`].
+    header_size: little_endian::U32,
+    /// Number of parity bytes per 255-byte Reed-Solomon codeword.
+    parity: little_endian::U32,
+    /// Size of the FEC data.
+    fec_size: little_endian::U32,
+    /// Size of the actual data.
+    data_size: little_endian::U64,
+    /// SHA-256 digest of the FEC data.
+    digest: [u8; 32],
+}
+
 /// A type for reading and writing AOSP's standalone FEC image format.
 ///
 /// The FEC data parser in this implementation is strict. All header fields,
@@ -667,26 +688,26 @@ impl FecImage {
 
     /// Build one instance of the FEC header. The caller is responsible for
     /// writing it to both of the header locations at the end of the file.
-    fn build_header(&self) -> Result<[u8; FEC_HEADER_SIZE]> {
+    fn build_header(&self) -> Result<RawHeader> {
         let fec_size = self
             .fec
             .len()
             .to_u32()
             .ok_or_else(|| Error::FieldOutOfBounds("fec_size"))?;
 
-        let mut writer = Cursor::new([0u8; FEC_HEADER_SIZE]);
-
         let digest = ring::digest::digest(&ring::digest::SHA256, &self.fec);
 
-        writer.write_u32::<LittleEndian>(FEC_MAGIC)?;
-        writer.write_u32::<LittleEndian>(FEC_VERSION)?;
-        writer.write_u32::<LittleEndian>(FEC_HEADER_SIZE as u32)?;
-        writer.write_u32::<LittleEndian>(self.parity.into())?;
-        writer.write_u32::<LittleEndian>(fec_size)?;
-        writer.write_u64::<LittleEndian>(self.data_size)?;
-        writer.write_all(digest.as_ref())?;
+        let header = RawHeader {
+            magic: FEC_MAGIC.into(),
+            version: FEC_VERSION.into(),
+            header_size: (mem::size_of::<RawHeader>() as u32).into(),
+            parity: u32::from(self.parity).into(),
+            fec_size: fec_size.into(),
+            data_size: self.data_size.into(),
+            digest: digest.as_ref().try_into().unwrap(),
+        };
 
-        Ok(writer.into_inner())
+        Ok(header)
     }
 }
 
@@ -703,42 +724,39 @@ impl<R: Read> FromReader<R> for FecImage {
             return Err(Error::DataTooSmall);
         }
 
-        // Make sure both headers match.
         let header1_offset = fec.len() - FEC_BLOCK_SIZE;
-        let header2_offset = fec.len() - FEC_HEADER_SIZE;
-        let header1_raw = &fec[header1_offset..header1_offset + FEC_HEADER_SIZE];
-        let header2_raw = &fec[header2_offset..header2_offset + FEC_HEADER_SIZE];
+
+        let (header, _) =
+            RawHeader::ref_from_prefix(&fec[header1_offset..]).map_err(|_| Error::DataTooSmall)?;
+        let header_size = header.header_size.get() as usize;
+
+        if header_size > FEC_BLOCK_SIZE / 2 {
+            // ref_from_prefix() already handles the "too small" case.
+            return Err(Error::InvalidHeaderSize(header.header_size.get()));
+        }
+
+        let header2_offset = fec.len() - header_size;
+
+        // Make sure both headers match, accounting for potential custom fields.
+        let header1_raw = &fec[header1_offset..][..header_size];
+        let header2_raw = &fec[header2_offset..][..header_size];
 
         if header1_raw != header2_raw {
             return Err(Error::HeadersDifferent);
         }
 
-        let mut header_reader = Cursor::new(header1_raw);
-
-        let magic = header_reader.read_u32::<LittleEndian>()?;
-        if magic != FEC_MAGIC {
-            return Err(Error::InvalidHeaderMagic(magic));
+        if header.magic != FEC_MAGIC {
+            return Err(Error::InvalidHeaderMagic(header.magic.get()));
         }
 
-        let version = header_reader.read_u32::<LittleEndian>()?;
-        if version != FEC_VERSION {
-            return Err(Error::UnsupportedHeaderVersion(version));
+        if header.version != FEC_VERSION {
+            return Err(Error::UnsupportedHeaderVersion(header.version.get()));
         }
 
-        let header_size = header_reader.read_u32::<LittleEndian>()?;
-        if header_size != FEC_HEADER_SIZE as u32 {
-            return Err(Error::InvalidHeaderSize(header_size));
-        }
+        let parity =
+            u8::try_from(header.parity.get()).map_err(|_| Error::FieldOutOfBounds("parity"))?;
 
-        let parity = header_reader
-            .read_u32::<LittleEndian>()?
-            .to_u8()
-            .ok_or_else(|| Error::FieldOutOfBounds("parity"))?;
-
-        let fec_size = header_reader
-            .read_u32::<LittleEndian>()?
-            .to_usize()
-            .ok_or_else(|| Error::FieldOutOfBounds("fec_size"))?;
+        let fec_size = header.fec_size.get() as usize;
         let actual_fec_size = fec.len() - FEC_BLOCK_SIZE;
         if fec_size != actual_fec_size {
             return Err(Error::InvalidHeaderFecSize {
@@ -747,25 +765,22 @@ impl<R: Read> FromReader<R> for FecImage {
             });
         }
 
-        let input_size = header_reader.read_u64::<LittleEndian>()?;
+        let data_size = header.data_size.get();
 
-        let mut digest = [0u8; 32];
-        header_reader.read_exact(&mut digest)?;
-
-        // Chop off headers.
-        fec.resize(fec_size, 0);
-
-        let actual_digest = ring::digest::digest(&ring::digest::SHA256, &fec);
-        if digest != actual_digest.as_ref() {
+        let actual_digest = ring::digest::digest(&ring::digest::SHA256, &fec[..fec_size]);
+        if header.digest != actual_digest.as_ref() {
             return Err(Error::InvalidFecDigest {
-                expected: hex::encode(digest),
+                expected: hex::encode(header.digest),
                 actual: hex::encode(actual_digest),
             });
         }
 
+        // Chop off headers.
+        fec.resize(fec_size, 0);
+
         Ok(Self {
             fec,
-            data_size: input_size,
+            data_size,
             parity,
         })
     }
@@ -778,9 +793,9 @@ impl<W: Write> ToWriter<W> for FecImage {
         let header = self.build_header()?;
 
         writer.write_all(&self.fec)?;
-        writer.write_all(&header)?;
-        writer.write_zeros_exact((FEC_BLOCK_SIZE - 2 * FEC_HEADER_SIZE) as u64)?;
-        writer.write_all(&header)?;
+        header.write_to_io(&mut writer)?;
+        writer.write_zeros_exact((FEC_BLOCK_SIZE - 2 * header.as_bytes().len()) as u64)?;
+        header.write_to_io(&mut writer)?;
 
         Ok(())
     }
@@ -789,7 +804,7 @@ impl<W: Write> ToWriter<W> for FecImage {
 #[cfg(test)]
 mod tests {
     use std::{
-        io::Seek,
+        io::{Cursor, Seek},
         sync::{atomic::AtomicBool, Arc},
     };
 
