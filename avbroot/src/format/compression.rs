@@ -1,9 +1,8 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::io::{self, Read, Seek, Write};
 
-use byteorder::{LittleEndian, WriteBytesExt};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use liblzma::{
     read::XzDecoder,
@@ -59,7 +58,7 @@ impl<W: Write> Lz4LegacyEncoder<W> {
         let compressed = lz4_flex::block::compress(&self.buf[..self.n_filled]);
 
         let writer = self.writer.as_mut().unwrap();
-        writer.write_u32::<LittleEndian>(compressed.len() as u32)?;
+        writer.write_all(&(compressed.len() as u32).to_le_bytes())?;
         writer.write_all(&compressed)?;
 
         self.n_filled = 0;
