@@ -4,19 +4,21 @@
 use std::{
     fmt,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    mem,
     ops::Range,
-    str,
+    str::{self, Utf8Error},
     sync::atomic::AtomicBool,
 };
 
 use bstr::ByteSlice;
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use num_bigint_dig::{ModInverse, ToBigInt};
 use num_traits::{Pow, ToPrimitive};
 use ring::digest::{Algorithm, Context};
 use rsa::{traits::PublicKeyParts, BigUint, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use zerocopy::{big_endian, FromBytes, IntoBytes};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
@@ -24,11 +26,11 @@ use crate::{
     format::{
         fec::{self, Fec},
         hashtree::{self, HashTree},
-        padding,
+        padding::{self, ZeroPadding},
     },
     stream::{
-        self, CountingReader, CountingWriter, FromReader, ReadDiscardExt, ReadSeekReopen,
-        ReadStringExt, ToWriter, WriteSeekReopen, WriteStringExt, WriteZerosExt,
+        self, CountingReader, CountingWriter, FromReader, ReadSeekReopen, ReadStringExt, ToWriter,
+        WriteSeekReopen, WriteZerosExt,
     },
     util,
 };
@@ -83,6 +85,10 @@ pub enum Error {
     StringNotNullTerminated(&'static str),
     #[error("{0:?} field is not ASCII encoded: {1:?}")]
     StringNotAscii(&'static str, String),
+    #[error("{0:?} field is not UTF-8 encoded: {data:?}", data = .1.as_bstr())]
+    StringNotUtf8(&'static str, Vec<u8>, #[source] Utf8Error),
+    #[error("{0:?} field is too long: {1:?}")]
+    StringTooLong(&'static str, String),
     #[error("Header exceeds maximum size of {HEADER_MAX_SIZE}")]
     HeaderTooLarge,
     #[error("Descriptor padding is too long or data was not consumed")]
@@ -97,6 +103,8 @@ pub enum Error {
     InvalidFooterMagic([u8; 4]),
     #[error("RSA public key exponent not supported: {0}")]
     UnsupportedRsaPublicExponent(BigUint),
+    #[error("AVB binary public key data is too small")]
+    BinaryPublicKeyTooSmall,
     #[error("Signature algorithm not supported: {0:?}")]
     UnsupportedAlgorithm(AlgorithmType),
     #[error("Hashing algorithm not supported: {0:?}")]
@@ -260,6 +268,14 @@ trait DescriptorTag {
     }
 }
 
+/// Raw on-disk layout for the AVB property descriptor after the prefix.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawPropertyDescriptor {
+    key_size: big_endian::U64,
+    value_size: big_endian::U64,
+}
+
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PropertyDescriptor {
     pub key: String,
@@ -284,17 +300,16 @@ impl<R: Read> FromReader<R> for PropertyDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let key_size = reader.read_u64::<BigEndian>()?;
-        let value_size = reader.read_u64::<BigEndian>()?;
+        let raw_descriptor = RawPropertyDescriptor::read_from_io(&mut reader)?;
 
-        if key_size > HEADER_MAX_SIZE {
+        if raw_descriptor.key_size.get() > HEADER_MAX_SIZE {
             return Err(Error::FieldOutOfBounds("key_size"));
-        } else if value_size > HEADER_MAX_SIZE {
+        } else if raw_descriptor.value_size.get() > HEADER_MAX_SIZE {
             return Err(Error::FieldOutOfBounds("value_size"));
         }
 
         let key = reader
-            .read_string_exact(key_size as usize)
+            .read_string_exact(raw_descriptor.key_size.get() as usize)
             .map_err(|e| Error::ReadFieldError("key", e))?;
 
         let mut null = [0u8; 1];
@@ -305,7 +320,7 @@ impl<R: Read> FromReader<R> for PropertyDescriptor {
             return Err(Error::StringNotNullTerminated("key"));
         }
 
-        let mut value = vec![0u8; value_size as usize];
+        let mut value = vec![0u8; raw_descriptor.value_size.get() as usize];
         reader.read_exact(&mut value)?;
 
         // The non-string value is also null terminated.
@@ -330,8 +345,12 @@ impl<W: Write> ToWriter<W> for PropertyDescriptor {
             return Err(Error::FieldOutOfBounds("value_size"));
         }
 
-        writer.write_u64::<BigEndian>(self.key.len() as u64)?;
-        writer.write_u64::<BigEndian>(self.value.len() as u64)?;
+        let raw_descriptor = RawPropertyDescriptor {
+            key_size: (self.key.len() as u64).into(),
+            value_size: (self.value.len() as u64).into(),
+        };
+
+        raw_descriptor.write_to_io(&mut writer)?;
         writer.write_all(self.key.as_bytes())?;
         writer.write_all(b"\0")?;
         writer.write_all(&self.value)?;
@@ -339,6 +358,27 @@ impl<W: Write> ToWriter<W> for PropertyDescriptor {
 
         Ok(())
     }
+}
+
+/// Raw on-disk layout for the AVB hash tree descriptor after the prefix.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawHashTreeDescriptor {
+    dm_verity_version: big_endian::U32,
+    image_size: big_endian::U64,
+    tree_offset: big_endian::U64,
+    tree_size: big_endian::U64,
+    data_block_size: big_endian::U32,
+    hash_block_size: big_endian::U32,
+    fec_num_roots: big_endian::U32,
+    fec_offset: big_endian::U64,
+    fec_size: big_endian::U64,
+    hash_algorithm: [u8; 32],
+    partition_name_len: big_endian::U32,
+    salt_len: big_endian::U32,
+    root_digest_len: big_endian::U32,
+    flags: big_endian::U32,
+    reserved: [u8; 60],
 }
 
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -654,27 +694,21 @@ impl<R: Read> FromReader<R> for HashTreeDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let dm_verity_version = reader.read_u32::<BigEndian>()?;
-        let image_size = reader.read_u64::<BigEndian>()?;
-        let tree_offset = reader.read_u64::<BigEndian>()?;
-        let tree_size = reader.read_u64::<BigEndian>()?;
-        let data_block_size = reader.read_u32::<BigEndian>()?;
-        let hash_block_size = reader.read_u32::<BigEndian>()?;
-        let fec_num_roots = reader.read_u32::<BigEndian>()?;
-        let fec_offset = reader.read_u64::<BigEndian>()?;
-        let fec_size = reader.read_u64::<BigEndian>()?;
+        let raw_descriptor = RawHashTreeDescriptor::read_from_io(&mut reader)?;
 
-        let hash_algorithm = reader
-            .read_string_padded(32)
-            .map_err(|e| Error::ReadFieldError("hash_algorithm", e))?;
+        let hash_algorithm = raw_descriptor.hash_algorithm.trim_end_padding();
+        let hash_algorithm = str::from_utf8(hash_algorithm)
+            .map_err(|e| Error::StringNotUtf8("hash_algorithm", hash_algorithm.to_vec(), e))?;
         if !hash_algorithm.is_ascii() {
-            return Err(Error::StringNotAscii("hash_algorithm", hash_algorithm));
+            return Err(Error::StringNotAscii(
+                "hash_algorithm",
+                hash_algorithm.to_owned(),
+            ));
         }
 
-        let partition_name_len = reader.read_u32::<BigEndian>()?;
-        let salt_len = reader.read_u32::<BigEndian>()?;
-        let root_digest_len = reader.read_u32::<BigEndian>()?;
-        let flags = reader.read_u32::<BigEndian>()?;
+        let partition_name_len = raw_descriptor.partition_name_len.get();
+        let salt_len = raw_descriptor.salt_len.get();
+        let root_digest_len = raw_descriptor.root_digest_len.get();
 
         if partition_name_len > HEADER_MAX_SIZE as u32 {
             return Err(Error::FieldOutOfBounds("partition_name_len"));
@@ -683,9 +717,6 @@ impl<R: Read> FromReader<R> for HashTreeDescriptor {
         } else if root_digest_len > HEADER_MAX_SIZE as u32 {
             return Err(Error::FieldOutOfBounds("root_digest_len"));
         }
-
-        let mut reserved = [0u8; 60];
-        reader.read_exact(&mut reserved)?;
 
         // Not NULL-terminated.
         let partition_name = reader
@@ -699,21 +730,21 @@ impl<R: Read> FromReader<R> for HashTreeDescriptor {
         reader.read_exact(&mut root_digest)?;
 
         let descriptor = Self {
-            dm_verity_version,
-            image_size,
-            tree_offset,
-            tree_size,
-            data_block_size,
-            hash_block_size,
-            fec_num_roots,
-            fec_offset,
-            fec_size,
-            hash_algorithm,
+            dm_verity_version: raw_descriptor.dm_verity_version.into(),
+            image_size: raw_descriptor.image_size.into(),
+            tree_offset: raw_descriptor.tree_offset.into(),
+            tree_size: raw_descriptor.tree_size.into(),
+            data_block_size: raw_descriptor.data_block_size.into(),
+            hash_block_size: raw_descriptor.hash_block_size.into(),
+            fec_num_roots: raw_descriptor.fec_num_roots.into(),
+            fec_offset: raw_descriptor.fec_offset.into(),
+            fec_size: raw_descriptor.fec_size.into(),
+            hash_algorithm: hash_algorithm.to_owned(),
             partition_name,
             salt,
             root_digest,
-            flags,
-            reserved,
+            flags: raw_descriptor.flags.get(),
+            reserved: raw_descriptor.reserved,
         };
 
         Ok(descriptor)
@@ -732,37 +763,57 @@ impl<W: Write> ToWriter<W> for HashTreeDescriptor {
             return Err(Error::FieldOutOfBounds("root_digest_len"));
         }
 
-        writer.write_u32::<BigEndian>(self.dm_verity_version)?;
-        writer.write_u64::<BigEndian>(self.image_size)?;
-        writer.write_u64::<BigEndian>(self.tree_offset)?;
-        writer.write_u64::<BigEndian>(self.tree_size)?;
-        writer.write_u32::<BigEndian>(self.data_block_size)?;
-        writer.write_u32::<BigEndian>(self.hash_block_size)?;
-        writer.write_u32::<BigEndian>(self.fec_num_roots)?;
-        writer.write_u64::<BigEndian>(self.fec_offset)?;
-        writer.write_u64::<BigEndian>(self.fec_size)?;
-
         if !self.hash_algorithm.is_ascii() {
             return Err(Error::StringNotAscii(
                 "hash_algorithm",
                 self.hash_algorithm.clone(),
             ));
         }
-        writer
-            .write_string_padded(&self.hash_algorithm, 32)
-            .map_err(|e| Error::WriteFieldError("hash_algorithm", e))?;
 
-        writer.write_u32::<BigEndian>(self.partition_name.len() as u32)?;
-        writer.write_u32::<BigEndian>(self.salt.len() as u32)?;
-        writer.write_u32::<BigEndian>(self.root_digest.len() as u32)?;
-        writer.write_u32::<BigEndian>(self.flags)?;
-        writer.write_all(&self.reserved)?;
+        let hash_algorithm = self
+            .hash_algorithm
+            .as_bytes()
+            .to_padded_array::<32>()
+            .ok_or_else(|| Error::StringTooLong("hash_algorithm", self.hash_algorithm.clone()))?;
+
+        let raw_descriptor = RawHashTreeDescriptor {
+            dm_verity_version: self.dm_verity_version.into(),
+            image_size: self.image_size.into(),
+            tree_offset: self.tree_offset.into(),
+            tree_size: self.tree_size.into(),
+            data_block_size: self.data_block_size.into(),
+            hash_block_size: self.hash_block_size.into(),
+            fec_num_roots: self.fec_num_roots.into(),
+            fec_offset: self.fec_offset.into(),
+            fec_size: self.fec_size.into(),
+            hash_algorithm,
+            partition_name_len: (self.partition_name.len() as u32).into(),
+            salt_len: (self.salt.len() as u32).into(),
+            root_digest_len: (self.root_digest.len() as u32).into(),
+            flags: self.flags.into(),
+            reserved: self.reserved,
+        };
+
+        raw_descriptor.write_to_io(&mut writer)?;
         writer.write_all(self.partition_name.as_bytes())?;
         writer.write_all(&self.salt)?;
         writer.write_all(&self.root_digest)?;
 
         Ok(())
     }
+}
+
+/// Raw on-disk layout for the AVB hash descriptor after the prefix.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawHashDescriptor {
+    image_size: big_endian::U64,
+    hash_algorithm: [u8; 32],
+    partition_name_len: big_endian::U32,
+    salt_len: big_endian::U32,
+    root_digest_len: big_endian::U32,
+    flags: big_endian::U32,
+    reserved: [u8; 60],
 }
 
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -846,19 +897,21 @@ impl<R: Read> FromReader<R> for HashDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let image_size = reader.read_u64::<BigEndian>()?;
+        let raw_descriptor = RawHashDescriptor::read_from_io(&mut reader)?;
 
-        let hash_algorithm = reader
-            .read_string_padded(32)
-            .map_err(|e| Error::ReadFieldError("hash_algorithm", e))?;
+        let hash_algorithm = raw_descriptor.hash_algorithm.trim_end_padding();
+        let hash_algorithm = str::from_utf8(hash_algorithm)
+            .map_err(|e| Error::StringNotUtf8("hash_algorithm", hash_algorithm.to_vec(), e))?;
         if !hash_algorithm.is_ascii() {
-            return Err(Error::StringNotAscii("hash_algorithm", hash_algorithm));
+            return Err(Error::StringNotAscii(
+                "hash_algorithm",
+                hash_algorithm.to_owned(),
+            ));
         }
 
-        let partition_name_len = reader.read_u32::<BigEndian>()?;
-        let salt_len = reader.read_u32::<BigEndian>()?;
-        let root_digest_len = reader.read_u32::<BigEndian>()?;
-        let flags = reader.read_u32::<BigEndian>()?;
+        let partition_name_len = raw_descriptor.partition_name_len.get();
+        let salt_len = raw_descriptor.salt_len.get();
+        let root_digest_len = raw_descriptor.root_digest_len.get();
 
         if partition_name_len > HEADER_MAX_SIZE as u32 {
             return Err(Error::FieldOutOfBounds("partition_name_len"));
@@ -867,9 +920,6 @@ impl<R: Read> FromReader<R> for HashDescriptor {
         } else if root_digest_len > HEADER_MAX_SIZE as u32 {
             return Err(Error::FieldOutOfBounds("root_digest_len"));
         }
-
-        let mut reserved = [0u8; 60];
-        reader.read_exact(&mut reserved)?;
 
         // Not NULL-terminated.
         let partition_name = reader
@@ -883,13 +933,13 @@ impl<R: Read> FromReader<R> for HashDescriptor {
         reader.read_exact(&mut root_digest)?;
 
         let descriptor = Self {
-            image_size,
-            hash_algorithm,
+            image_size: raw_descriptor.image_size.get(),
+            hash_algorithm: hash_algorithm.to_owned(),
             partition_name,
             salt,
             root_digest,
-            flags,
-            reserved,
+            flags: raw_descriptor.flags.get(),
+            reserved: raw_descriptor.reserved,
         };
 
         Ok(descriptor)
@@ -908,29 +958,45 @@ impl<W: Write> ToWriter<W> for HashDescriptor {
             return Err(Error::FieldOutOfBounds("root_digest_len"));
         }
 
-        writer.write_u64::<BigEndian>(self.image_size)?;
-
         if !self.hash_algorithm.is_ascii() {
             return Err(Error::StringNotAscii(
                 "hash_algorithm",
                 self.hash_algorithm.clone(),
             ));
         }
-        writer
-            .write_string_padded(&self.hash_algorithm, 32)
-            .map_err(|e| Error::WriteFieldError("hash_algorithm", e))?;
 
-        writer.write_u32::<BigEndian>(self.partition_name.len() as u32)?;
-        writer.write_u32::<BigEndian>(self.salt.len() as u32)?;
-        writer.write_u32::<BigEndian>(self.root_digest.len() as u32)?;
-        writer.write_u32::<BigEndian>(self.flags)?;
-        writer.write_all(&self.reserved)?;
+        let hash_algorithm = self
+            .hash_algorithm
+            .as_bytes()
+            .to_padded_array::<32>()
+            .ok_or_else(|| Error::StringTooLong("hash_algorithm", self.hash_algorithm.clone()))?;
+
+        let raw_descriptor = RawHashDescriptor {
+            image_size: self.image_size.into(),
+            hash_algorithm,
+            partition_name_len: (self.partition_name.len() as u32).into(),
+            salt_len: (self.salt.len() as u32).into(),
+            root_digest_len: (self.root_digest.len() as u32).into(),
+            flags: self.flags.into(),
+            reserved: self.reserved,
+        };
+
+        raw_descriptor.write_to_io(&mut writer)?;
         writer.write_all(self.partition_name.as_bytes())?;
         writer.write_all(&self.salt)?;
         writer.write_all(&self.root_digest)?;
 
         Ok(())
     }
+}
+
+/// Raw on-disk layout for the AVB kernel command line descriptor after the
+/// prefix.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawKernelCmdlineDescriptor {
+    flags: big_endian::U32,
+    cmdline_len: big_endian::U32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -952,8 +1018,9 @@ impl<R: Read> FromReader<R> for KernelCmdlineDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let flags = reader.read_u32::<BigEndian>()?;
-        let cmdline_len = reader.read_u32::<BigEndian>()?;
+        let raw_descriptor = RawKernelCmdlineDescriptor::read_from_io(&mut reader)?;
+
+        let cmdline_len = raw_descriptor.cmdline_len.get();
 
         if cmdline_len > HEADER_MAX_SIZE as u32 {
             return Err(Error::FieldOutOfBounds("cmdline_len"));
@@ -964,7 +1031,10 @@ impl<R: Read> FromReader<R> for KernelCmdlineDescriptor {
             .read_string_exact(cmdline_len as usize)
             .map_err(|e| Error::ReadFieldError("cmdline", e))?;
 
-        let descriptor = Self { flags, cmdline };
+        let descriptor = Self {
+            flags: raw_descriptor.flags.get(),
+            cmdline,
+        };
 
         Ok(descriptor)
     }
@@ -978,12 +1048,27 @@ impl<W: Write> ToWriter<W> for KernelCmdlineDescriptor {
             return Err(Error::FieldOutOfBounds("cmdline_len"));
         }
 
-        writer.write_u32::<BigEndian>(self.flags)?;
-        writer.write_u32::<BigEndian>(self.cmdline.len() as u32)?;
+        let raw_descriptor = RawKernelCmdlineDescriptor {
+            flags: self.flags.into(),
+            cmdline_len: (self.cmdline.len() as u32).into(),
+        };
+
+        raw_descriptor.write_to_io(&mut writer)?;
         writer.write_all(self.cmdline.as_bytes())?;
 
         Ok(())
     }
+}
+
+/// Raw on-disk layout for the AVB chain partition descriptor after the prefix.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawChainPartitionDescriptor {
+    rollback_index_location: big_endian::U32,
+    partition_name_len: big_endian::U32,
+    public_key_len: big_endian::U32,
+    flags: big_endian::U32,
+    reserved: [u8; 60],
 }
 
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -1021,9 +1106,10 @@ impl<R: Read> FromReader<R> for ChainPartitionDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let rollback_index_location = reader.read_u32::<BigEndian>()?;
-        let partition_name_len = reader.read_u32::<BigEndian>()?;
-        let public_key_len = reader.read_u32::<BigEndian>()?;
+        let raw_descriptor = RawChainPartitionDescriptor::read_from_io(&mut reader)?;
+
+        let partition_name_len = raw_descriptor.partition_name_len.get();
+        let public_key_len = raw_descriptor.public_key_len.get();
 
         if partition_name_len > HEADER_MAX_SIZE as u32 {
             return Err(Error::FieldOutOfBounds("partition_name_len"));
@@ -1031,25 +1117,20 @@ impl<R: Read> FromReader<R> for ChainPartitionDescriptor {
             return Err(Error::FieldOutOfBounds("public_key_len"));
         }
 
-        let flags = reader.read_u32::<BigEndian>()?;
-
-        let mut reserved = [0u8; 60];
-        reader.read_exact(&mut reserved)?;
-
         // Not NULL-terminated.
         let partition_name = reader
-            .read_string_padded(partition_name_len as usize)
+            .read_string_exact(partition_name_len as usize)
             .map_err(|e| Error::ReadFieldError("partition_name", e))?;
 
         let mut public_key = vec![0u8; public_key_len as usize];
         reader.read_exact(&mut public_key)?;
 
         let descriptor = Self {
-            rollback_index_location,
+            rollback_index_location: raw_descriptor.rollback_index_location.get(),
             partition_name,
             public_key,
-            flags,
-            reserved,
+            flags: raw_descriptor.flags.get(),
+            reserved: raw_descriptor.reserved,
         };
 
         Ok(descriptor)
@@ -1066,16 +1147,28 @@ impl<W: Write> ToWriter<W> for ChainPartitionDescriptor {
             return Err(Error::FieldOutOfBounds("public_key_len"));
         }
 
-        writer.write_u32::<BigEndian>(self.rollback_index_location)?;
-        writer.write_u32::<BigEndian>(self.partition_name.len() as u32)?;
-        writer.write_u32::<BigEndian>(self.public_key.len() as u32)?;
-        writer.write_u32::<BigEndian>(self.flags)?;
-        writer.write_all(&self.reserved)?;
+        let raw_descriptor = RawChainPartitionDescriptor {
+            rollback_index_location: self.rollback_index_location.into(),
+            partition_name_len: (self.partition_name.len() as u32).into(),
+            public_key_len: (self.public_key.len() as u32).into(),
+            flags: self.flags.into(),
+            reserved: self.reserved,
+        };
+
+        raw_descriptor.write_to_io(&mut writer)?;
         writer.write_all(self.partition_name.as_bytes())?;
         writer.write_all(&self.public_key)?;
 
         Ok(())
     }
+}
+
+/// Raw on-disk layout for the AVB descriptor prefix.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawDescriptor {
+    tag: big_endian::U64,
+    num_bytes_following: big_endian::U64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -1119,16 +1212,16 @@ impl<R: Read> FromReader<R> for Descriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let tag = reader.read_u64::<BigEndian>()?;
-        let nbf = reader.read_u64::<BigEndian>()?;
+        let raw_descriptor = RawDescriptor::read_from_io(&mut reader)?;
 
+        let nbf = raw_descriptor.num_bytes_following.get();
         if nbf > HEADER_MAX_SIZE {
             return Err(Error::FieldOutOfBounds("num_bytes_following"));
         }
 
         let mut inner_reader = CountingReader::new(reader.take(nbf));
 
-        let descriptor = match tag {
+        let descriptor = match raw_descriptor.tag.get() {
             PropertyDescriptor::TAG => {
                 let d = PropertyDescriptor::from_reader(&mut inner_reader)?;
                 Self::Property(d)
@@ -1149,7 +1242,7 @@ impl<R: Read> FromReader<R> for Descriptor {
                 let d = ChainPartitionDescriptor::from_reader(&mut inner_reader)?;
                 Self::ChainPartition(d)
             }
-            _ => {
+            tag => {
                 let mut data = vec![0u8; nbf as usize];
                 inner_reader.read_exact(&mut data)?;
 
@@ -1209,8 +1302,12 @@ impl<W: Write> ToWriter<W> for Descriptor {
         let padding_len = padding::calc(inner_data.len(), 8);
         let nbf = inner_data.len() + padding_len;
 
-        writer.write_u64::<BigEndian>(tag)?;
-        writer.write_u64::<BigEndian>(nbf as u64)?;
+        let raw_descriptor = RawDescriptor {
+            tag: tag.into(),
+            num_bytes_following: (nbf as u64).into(),
+        };
+
+        raw_descriptor.write_to_io(&mut writer)?;
         writer.write_all(&inner_data)?;
         writer.write_zeros_exact(padding_len as u64)?;
 
@@ -1252,6 +1349,37 @@ impl<'a> TryFrom<&'a mut Descriptor> for AppendedDescriptorMut<'a> {
             _ => Err(Error::NoAppendedDescriptor),
         }
     }
+}
+
+/// Raw on-disk layout for the AVB header.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawHeader {
+    /// Magic value. This should be equal to [`HEADER_MAGIC`].
+    magic: [u8; 4],
+    required_libavb_version_major: big_endian::U32,
+    required_libavb_version_minor: big_endian::U32,
+    auth_block_size: big_endian::U64,
+    aux_block_size: big_endian::U64,
+    algorithm_type: big_endian::U32,
+    hash_offset: big_endian::U64,
+    hash_size: big_endian::U64,
+    signature_offset: big_endian::U64,
+    signature_size: big_endian::U64,
+    public_key_offset: big_endian::U64,
+    public_key_size: big_endian::U64,
+    public_key_metadata_offset: big_endian::U64,
+    public_key_metadata_size: big_endian::U64,
+    descriptors_offset: big_endian::U64,
+    descriptors_size: big_endian::U64,
+    rollback_index: big_endian::U64,
+    flags: big_endian::U32,
+    rollback_index_location: big_endian::U32,
+    /// Unlike all other fixed-size header strings, this one must be NULL
+    /// terminated.
+    release_string: [u8; 47],
+    _release_string_terminator: u8,
+    reserved: [u8; 80],
 }
 
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -1306,7 +1434,7 @@ impl fmt::Debug for Header {
 }
 
 impl Header {
-    pub const SIZE: usize = 256;
+    pub const SIZE: usize = mem::size_of::<RawHeader>();
 
     fn to_writer_internal(&self, mut writer: impl Write, skip_auth_block: bool) -> Result<()> {
         let mut descriptors_writer = Cursor::new(Vec::new());
@@ -1356,31 +1484,38 @@ impl Header {
 
         // All sizes and offsets are now guaranteed to fit in a u64.
 
-        writer.write_all(&HEADER_MAGIC)?;
-        writer.write_u32::<BigEndian>(self.required_libavb_version_major)?;
-        writer.write_u32::<BigEndian>(self.required_libavb_version_minor)?;
-        writer.write_u64::<BigEndian>(auth_block_size as u64)?;
-        writer.write_u64::<BigEndian>(aux_block_size as u64)?;
-        writer.write_u32::<BigEndian>(self.algorithm_type.to_raw())?;
-        writer.write_u64::<BigEndian>(hash_offset as u64)?;
-        writer.write_u64::<BigEndian>(self.hash.len() as u64)?;
-        writer.write_u64::<BigEndian>(signature_offset as u64)?;
-        writer.write_u64::<BigEndian>(self.signature.len() as u64)?;
-        writer.write_u64::<BigEndian>(public_key_offset as u64)?;
-        writer.write_u64::<BigEndian>(self.public_key.len() as u64)?;
-        writer.write_u64::<BigEndian>(public_key_metadata_offset as u64)?;
-        writer.write_u64::<BigEndian>(self.public_key_metadata.len() as u64)?;
-        writer.write_u64::<BigEndian>(descriptors_offset as u64)?;
-        writer.write_u64::<BigEndian>(descriptors_raw.len() as u64)?;
-        writer.write_u64::<BigEndian>(self.rollback_index)?;
-        writer.write_u32::<BigEndian>(self.flags)?;
-        writer.write_u32::<BigEndian>(self.rollback_index_location)?;
+        let release_string = self
+            .release_string
+            .as_bytes()
+            .to_padded_array::<47>()
+            .ok_or_else(|| Error::StringTooLong("release_string", self.release_string.clone()))?;
 
-        writer
-            .write_string_padded(&self.release_string, 48)
-            .map_err(|e| Error::WriteFieldError("release_string", e))?;
+        let raw_header = RawHeader {
+            magic: HEADER_MAGIC,
+            required_libavb_version_major: self.required_libavb_version_major.into(),
+            required_libavb_version_minor: self.required_libavb_version_minor.into(),
+            auth_block_size: (auth_block_size as u64).into(),
+            aux_block_size: (aux_block_size as u64).into(),
+            algorithm_type: self.algorithm_type.to_raw().into(),
+            hash_offset: (hash_offset as u64).into(),
+            hash_size: (self.hash.len() as u64).into(),
+            signature_offset: (signature_offset as u64).into(),
+            signature_size: (self.signature.len() as u64).into(),
+            public_key_offset: (public_key_offset as u64).into(),
+            public_key_size: (self.public_key.len() as u64).into(),
+            public_key_metadata_offset: (public_key_metadata_offset as u64).into(),
+            public_key_metadata_size: (self.public_key_metadata.len() as u64).into(),
+            descriptors_offset: (descriptors_offset as u64).into(),
+            descriptors_size: (descriptors_raw.len() as u64).into(),
+            rollback_index: self.rollback_index.into(),
+            flags: self.flags.into(),
+            rollback_index_location: self.rollback_index_location.into(),
+            release_string,
+            _release_string_terminator: 0,
+            reserved: self.reserved,
+        };
 
-        writer.write_all(&self.reserved)?;
+        raw_header.write_to_io(&mut writer)?;
 
         // Auth block.
         if !skip_auth_block {
@@ -1529,25 +1664,19 @@ impl<R: Read> FromReader<R> for Header {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let mut magic = [0u8; 4];
-        reader.read_exact(&mut magic)?;
+        let raw_header = RawHeader::read_from_io(&mut reader)?;
 
-        if magic != HEADER_MAGIC {
-            return Err(Error::InvalidHeaderMagic(magic));
+        if raw_header.magic != HEADER_MAGIC {
+            return Err(Error::InvalidHeaderMagic(raw_header.magic));
         }
 
-        let required_libavb_version_major = reader.read_u32::<BigEndian>()?;
-        let required_libavb_version_minor = reader.read_u32::<BigEndian>()?;
-        let auth_block_size = reader.read_u64::<BigEndian>()?;
-        let aux_block_size = reader.read_u64::<BigEndian>()?;
-
-        let algorithm_type_raw = reader.read_u32::<BigEndian>()?;
-        let algorithm_type = AlgorithmType::from_raw(algorithm_type_raw);
-
-        let hash_offset = reader.read_u64::<BigEndian>()?;
-        let hash_size = reader.read_u64::<BigEndian>()?;
-        let signature_offset = reader.read_u64::<BigEndian>()?;
-        let signature_size = reader.read_u64::<BigEndian>()?;
+        let auth_block_size = raw_header.auth_block_size.get();
+        let aux_block_size = raw_header.aux_block_size.get();
+        let algorithm_type = AlgorithmType::from_raw(raw_header.algorithm_type.get());
+        let hash_offset = raw_header.hash_offset.get();
+        let hash_size = raw_header.hash_size.get();
+        let signature_offset = raw_header.signature_offset.get();
+        let signature_size = raw_header.signature_size.get();
 
         let auth_block_combined = hash_size
             .checked_add(signature_size)
@@ -1561,12 +1690,12 @@ impl<R: Read> FromReader<R> for Header {
             return Err(Error::FieldOutOfBounds("signature_offset"));
         }
 
-        let public_key_offset = reader.read_u64::<BigEndian>()?;
-        let public_key_size = reader.read_u64::<BigEndian>()?;
-        let public_key_metadata_offset = reader.read_u64::<BigEndian>()?;
-        let public_key_metadata_size = reader.read_u64::<BigEndian>()?;
-        let descriptors_offset = reader.read_u64::<BigEndian>()?;
-        let descriptors_size = reader.read_u64::<BigEndian>()?;
+        let public_key_offset = raw_header.public_key_offset.get();
+        let public_key_size = raw_header.public_key_size.get();
+        let public_key_metadata_offset = raw_header.public_key_metadata_offset.get();
+        let public_key_metadata_size = raw_header.public_key_metadata_size.get();
+        let descriptors_offset = raw_header.descriptors_offset.get();
+        let descriptors_size = raw_header.descriptors_size.get();
 
         let aux_block_combined = public_key_size
             .checked_add(public_key_metadata_size)
@@ -1583,16 +1712,9 @@ impl<R: Read> FromReader<R> for Header {
             return Err(Error::FieldOutOfBounds("descriptors_offset"));
         }
 
-        let rollback_index = reader.read_u64::<BigEndian>()?;
-        let flags = reader.read_u32::<BigEndian>()?;
-        let rollback_index_location = reader.read_u32::<BigEndian>()?;
-
-        let release_string = reader
-            .read_string_padded(48)
-            .map_err(|e| Error::ReadFieldError("release_string", e))?;
-
-        let mut reserved = [0u8; 80];
-        reader.read_exact(&mut reserved)?;
+        let release_string = raw_header.release_string.trim_end_padding();
+        let release_string = str::from_utf8(release_string)
+            .map_err(|e| Error::StringNotUtf8("release_string", release_string.to_vec(), e))?;
 
         let header_size = reader.stream_position()?;
         let total_size = header_size
@@ -1643,19 +1765,19 @@ impl<R: Read> FromReader<R> for Header {
         }
 
         let header = Self {
-            required_libavb_version_major,
-            required_libavb_version_minor,
+            required_libavb_version_major: raw_header.required_libavb_version_major.get(),
+            required_libavb_version_minor: raw_header.required_libavb_version_minor.get(),
             algorithm_type,
             hash: hash.to_owned(),
             signature: signature.to_owned(),
             public_key: public_key.to_owned(),
             public_key_metadata: public_key_metadata.to_owned(),
             descriptors,
-            rollback_index,
-            flags,
-            rollback_index_location,
-            release_string,
-            reserved,
+            rollback_index: raw_header.rollback_index.get(),
+            flags: raw_header.flags.get(),
+            rollback_index_location: raw_header.rollback_index_location.get(),
+            release_string: release_string.to_owned(),
+            reserved: raw_header.reserved,
         };
 
         Ok(header)
@@ -1668,6 +1790,20 @@ impl<W: Write> ToWriter<W> for Header {
     fn to_writer(&self, writer: W) -> Result<()> {
         self.to_writer_internal(writer, false)
     }
+}
+
+/// Raw on-disk layout for the AVB footer.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawFooter {
+    /// Magic value. This should be equal to [`FOOTER_MAGIC`].
+    magic: [u8; 4],
+    version_major: big_endian::U32,
+    version_minor: big_endian::U32,
+    original_image_size: big_endian::U64,
+    vbmeta_offset: big_endian::U64,
+    vbmeta_size: big_endian::U64,
+    reserved: [u8; 28],
 }
 
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -1695,36 +1831,26 @@ impl fmt::Debug for Footer {
 }
 
 impl Footer {
-    pub const SIZE: usize = 64;
+    pub const SIZE: usize = mem::size_of::<RawFooter>();
 }
 
 impl<R: Read> FromReader<R> for Footer {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let mut magic = [0u8; 4];
-        reader.read_exact(&mut magic)?;
+        let raw_footer = RawFooter::read_from_io(&mut reader)?;
 
-        if magic != FOOTER_MAGIC {
-            return Err(Error::InvalidFooterMagic(magic));
+        if raw_footer.magic != FOOTER_MAGIC {
+            return Err(Error::InvalidFooterMagic(raw_footer.magic));
         }
 
-        let version_major = reader.read_u32::<BigEndian>()?;
-        let version_minor = reader.read_u32::<BigEndian>()?;
-        let original_image_size = reader.read_u64::<BigEndian>()?;
-        let vbmeta_offset = reader.read_u64::<BigEndian>()?;
-        let vbmeta_size = reader.read_u64::<BigEndian>()?;
-
-        let mut reserved = [0u8; 28];
-        reader.read_exact(&mut reserved)?;
-
         let footer = Self {
-            version_major,
-            version_minor,
-            original_image_size,
-            vbmeta_offset,
-            vbmeta_size,
-            reserved,
+            version_major: raw_footer.version_major.get(),
+            version_minor: raw_footer.version_minor.get(),
+            original_image_size: raw_footer.original_image_size.get(),
+            vbmeta_offset: raw_footer.vbmeta_offset.get(),
+            vbmeta_size: raw_footer.vbmeta_size.get(),
+            reserved: raw_footer.reserved,
         };
 
         Ok(footer)
@@ -1735,15 +1861,29 @@ impl<W: Write> ToWriter<W> for Footer {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
-        writer.write_all(&FOOTER_MAGIC)?;
-        writer.write_u32::<BigEndian>(self.version_major)?;
-        writer.write_u32::<BigEndian>(self.version_minor)?;
-        writer.write_u64::<BigEndian>(self.original_image_size)?;
-        writer.write_u64::<BigEndian>(self.vbmeta_offset)?;
-        writer.write_u64::<BigEndian>(self.vbmeta_size)?;
-        writer.write_all(&self.reserved)?;
+        let raw_footer = RawFooter {
+            magic: FOOTER_MAGIC,
+            version_major: self.version_major.into(),
+            version_minor: self.version_minor.into(),
+            original_image_size: self.original_image_size.into(),
+            vbmeta_offset: self.vbmeta_offset.into(),
+            vbmeta_size: self.vbmeta_size.into(),
+            reserved: self.reserved,
+        };
+
+        raw_footer.write_to_io(&mut writer)?;
+
         Ok(())
     }
+}
+
+/// Raw on-disk layout for the AVB binary public key header.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawPublicKey {
+    key_num_bits: big_endian::U32,
+    #[expect(unused)]
+    n0inv: big_endian::U32,
 }
 
 /// Encode a public key in the AVB binary format.
@@ -1767,11 +1907,13 @@ pub fn encode_public_key(key: &RsaPublicKey) -> Result<Vec<u8>> {
     let r = BigUint::from(2u32).pow(key.n().bits());
     let rrmodn = r.modpow(&BigUint::from(2u32), key.n());
 
-    let key_bits = (key.size() * 8).to_u32().unwrap();
+    let raw_header = RawPublicKey {
+        key_num_bits: (key.size() * 8).to_u32().unwrap().into(),
+        n0inv: n0inv.to_u32().unwrap().into(),
+    };
 
     let mut data = vec![];
-    data.extend_from_slice(&key_bits.to_be_bytes());
-    data.extend_from_slice(&n0inv.to_u32().unwrap().to_be_bytes());
+    data.extend_from_slice(raw_header.as_bytes());
 
     let modulus_raw = key.n().to_bytes_be();
     data.resize(data.len() + key.size() - modulus_raw.len(), 0);
@@ -1786,19 +1928,16 @@ pub fn encode_public_key(key: &RsaPublicKey) -> Result<Vec<u8>> {
 
 /// Decode a public key from the AVB binary format.
 pub fn decode_public_key(data: &[u8]) -> Result<RsaPublicKey> {
-    let mut reader = Cursor::new(data);
-    let key_bits = reader
-        .read_u32::<BigEndian>()?
-        .to_usize()
-        .ok_or_else(|| Error::FieldOutOfBounds("key_bits"))?;
+    let (raw_header, suffix) =
+        RawPublicKey::ref_from_prefix(data).map_err(|_| Error::BinaryPublicKeyTooSmall)?;
 
-    // Skip n0inv.
-    reader.read_discard_exact(4)?;
+    let key_bits = raw_header.key_num_bits.get() as usize;
 
-    let mut modulus_raw = vec![0u8; key_bits / 8];
-    reader.read_exact(&mut modulus_raw)?;
+    if suffix.len() < key_bits / 8 {
+        return Err(Error::BinaryPublicKeyTooSmall);
+    }
 
-    let modulus = BigUint::from_bytes_be(&modulus_raw);
+    let modulus = BigUint::from_bytes_be(&suffix[..key_bits / 8]);
     let public_key = RsaPublicKey::new(modulus, BigUint::from(65537u32))?;
 
     Ok(public_key)
