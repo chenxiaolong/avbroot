@@ -21,7 +21,7 @@ cms = { version = "0.2.2", features = ["std"] }
 const-oid = "0.9.5"
 crc32fast = "1.4.2"
 ctrlc = "3.4.0"
-dlv-list = "0.5.2"
+dlv-list = "0.6.0"
 flate2 = "1.0.27"
 gf256 = { version = "0.3.0", features = ["rs"] }
 hex = { version = "0.4.3", features = ["serde"] }

@@ -33,12 +33,11 @@ allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause",
-    "CC0-1.0",
     "GPL-3.0",
     "ISC",
     "MIT",
     "OpenSSL",
-    "Unicode-DFS-2016",
+    "Unicode-3.0",
 ]
 
 [[licenses.clarify]]
