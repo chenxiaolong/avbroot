@@ -11,7 +11,7 @@ use std::{
 use crc32fast::Hasher;
 use dlv_list::{Index, VecList};
 use thiserror::Error;
-use zerocopy::{byteorder::little_endian, FromZeros, IntoBytes};
+use zerocopy::{byteorder::little_endian, FromBytes, IntoBytes};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::stream::ReadDiscardExt;
@@ -669,8 +669,7 @@ impl<R: Read> SparseReader<R> {
     /// data chunks if they are not needed. If the underlying file is seekable
     /// and skipping chunks is needed, use [`Self::new_seekable`] instead.
     pub fn new(mut inner: R, crc_mode: CrcMode) -> Result<Self> {
-        let mut header = RawHeader::new_zeroed();
-        inner.read_exact(header.as_mut_bytes())?;
+        let header = RawHeader::read_from_io(&mut inner)?;
 
         header.validate()?;
 
@@ -733,8 +732,7 @@ impl<R: Read> SparseReader<R> {
             return Ok(None);
         }
 
-        let mut raw_chunk = RawChunk::new_zeroed();
-        self.inner.read_exact(raw_chunk.as_mut_bytes())?;
+        let raw_chunk = RawChunk::read_from_io(&mut self.inner)?;
 
         raw_chunk.validate(self.chunk, &self.header, self.block)?;
 
@@ -751,8 +749,7 @@ impl<R: Read> SparseReader<R> {
                 data = ChunkData::Data;
             }
             CHUNK_TYPE_FILL => {
-                let mut fill_value = little_endian::U32::new_zeroed();
-                self.inner.read_exact(fill_value.as_mut_bytes())?;
+                let fill_value = little_endian::U32::read_from_io(&mut self.inner)?;
 
                 if let Some(hasher) = &mut self.hasher {
                     hash_fill_chunk(&raw_chunk, fill_value, &self.header, hasher);
@@ -768,8 +765,7 @@ impl<R: Read> SparseReader<R> {
                 data = ChunkData::Hole;
             }
             CHUNK_TYPE_CRC32 => {
-                let mut expected = little_endian::U32::new_zeroed();
-                self.inner.read_exact(expected.as_mut_bytes())?;
+                let expected = little_endian::U32::read_from_io(&mut self.inner)?;
 
                 if let Some(hasher) = &mut self.hasher {
                     let actual = hasher.clone().finalize();
@@ -874,7 +870,7 @@ impl<W: Write> SparseWriter<W> {
 
         header.validate()?;
 
-        inner.write_all(header.as_bytes())?;
+        header.write_to_io(&mut inner)?;
 
         Ok(Self {
             inner,
@@ -928,7 +924,7 @@ impl<W: Write> SparseWriter<W> {
         self.chunk += 1;
         self.block = chunk.bounds.end;
 
-        self.inner.write_all(raw_chunk.as_bytes())?;
+        raw_chunk.write_to_io(&mut self.inner)?;
 
         match chunk.data {
             ChunkData::Data => {
