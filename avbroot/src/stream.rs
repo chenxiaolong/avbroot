@@ -126,9 +126,6 @@ impl<W: Write> WriteZerosExt for W {
 pub trait ReadStringExt {
     /// Read exact sized string.
     fn read_string_exact(&mut self, size: usize) -> io::Result<String>;
-
-    /// Read string with maximum size and trim trailing zeros.
-    fn read_string_padded(&mut self, max_size: usize) -> io::Result<String>;
 }
 
 impl<R: Read> ReadStringExt for R {
@@ -142,49 +139,6 @@ impl<R: Read> ReadStringExt for R {
                 format!("Invalid UTF-8: {:?}: {e}", e.as_bytes().as_bstr()),
             )
         })
-    }
-
-    fn read_string_padded(&mut self, max_size: usize) -> io::Result<String> {
-        let mut buf = vec![0u8; max_size];
-        self.read_exact(&mut buf)?;
-
-        let after_last_non_zero = buf
-            .iter()
-            .rev()
-            .position(|&b| b != 0)
-            .map_or(0, |i| buf.len() - i);
-        buf.resize(after_last_non_zero, 0);
-        buf.shrink_to_fit();
-
-        String::from_utf8(buf).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid UTF-8: {:?}: {e}", e.as_bytes().as_bstr()),
-            )
-        })
-    }
-}
-
-/// Extensions for writers to write strings.
-pub trait WriteStringExt {
-    fn write_string_padded(&mut self, data: &str, max_size: usize) -> io::Result<()>;
-}
-
-impl<W: Write> WriteStringExt for W {
-    fn write_string_padded(&mut self, data: &str, max_size: usize) -> io::Result<()> {
-        if data.len() > max_size {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("{data:?} exceeds maximum size of {max_size} bytes"),
-            ));
-        }
-
-        self.write_all(data.as_bytes())?;
-
-        let num_zeros = (max_size - data.len()) as u64;
-        self.write_zeros_exact(num_zeros)?;
-
-        Ok(())
     }
 }
 
@@ -687,7 +641,7 @@ mod tests {
 
     use super::{
         CountingReader, CountingWriter, HashingReader, HashingWriter, PSeekFile, ReadDiscardExt,
-        ReadStringExt, Reopen, SectionReader, SharedCursor, WriteStringExt, WriteZerosExt,
+        ReadStringExt, Reopen, SectionReader, SharedCursor, WriteZerosExt,
     };
 
     const FOOBAR_SHA256: [u8; 32] = [
@@ -730,24 +684,6 @@ mod tests {
 
         assert_eq!(reader.read_string_exact(3).unwrap(), "foo");
         assert_eq!(reader.read_string_exact(0).unwrap(), "");
-
-        reader.rewind().unwrap();
-        assert_eq!(reader.read_string_padded(3).unwrap(), "foo");
-
-        reader.rewind().unwrap();
-        assert_eq!(reader.read_string_padded(10).unwrap(), "foo\0\0bar");
-    }
-
-    #[test]
-    fn write_string() {
-        let mut writer = Cursor::new([0xffu8; 8]);
-
-        writer.write_string_padded("foobar", 8).unwrap();
-        assert_eq!(writer.get_ref(), b"foobar\0\0");
-
-        writer.rewind().unwrap();
-        writer.write_string_padded("foobarhi", 8).unwrap();
-        assert_eq!(writer.get_ref(), b"foobarhi");
     }
 
     #[test]
