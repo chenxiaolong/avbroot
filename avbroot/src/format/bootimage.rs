@@ -4,25 +4,25 @@
 use std::{
     fmt,
     io::{self, Cursor, Read, Seek, Write},
-    str::{self},
+    mem,
+    str::{self, Utf8Error},
 };
 
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use bstr::ByteSlice;
 use num_traits::ToPrimitive;
 use ring::digest::Context;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use zerocopy::{little_endian, FromBytes, IntoBytes};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     crypto::RsaSigningKey,
     format::{
         avb::{self, Descriptor, Header},
-        padding,
+        padding::{self, ZeroPadding},
     },
-    stream::{
-        CountingReader, CountingWriter, FromReader, HashingWriter, ReadStringExt, ToWriter,
-        WriteStringExt,
-    },
+    stream::{CountingReader, CountingWriter, FromReader, HashingWriter, ReadStringExt, ToWriter},
     util::{self, NumBytes},
 };
 
@@ -44,16 +44,7 @@ pub const VENDOR_RAMDISK_TABLE_ENTRY_BOARD_ID_SIZE: usize = 16;
 
 pub const PAGE_SIZE: u32 = 4096;
 
-const HDR_V0_SIZE: u32 = 1632;
-const HDR_V1_EXTRA_SIZE: u32 = 16;
-const HDR_V2_EXTRA_SIZE: u32 = 12;
-const HDR_V3_SIZE: u32 = 1580;
-const HDR_V4_EXTRA_SIZE: u32 = 4;
 const HDR_V4_SIGNATURE_SIZE: u64 = 4096;
-
-const VENDOR_HDR_V3_SIZE: u32 = 2112;
-const VENDOR_HDR_V4_EXTRA_SIZE: u32 = 16;
-const VENDOR_RAMDISK_TABLE_ENTRY_V4_SIZE: u32 = 108;
 
 /// Maximum size of any individual boot image component, like the kernel. This
 /// limit is currently 64 MiB, which should be sufficient since there is no
@@ -78,6 +69,10 @@ pub enum Error {
     WriteFieldError(&'static str, #[source] io::Error),
     #[error("{0:?} field: invalid value: {1}")]
     InvalidFieldValue(&'static str, u32),
+    #[error("{0:?} field is not UTF-8 encoded: {data:?}", data = .1.as_bstr())]
+    StringNotUtf8(&'static str, Vec<u8>, #[source] Utf8Error),
+    #[error("{0:?} field is too long: {1:?}")]
+    StringTooLong(&'static str, String),
     #[error("{0:?} field is out of bounds")]
     FieldOutOfBounds(&'static str),
     #[error("Invalid data: {0}")]
@@ -96,6 +91,45 @@ pub trait BootImageExt {
     fn header_version(&self) -> u32;
 
     fn header_size(&self) -> u32;
+}
+
+/// Raw on-disk layout for the v0 image header.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawV0 {
+    /// Magic value. This should be equal to [`BOOT_MAGIC`].
+    magic: [u8; 8],
+    kernel_size: little_endian::U32,
+    kernel_addr: little_endian::U32,
+    ramdisk_size: little_endian::U32,
+    ramdisk_addr: little_endian::U32,
+    second_size: little_endian::U32,
+    second_addr: little_endian::U32,
+    tags_addr: little_endian::U32,
+    page_size: little_endian::U32,
+    header_version: little_endian::U32,
+    os_version: little_endian::U32,
+    name: [u8; BOOT_NAME_SIZE],
+    cmdline: [u8; BOOT_ARGS_SIZE],
+    id: [little_endian::U32; 8],
+    extra_cmdline: [u8; BOOT_EXTRA_ARGS_SIZE],
+}
+
+/// Raw on-disk layout for the extra v1 image header fields.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawV1Extra {
+    recovery_dtbo_size: little_endian::U32,
+    recovery_dtbo_offset: little_endian::U64,
+    header_size: little_endian::U32,
+}
+
+/// Raw on-disk layout for the extra v2 image header fields.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawV2Extra {
+    dtb_size: little_endian::U32,
+    dtb_addr: little_endian::U64,
 }
 
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
@@ -224,16 +258,16 @@ impl BootImageExt for BootImageV0Through2 {
 
     fn header_size(&self) -> u32 {
         let version = self.header_version();
-        let mut size = HDR_V0_SIZE;
+        let mut size = mem::size_of::<RawV0>();
 
         if version >= 1 {
-            size += HDR_V1_EXTRA_SIZE;
+            size += mem::size_of::<RawV1Extra>();
         }
         if version == 2 {
-            size += HDR_V2_EXTRA_SIZE;
+            size += mem::size_of::<RawV2Extra>();
         }
 
-        size
+        size as u32
     }
 }
 
@@ -243,23 +277,18 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let mut magic = [0u8; BOOT_MAGIC.len()];
-        reader.read_exact(&mut magic)?;
+        let raw_v0 = RawV0::read_from_io(&mut reader)?;
 
-        if magic != BOOT_MAGIC {
-            return Err(Error::UnknownMagic(magic));
+        if raw_v0.magic != BOOT_MAGIC {
+            return Err(Error::UnknownMagic(raw_v0.magic));
         }
 
-        let kernel_size = reader.read_u32::<LittleEndian>()?;
-        let kernel_addr = reader.read_u32::<LittleEndian>()?;
-        let ramdisk_size = reader.read_u32::<LittleEndian>()?;
-        let ramdisk_addr = reader.read_u32::<LittleEndian>()?;
-        let second_size = reader.read_u32::<LittleEndian>()?;
-        let second_addr = reader.read_u32::<LittleEndian>()?;
-        let tags_addr = reader.read_u32::<LittleEndian>()?;
-        let page_size = reader.read_u32::<LittleEndian>()?;
+        let kernel_size = raw_v0.kernel_size.get();
+        let ramdisk_size = raw_v0.ramdisk_size.get();
+        let second_size = raw_v0.second_size.get();
+        let page_size = raw_v0.page_size.get();
 
-        let header_version = reader.read_u32::<LittleEndian>()?;
+        let header_version = raw_v0.header_version.get();
         if header_version > 2 {
             return Err(Error::UnknownHeaderVersion(header_version));
         }
@@ -274,21 +303,17 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
             return Err(Error::InvalidFieldValue("page_size", 0));
         }
 
-        let os_version = reader.read_u32::<LittleEndian>()?;
+        let name = raw_v0.name.trim_end_padding();
+        let name =
+            str::from_utf8(name).map_err(|e| Error::StringNotUtf8("name", name.to_vec(), e))?;
 
-        let name = reader
-            .read_string_padded(BOOT_NAME_SIZE)
-            .map_err(|e| Error::ReadFieldError("name", e))?;
-        let cmdline = reader
-            .read_string_padded(BOOT_ARGS_SIZE)
-            .map_err(|e| Error::ReadFieldError("cmdline", e))?;
+        let cmdline = raw_v0.cmdline.trim_end_padding();
+        let cmdline = str::from_utf8(cmdline)
+            .map_err(|e| Error::StringNotUtf8("cmdline", cmdline.to_vec(), e))?;
 
-        let mut id = [0u32; 8];
-        reader.read_u32_into::<LittleEndian>(&mut id)?;
-
-        let extra_cmdline = reader
-            .read_string_padded(BOOT_EXTRA_ARGS_SIZE)
-            .map_err(|e| Error::ReadFieldError("extra_cmdline", e))?;
+        let extra_cmdline = raw_v0.extra_cmdline.trim_end_padding();
+        let extra_cmdline = str::from_utf8(extra_cmdline)
+            .map_err(|e| Error::StringNotUtf8("extra_cmdline", extra_cmdline.to_vec(), e))?;
 
         struct V1Data {
             v1_extra: V1Extra,
@@ -297,23 +322,22 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
         }
 
         let mut v1_data = if header_version >= 1 {
-            let recovery_dtbo_size = reader.read_u32::<LittleEndian>()?;
+            let raw_v1 = RawV1Extra::read_from_io(&mut reader)?;
+
+            let recovery_dtbo_size = raw_v1.recovery_dtbo_size.get();
             if recovery_dtbo_size > COMPONENT_MAX_SIZE {
                 return Err(Error::FieldOutOfBounds("recovery_dtbo_size"));
             }
 
-            let recovery_dtbo_offset = reader.read_u64::<LittleEndian>()?;
-            let header_size = reader.read_u32::<LittleEndian>()?;
-
             let v1_extra = V1Extra {
-                recovery_dtbo_offset,
+                recovery_dtbo_offset: raw_v1.recovery_dtbo_offset.get(),
                 recovery_dtbo: vec![],
             };
 
             Some(V1Data {
                 v1_extra,
                 recovery_dtbo_size,
-                header_size,
+                header_size: raw_v1.header_size.get(),
             })
         } else {
             None
@@ -325,15 +349,15 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
         }
 
         let mut v2_data = if header_version == 2 {
-            let dtb_size = reader.read_u32::<LittleEndian>()?;
+            let raw_v2 = RawV2Extra::read_from_io(&mut reader)?;
+
+            let dtb_size = raw_v2.dtb_size.get();
             if dtb_size > COMPONENT_MAX_SIZE {
                 return Err(Error::FieldOutOfBounds("dtb_size"));
             }
 
-            let dtb_addr = reader.read_u64::<LittleEndian>()?;
-
             let v2_extra = V2Extra {
-                dtb_addr,
+                dtb_addr: raw_v2.dtb_addr.get(),
                 dtb: vec![],
             };
 
@@ -391,16 +415,16 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
         }
 
         let image = Self {
-            kernel_addr,
-            ramdisk_addr,
-            second_addr,
-            tags_addr,
+            kernel_addr: raw_v0.kernel_addr.get(),
+            ramdisk_addr: raw_v0.ramdisk_addr.get(),
+            second_addr: raw_v0.second_addr.get(),
+            tags_addr: raw_v0.tags_addr.get(),
             page_size,
-            os_version,
-            name,
-            cmdline,
-            id,
-            extra_cmdline,
+            os_version: raw_v0.os_version.get(),
+            name: name.to_owned(),
+            cmdline: cmdline.to_owned(),
+            id: raw_v0.id.map(|id| id.get()),
+            extra_cmdline: extra_cmdline.to_owned(),
             kernel,
             ramdisk,
             second,
@@ -437,44 +461,61 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
             }
         }
 
+        let name = self
+            .name
+            .as_bytes()
+            .to_padded_array::<BOOT_NAME_SIZE>()
+            .ok_or_else(|| Error::StringTooLong("name", self.name.clone()))?;
+        let cmdline = self
+            .cmdline
+            .as_bytes()
+            .to_padded_array::<BOOT_ARGS_SIZE>()
+            .ok_or_else(|| Error::StringTooLong("cmdline", self.cmdline.clone()))?;
+        let extra_cmdline = self
+            .extra_cmdline
+            .as_bytes()
+            .to_padded_array::<BOOT_EXTRA_ARGS_SIZE>()
+            .ok_or_else(|| Error::StringTooLong("extra_cmdline", self.extra_cmdline.clone()))?;
+
         let mut writer = CountingWriter::new(writer);
 
-        writer.write_all(&BOOT_MAGIC)?;
-        writer.write_u32::<LittleEndian>(self.kernel.len() as u32)?;
-        writer.write_u32::<LittleEndian>(self.kernel_addr)?;
-        writer.write_u32::<LittleEndian>(self.ramdisk.len() as u32)?;
-        writer.write_u32::<LittleEndian>(self.ramdisk_addr)?;
-        writer.write_u32::<LittleEndian>(self.second.len() as u32)?;
-        writer.write_u32::<LittleEndian>(self.second_addr)?;
-        writer.write_u32::<LittleEndian>(self.tags_addr)?;
-        writer.write_u32::<LittleEndian>(self.page_size)?;
-        writer.write_u32::<LittleEndian>(self.header_version())?;
-        writer.write_u32::<LittleEndian>(self.os_version)?;
+        let raw_v0 = RawV0 {
+            magic: BOOT_MAGIC,
+            kernel_size: (self.kernel.len() as u32).into(),
+            kernel_addr: self.kernel_addr.into(),
+            ramdisk_size: (self.ramdisk.len() as u32).into(),
+            ramdisk_addr: self.ramdisk_addr.into(),
+            second_size: (self.second.len() as u32).into(),
+            second_addr: self.second_addr.into(),
+            tags_addr: self.tags_addr.into(),
+            page_size: self.page_size.into(),
+            header_version: self.header_version().into(),
+            os_version: self.os_version.into(),
+            name,
+            cmdline,
+            id: self.id.map(|id| id.into()),
+            extra_cmdline,
+        };
 
-        writer
-            .write_string_padded(&self.name, BOOT_NAME_SIZE)
-            .map_err(|e| Error::WriteFieldError("name", e))?;
-        writer
-            .write_string_padded(&self.cmdline, BOOT_ARGS_SIZE)
-            .map_err(|e| Error::WriteFieldError("cmdline", e))?;
-
-        for item in &self.id {
-            writer.write_u32::<LittleEndian>(*item)?;
-        }
-
-        writer
-            .write_string_padded(&self.extra_cmdline, BOOT_EXTRA_ARGS_SIZE)
-            .map_err(|e| Error::WriteFieldError("extra_cmdline", e))?;
+        raw_v0.write_to_io(&mut writer)?;
 
         if let Some(v1) = &self.v1_extra {
-            writer.write_u32::<LittleEndian>(v1.recovery_dtbo.len() as u32)?;
-            writer.write_u64::<LittleEndian>(v1.recovery_dtbo_offset)?;
-            writer.write_u32::<LittleEndian>(self.header_size())?;
+            let raw_v1 = RawV1Extra {
+                recovery_dtbo_size: (v1.recovery_dtbo.len() as u32).into(),
+                recovery_dtbo_offset: v1.recovery_dtbo_offset.into(),
+                header_size: self.header_size().into(),
+            };
+
+            raw_v1.write_to_io(&mut writer)?;
         }
 
         if let Some(v2) = &self.v2_extra {
-            writer.write_u32::<LittleEndian>(v2.dtb.len() as u32)?;
-            writer.write_u64::<LittleEndian>(v2.dtb_addr)?;
+            let raw_v2 = RawV2Extra {
+                dtb_size: (v2.dtb.len() as u32).into(),
+                dtb_addr: v2.dtb_addr.into(),
+            };
+
+            raw_v2.write_to_io(&mut writer)?;
         }
 
         padding::write_zeros(&mut writer, self.page_size.into())?;
@@ -510,6 +551,28 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
 
         Ok(())
     }
+}
+
+/// Raw on-disk layout for the v3 image header.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawV3 {
+    /// Magic value. This should be equal to [`BOOT_MAGIC`].
+    magic: [u8; 8],
+    kernel_size: little_endian::U32,
+    ramdisk_size: little_endian::U32,
+    os_version: little_endian::U32,
+    header_size: little_endian::U32,
+    reserved: [little_endian::U32; 4],
+    header_version: little_endian::U32,
+    cmdline: [u8; BOOT_ARGS_SIZE + BOOT_EXTRA_ARGS_SIZE],
+}
+
+/// Raw on-disk layout for the extra v4 image header fields.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawV4Extra {
+    signature_size: little_endian::U32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -574,13 +637,13 @@ impl BootImageExt for BootImageV3Through4 {
 
     fn header_size(&self) -> u32 {
         let version = self.header_version();
-        let mut size = HDR_V3_SIZE;
+        let mut size = mem::size_of::<RawV3>();
 
         if version >= 4 {
-            size += HDR_V4_EXTRA_SIZE;
+            size += mem::size_of::<RawV4Extra>();
         }
 
-        size
+        size as u32
     }
 }
 
@@ -590,22 +653,17 @@ impl<R: Read> FromReader<R> for BootImageV3Through4 {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let mut magic = [0u8; BOOT_MAGIC.len()];
-        reader.read_exact(&mut magic)?;
+        let raw_v3 = RawV3::read_from_io(&mut reader)?;
 
-        if magic != BOOT_MAGIC {
-            return Err(Error::UnknownMagic(magic));
+        if raw_v3.magic != BOOT_MAGIC {
+            return Err(Error::UnknownMagic(raw_v3.magic));
         }
 
-        let kernel_size = reader.read_u32::<LittleEndian>()?;
-        let ramdisk_size = reader.read_u32::<LittleEndian>()?;
-        let os_version = reader.read_u32::<LittleEndian>()?;
-        let header_size = reader.read_u32::<LittleEndian>()?;
+        let kernel_size = raw_v3.kernel_size.get();
+        let ramdisk_size = raw_v3.ramdisk_size.get();
+        let header_size = raw_v3.header_size.get();
 
-        let mut reserved = [0u32; 4];
-        reader.read_u32_into::<LittleEndian>(&mut reserved)?;
-
-        let header_version = reader.read_u32::<LittleEndian>()?;
+        let header_version = raw_v3.header_version.get();
         if !(3..=4).contains(&header_version) {
             return Err(Error::UnknownHeaderVersion(header_version));
         }
@@ -616,17 +674,18 @@ impl<R: Read> FromReader<R> for BootImageV3Through4 {
             return Err(Error::FieldOutOfBounds("ramdisk_size"));
         }
 
-        let cmdline = reader
-            .read_string_padded(BOOT_ARGS_SIZE + BOOT_EXTRA_ARGS_SIZE)
-            .map_err(|e| Error::ReadFieldError("cmdline", e))?;
+        let cmdline = raw_v3.cmdline.trim_end_padding();
+        let cmdline = str::from_utf8(cmdline)
+            .map_err(|e| Error::StringNotUtf8("cmdline", cmdline.to_vec(), e))?;
 
         let signature_size = if header_version == 4 {
-            let signature_size = reader.read_u32::<LittleEndian>()?;
-            if signature_size > HDR_V4_SIGNATURE_SIZE as u32 {
+            let raw_v4 = RawV4Extra::read_from_io(&mut reader)?;
+
+            if raw_v4.signature_size > HDR_V4_SIGNATURE_SIZE as u32 {
                 return Err(Error::FieldOutOfBounds("signature_size"));
             }
 
-            Some(signature_size)
+            Some(raw_v4.signature_size.get())
         } else {
             None
         };
@@ -675,9 +734,9 @@ impl<R: Read> FromReader<R> for BootImageV3Through4 {
         };
 
         let image = Self {
-            os_version,
-            reserved,
-            cmdline,
+            os_version: raw_v3.os_version.get(),
+            reserved: raw_v3.reserved.map(|r| r.get()),
+            cmdline: cmdline.to_owned(),
             v4_extra,
             kernel,
             ramdisk,
@@ -695,23 +754,26 @@ impl BootImageV3Through4 {
             return Err(Error::FieldOutOfBounds("ramdisk_size"));
         }
 
+        let cmdline = self
+            .cmdline
+            .as_bytes()
+            .to_padded_array::<{ BOOT_ARGS_SIZE + BOOT_EXTRA_ARGS_SIZE }>()
+            .ok_or_else(|| Error::StringTooLong("cmdline", self.cmdline.clone()))?;
+
         let mut writer = CountingWriter::new(writer);
 
-        writer.write_all(&BOOT_MAGIC)?;
-        writer.write_u32::<LittleEndian>(self.kernel.len() as u32)?;
-        writer.write_u32::<LittleEndian>(self.ramdisk.len() as u32)?;
-        writer.write_u32::<LittleEndian>(self.os_version)?;
-        writer.write_u32::<LittleEndian>(self.header_size())?;
+        let raw_v3 = RawV3 {
+            magic: BOOT_MAGIC,
+            kernel_size: (self.kernel.len() as u32).into(),
+            ramdisk_size: (self.ramdisk.len() as u32).into(),
+            os_version: self.os_version.into(),
+            header_size: self.header_size().into(),
+            reserved: self.reserved.map(|r| r.into()),
+            header_version: self.header_version().into(),
+            cmdline,
+        };
 
-        for item in &self.reserved {
-            writer.write_u32::<LittleEndian>(*item)?;
-        }
-
-        writer.write_u32::<LittleEndian>(self.header_version())?;
-
-        writer
-            .write_string_padded(&self.cmdline, BOOT_ARGS_SIZE + BOOT_EXTRA_ARGS_SIZE)
-            .map_err(|e| Error::WriteFieldError("cmdline", e))?;
+        raw_v3.write_to_io(&mut writer)?;
 
         let v4_signature = if let Some(v4) = &self.v4_extra {
             let mut sig_writer = Cursor::new(Vec::new());
@@ -730,7 +792,13 @@ impl BootImageV3Through4 {
             }
 
             let sig = sig_writer.into_inner();
-            writer.write_u32::<LittleEndian>(sig.len() as u32)?;
+
+            let raw_v4 = RawV4Extra {
+                signature_size: (sig.len() as u32).into(),
+            };
+
+            raw_v4.write_to_io(&mut writer)?;
+
             Some(sig)
         } else {
             None
@@ -832,6 +900,46 @@ impl<W: Write> ToWriter<W> for BootImageV3Through4 {
     fn to_writer(&self, writer: W) -> Result<()> {
         self.to_writer_internal(writer, false)
     }
+}
+
+/// Raw on-disk layout for the vendor v3 image header.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawVendorV3 {
+    /// Magic value. This should be equal to [`VENDOR_BOOT_MAGIC`].
+    magic: [u8; 8],
+    header_version: little_endian::U32,
+    page_size: little_endian::U32,
+    kernel_addr: little_endian::U32,
+    ramdisk_addr: little_endian::U32,
+    vendor_ramdisk_size: little_endian::U32,
+    cmdline: [u8; VENDOR_BOOT_ARGS_SIZE],
+    tags_addr: little_endian::U32,
+    name: [u8; VENDOR_BOOT_NAME_SIZE],
+    header_size: little_endian::U32,
+    dtb_size: little_endian::U32,
+    dtb_addr: little_endian::U64,
+}
+
+/// Raw on-disk layout for the extra vendor v4 image header fields.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawVendorV4Extra {
+    vendor_ramdisk_table_size: little_endian::U32,
+    vendor_ramdisk_table_entry_num: little_endian::U32,
+    vendor_ramdisk_table_entry_size: little_endian::U32,
+    bootconfig_size: little_endian::U32,
+}
+
+/// Raw on-disk layout for the vendor v4 ramdisk table entry.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawVendorV4RamdiskTableEntry {
+    ramdisk_size: little_endian::U32,
+    ramdisk_offset: little_endian::U32,
+    ramdisk_type: little_endian::U32,
+    ramdisk_name: [u8; VENDOR_RAMDISK_NAME_SIZE],
+    board_id: [little_endian::U32; VENDOR_RAMDISK_TABLE_ENTRY_BOARD_ID_SIZE],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -937,13 +1045,13 @@ impl BootImageExt for VendorBootImageV3Through4 {
 
     fn header_size(&self) -> u32 {
         let version = self.header_version();
-        let mut size = VENDOR_HDR_V3_SIZE;
+        let mut size = mem::size_of::<RawVendorV3>();
 
         if version >= 4 {
-            size += VENDOR_HDR_V4_EXTRA_SIZE;
+            size += mem::size_of::<RawVendorV4Extra>();
         }
 
-        size
+        size as u32
     }
 }
 
@@ -953,49 +1061,41 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let mut magic = [0u8; VENDOR_BOOT_MAGIC.len()];
-        reader.read_exact(&mut magic)?;
+        let raw_v3 = RawVendorV3::read_from_io(&mut reader)?;
 
-        if magic != VENDOR_BOOT_MAGIC {
-            return Err(Error::UnknownMagic(magic));
+        if raw_v3.magic != VENDOR_BOOT_MAGIC {
+            return Err(Error::UnknownMagic(raw_v3.magic));
         }
 
-        let header_version = reader.read_u32::<LittleEndian>()?;
+        let header_version = raw_v3.header_version.get();
         if !(3..=4).contains(&header_version) {
             return Err(Error::UnknownHeaderVersion(header_version));
         }
 
-        let page_size = reader.read_u32::<LittleEndian>()?;
+        let page_size = raw_v3.page_size.get();
         if page_size == 0 {
             return Err(Error::InvalidFieldValue("page_size", 0));
         }
 
-        let kernel_addr = reader.read_u32::<LittleEndian>()?;
-        let ramdisk_addr = reader.read_u32::<LittleEndian>()?;
-
-        let vendor_ramdisk_size = reader.read_u32::<LittleEndian>()?;
+        let vendor_ramdisk_size = raw_v3.vendor_ramdisk_size.get();
         if vendor_ramdisk_size > COMPONENT_MAX_SIZE {
             return Err(Error::FieldOutOfBounds("vendor_ramdisk_size"));
         }
 
-        let cmdline = reader
-            .read_string_padded(VENDOR_BOOT_ARGS_SIZE)
-            .map_err(|e| Error::ReadFieldError("cmdline", e))?;
+        let cmdline = raw_v3.cmdline.trim_end_padding();
+        let cmdline = str::from_utf8(cmdline)
+            .map_err(|e| Error::StringNotUtf8("cmdline", cmdline.to_vec(), e))?;
 
-        let tags_addr = reader.read_u32::<LittleEndian>()?;
+        let name = raw_v3.name.trim_end_padding();
+        let name =
+            str::from_utf8(name).map_err(|e| Error::StringNotUtf8("name", name.to_vec(), e))?;
 
-        let name = reader
-            .read_string_padded(VENDOR_BOOT_NAME_SIZE)
-            .map_err(|e| Error::ReadFieldError("name", e))?;
+        let header_size = raw_v3.header_size.get();
 
-        let header_size = reader.read_u32::<LittleEndian>()?;
-
-        let dtb_size = reader.read_u32::<LittleEndian>()?;
+        let dtb_size = raw_v3.dtb_size.get();
         if dtb_size > COMPONENT_MAX_SIZE {
             return Err(Error::FieldOutOfBounds("dtb_size"));
         }
-
-        let dtb_addr = reader.read_u64::<LittleEndian>()?;
 
         struct V4Data {
             v4_extra: VendorV4Extra,
@@ -1004,16 +1104,18 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
         }
 
         let mut v4_data = if header_version == 4 {
-            let table_size = reader.read_u32::<LittleEndian>()?;
-            let table_entry_num = reader.read_u32::<LittleEndian>()?;
-            let table_entry_size = reader.read_u32::<LittleEndian>()?;
+            let raw_v4 = RawVendorV4Extra::read_from_io(&mut reader)?;
 
-            let bootconfig_size = reader.read_u32::<LittleEndian>()?;
+            let table_size = raw_v4.vendor_ramdisk_table_size.get();
+            let table_entry_num = raw_v4.vendor_ramdisk_table_entry_num.get();
+            let table_entry_size = raw_v4.vendor_ramdisk_table_entry_size.get();
+
+            let bootconfig_size = raw_v4.bootconfig_size.get();
             if bootconfig_size > BOOTCONFIG_MAX_SIZE {
                 return Err(Error::FieldOutOfBounds("bootconfig_size"));
             }
 
-            if table_entry_size != VENDOR_RAMDISK_TABLE_ENTRY_V4_SIZE {
+            if table_entry_size != mem::size_of::<RawVendorV4RamdiskTableEntry>() as u32 {
                 return Err(Error::InvalidFieldValue(
                     "vendor_ramdisk_table_entry_size",
                     table_entry_size,
@@ -1070,20 +1172,18 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
             let mut total_ramdisk_size = 0;
 
             for _ in 0..v4.vendor_ramdisk_table_entry_num {
-                let ramdisk_size = reader.read_u32::<LittleEndian>()?;
+                let raw_entry = RawVendorV4RamdiskTableEntry::read_from_io(&mut reader)?;
+
+                let ramdisk_size = raw_entry.ramdisk_size.get();
                 if ramdisk_size > vendor_ramdisk_size {
                     return Err(Error::FieldOutOfBounds("ramdisk_size"));
                 }
 
-                let ramdisk_offset = reader.read_u32::<LittleEndian>()?;
-                let ramdisk_type = reader.read_u32::<LittleEndian>()?;
+                let ramdisk_offset = raw_entry.ramdisk_offset.get();
 
-                let ramdisk_name = reader
-                    .read_string_padded(VENDOR_RAMDISK_NAME_SIZE)
-                    .map_err(|e| Error::ReadFieldError("ramdisk_name", e))?;
-
-                let mut board_id = [0u32; VENDOR_RAMDISK_TABLE_ENTRY_BOARD_ID_SIZE];
-                reader.read_u32_into::<LittleEndian>(&mut board_id)?;
+                let ramdisk_name = raw_entry.ramdisk_name.trim_end_padding();
+                let ramdisk_name = str::from_utf8(ramdisk_name)
+                    .map_err(|e| Error::StringNotUtf8("ramdisk_name", ramdisk_name.to_vec(), e))?;
 
                 let table_offset = ramdisk_reader.stream_position()?;
 
@@ -1096,9 +1196,9 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
                 ramdisks.push(ramdisk);
 
                 v4.v4_extra.ramdisk_metas.push(RamdiskMeta {
-                    ramdisk_type,
-                    ramdisk_name,
-                    board_id,
+                    ramdisk_type: raw_entry.ramdisk_type.get(),
+                    ramdisk_name: ramdisk_name.to_owned(),
+                    board_id: raw_entry.board_id.map(|id| id.get()),
                 });
 
                 total_ramdisk_size += ramdisk_size;
@@ -1114,19 +1214,19 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
             padding::read_discard(&mut reader, page_size.into())?;
 
             v4.v4_extra.bootconfig = reader
-                .read_string_padded(v4.bootconfig_size as usize)
+                .read_string_exact(v4.bootconfig_size as usize)
                 .map_err(|e| Error::ReadFieldError("bootconfig", e))?;
         }
 
         let image = Self {
             page_size,
-            kernel_addr,
-            ramdisk_addr,
-            cmdline,
-            tags_addr,
-            name,
+            kernel_addr: raw_v3.kernel_addr.get(),
+            ramdisk_addr: raw_v3.ramdisk_addr.get(),
+            cmdline: cmdline.to_owned(),
+            tags_addr: raw_v3.tags_addr.get(),
+            name: name.to_owned(),
             dtb,
-            dtb_addr,
+            dtb_addr: raw_v3.dtb_addr.get(),
             ramdisks,
             v4_extra: v4_data.map(|d| d.v4_extra),
         };
@@ -1160,6 +1260,17 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
             return Err(Error::InvalidFieldValue("page_size", 0));
         }
 
+        let cmdline = self
+            .cmdline
+            .as_bytes()
+            .to_padded_array::<VENDOR_BOOT_ARGS_SIZE>()
+            .ok_or_else(|| Error::StringTooLong("cmdline", self.cmdline.clone()))?;
+        let name = self
+            .name
+            .as_bytes()
+            .to_padded_array::<VENDOR_BOOT_NAME_SIZE>()
+            .ok_or_else(|| Error::StringTooLong("name", self.name.clone()))?;
+
         if let Some(v4) = &self.v4_extra {
             if v4.bootconfig.len() > BOOTCONFIG_MAX_SIZE as usize {
                 return Err(Error::FieldOutOfBounds("bootconfig_size"));
@@ -1168,42 +1279,43 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
 
         let mut writer = CountingWriter::new(writer);
 
-        writer.write_all(&VENDOR_BOOT_MAGIC)?;
-        writer.write_u32::<LittleEndian>(self.header_version())?;
-        writer.write_u32::<LittleEndian>(self.page_size)?;
-        writer.write_u32::<LittleEndian>(self.kernel_addr)?;
-        writer.write_u32::<LittleEndian>(self.ramdisk_addr)?;
-        writer.write_u32::<LittleEndian>(vendor_ramdisk_size as u32)?;
+        let raw_v3 = RawVendorV3 {
+            magic: VENDOR_BOOT_MAGIC,
+            header_version: self.header_version().into(),
+            page_size: self.page_size.into(),
+            kernel_addr: self.kernel_addr.into(),
+            ramdisk_addr: self.ramdisk_addr.into(),
+            vendor_ramdisk_size: (vendor_ramdisk_size as u32).into(),
+            cmdline,
+            tags_addr: self.tags_addr.into(),
+            name,
+            header_size: self.header_size().into(),
+            dtb_size: (self.dtb.len() as u32).into(),
+            dtb_addr: self.dtb_addr.into(),
+        };
 
-        writer
-            .write_string_padded(&self.cmdline, VENDOR_BOOT_ARGS_SIZE)
-            .map_err(|e| Error::WriteFieldError("cmdline", e))?;
-
-        writer.write_u32::<LittleEndian>(self.tags_addr)?;
-
-        writer
-            .write_string_padded(&self.name, VENDOR_BOOT_NAME_SIZE)
-            .map_err(|e| Error::WriteFieldError("name", e))?;
-
-        writer.write_u32::<LittleEndian>(self.header_size())?;
-        writer.write_u32::<LittleEndian>(self.dtb.len() as u32)?;
-        writer.write_u64::<LittleEndian>(self.dtb_addr)?;
+        raw_v3.write_to_io(&mut writer)?;
 
         if let Some(v4) = &self.v4_extra {
-            let vendor_ramdisk_table_entry_num = self
+            let table_entry_num = self
                 .ramdisks
                 .len()
                 .to_u32()
                 .ok_or_else(|| Error::FieldOutOfBounds("vendor_ramdisk_table_entry_num"))?;
-            let vendor_ramdisk_table_size = vendor_ramdisk_table_entry_num
-                .checked_mul(VENDOR_RAMDISK_TABLE_ENTRY_V4_SIZE)
+            let table_entry_size = mem::size_of::<RawVendorV4RamdiskTableEntry>() as u32;
+            let table_size = table_entry_num
+                .checked_mul(table_entry_size)
                 .and_then(|v| v.to_u32())
                 .ok_or_else(|| Error::FieldOutOfBounds("vendor_ramdisk_table_size"))?;
 
-            writer.write_u32::<LittleEndian>(vendor_ramdisk_table_size)?;
-            writer.write_u32::<LittleEndian>(vendor_ramdisk_table_entry_num)?;
-            writer.write_u32::<LittleEndian>(VENDOR_RAMDISK_TABLE_ENTRY_V4_SIZE)?;
-            writer.write_u32::<LittleEndian>(v4.bootconfig.len() as u32)?;
+            let raw_v4 = RawVendorV4Extra {
+                vendor_ramdisk_table_size: table_size.into(),
+                vendor_ramdisk_table_entry_num: table_entry_num.into(),
+                vendor_ramdisk_table_entry_size: table_entry_size.into(),
+                bootconfig_size: (v4.bootconfig.len() as u32).into(),
+            };
+
+            raw_v4.write_to_io(&mut writer)?;
         }
 
         padding::write_zeros(&mut writer, self.page_size.into())?;
@@ -1226,17 +1338,23 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
             for (ramdisk, meta) in self.ramdisks.iter().zip(&v4.ramdisk_metas) {
                 let ramdisk_size = ramdisk.len() as u32;
 
-                writer.write_u32::<LittleEndian>(ramdisk_size)?;
-                writer.write_u32::<LittleEndian>(ramdisk_offset)?;
-                writer.write_u32::<LittleEndian>(meta.ramdisk_type)?;
+                let ramdisk_name = meta
+                    .ramdisk_name
+                    .as_bytes()
+                    .to_padded_array::<VENDOR_RAMDISK_NAME_SIZE>()
+                    .ok_or_else(|| {
+                        Error::StringTooLong("ramdisk_name", meta.ramdisk_name.clone())
+                    })?;
 
-                writer
-                    .write_string_padded(&meta.ramdisk_name, VENDOR_RAMDISK_NAME_SIZE)
-                    .map_err(|e| Error::WriteFieldError("ramdisk_name", e))?;
+                let raw_entry = RawVendorV4RamdiskTableEntry {
+                    ramdisk_size: ramdisk_size.into(),
+                    ramdisk_offset: ramdisk_offset.into(),
+                    ramdisk_type: meta.ramdisk_type.into(),
+                    ramdisk_name,
+                    board_id: meta.board_id.map(|id| id.into()),
+                };
 
-                for item in &meta.board_id {
-                    writer.write_u32::<LittleEndian>(*item)?;
-                }
+                raw_entry.write_to_io(&mut writer)?;
 
                 ramdisk_offset += ramdisk_size;
             }
