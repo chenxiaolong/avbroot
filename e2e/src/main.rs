@@ -625,6 +625,7 @@ fn create_payload(
             version: None,
             merge_operations: vec![],
             estimate_cow_size: cow_estimate,
+            estimate_op_count_max: None,
         });
     }
 
@@ -648,6 +649,7 @@ fn create_payload(
                 vabc_compression_param: profile.vabc_algo.map(|a| a.to_string()),
                 cow_version: Some(2),
                 vabc_feature_set: None,
+                compression_factor: None,
             }),
             partial_update: None,
             apex_info: vec![],

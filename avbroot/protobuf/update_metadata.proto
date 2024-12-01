@@ -316,6 +316,10 @@ message PartitionUpdate {
   // as a hint. If set to 0, libsnapshot should use alternative
   // methods for estimating size.
   optional uint64 estimate_cow_size = 19;
+
+  // Information about the cow used by Cow Writer to specify
+  // number of cow operations to be written
+  optional uint64 estimate_op_count_max = 20;
 }
 
 message DynamicPartitionGroup {
@@ -368,6 +372,10 @@ message DynamicPartitionMetadata {
 
   // A collection of knobs to tune Virtual AB Compression
   optional VABCFeatureSet vabc_feature_set = 6;
+
+  // Max bytes to be compressed at once during ota. Options: 4k, 8k, 16k, 32k,
+  // 64k, 128k
+  optional uint64 compression_factor = 7;
 }
 
 // Definition has been duplicated from
