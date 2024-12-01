@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Switch to using zerocopy library for all binary file format parsers ([PR #384])
+* Update to latest AOSP protobuf schema for the `payload.bin` metadata file format ([PR #385])
 
 ### Version 3.9.0
 
@@ -401,3 +402,4 @@ Behind-the-scenes changes:
 [PR #376]: https://github.com/chenxiaolong/avbroot/pull/376
 [PR #377]: https://github.com/chenxiaolong/avbroot/pull/377
 [PR #384]: https://github.com/chenxiaolong/avbroot/pull/384
+[PR #385]: https://github.com/chenxiaolong/avbroot/pull/385
