@@ -116,7 +116,6 @@ dependencies = [
  "base64",
  "bitflags",
  "bstr",
- "byteorder",
  "bzip2",
  "cap-std",
  "cap-tempfile",
