@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Switch to using zerocopy library for all binary file format parsers ([PR #384])
+
 ### Version 3.9.0
 
 * Update all dependencies ([PR #368], [PR #377])
@@ -396,3 +400,4 @@ Behind-the-scenes changes:
 [PR #374]: https://github.com/chenxiaolong/avbroot/pull/374
 [PR #376]: https://github.com/chenxiaolong/avbroot/pull/376
 [PR #377]: https://github.com/chenxiaolong/avbroot/pull/377
+[PR #384]: https://github.com/chenxiaolong/avbroot/pull/384
