@@ -490,6 +490,57 @@ By default, this behavior is compatible with the `--signing_helper` option in AO
 
 Note that avbroot will verify the signature returned by helper program against the public key. This ensures that the patching process will fail appropriately if the wrong private key was used.
 
+### 16K page size developer option
+
+On recent devices running Android 16 and newer, there may be an option in Android's developer options to switch to a 16K page size kernel. This will not work when running an avbroot-patched OS. The switch internally works by flashing incremental OTAs:
+
+* `/vendor/boot_otas/boot_ota_16k.zip` to switch to the 16K page size kernel (requires the `boot` partition to be currently flashed with the 4K kernel)
+* `/vendor/boot_otas/boot_ota_4k.zip` to switch to the 4K page size kernel (requires the `boot` partition to be currently flashed with the 16K kernel)
+
+These `boot_otas` are unflashable when running an avbroot-patched OS because the `payload.bin` inside of them are signed by the OEM's key. These are also not proper OTA files. They don't contain any OTA metadata and the zip file itself is not signed. It's nothing more than a plain old zip file that stores a signed `payload.bin`.
+
+There are no plans to add support for patching these `boot_otas`. It requires support for modifying filesystems and handling incremental OTAs, both of which are very non-trivial.
+
+Folks who are determined to make this work anyway can try these manual steps to sign these `boot_otas` with your own key. Since the incremental OTAs are not being regenerated, the `boot` partition must be left unmodified when running `avbroot ota patch`.
+
+1. Unpack `vendor.img` with avbroot and [afsr](https://github.com/chenxiaolong/afsr).
+
+    ```bash
+    avbroot avb unpack -i vendor.img
+    afsr unpack -i raw.img
+    ```
+
+2. Extract `payload.bin` from `boot_otas/boot_ota_16k.zip`.
+
+3. Re-sign `payload.bin` with your OTA key.
+
+    ```bash
+    avbroot payload repack \
+        -i payload.bin.orig \
+        -o payload.bin \
+        -k ota.key \
+        --output-properties payload_properties.txt
+    ```
+
+4. Create a new zip of `payload.bin` and `payload_properties.txt`. The files must be stored uncompressed (eg. with `zip -0`).
+
+5. Repeat the procedure for `boot_otas/boot_ota_4k.zip`.
+
+6. Repack `vendor.img` and sign it with your AVB key.
+
+    ```bash
+    afsr pack -o raw.img
+    avbroot avb pack -o vendor.img -k avb.key --recompute-size
+    ```
+
+7. Patch the (normal) OTA with:
+
+    ```bash
+    avbroot ota patch \
+        --replace vendor <modified vendor> \
+        <normal arguments...>
+    ```
+
 ## Building from source
 
 Make sure the [Rust toolchain](https://www.rust-lang.org/) is installed. Then run:
