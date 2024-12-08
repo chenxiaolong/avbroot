@@ -33,8 +33,8 @@ pub enum Error {
     NoFooter,
     #[error("No hash tree descriptor found in vbmeta header")]
     NoHashTreeDescriptor,
-    #[error("{0:?} field is out of bounds")]
-    FieldOutOfBounds(&'static str),
+    #[error("{0:?} overflowed integer bounds during calculations")]
+    IntOverflow(&'static str),
     #[error("AVB error")]
     Avb(#[from] avb::Error),
     #[error("OTA certificate error")]
@@ -215,15 +215,15 @@ pub fn patch_system_image(
     let hash_tree_end = descriptor
         .tree_offset
         .checked_add(descriptor.tree_size)
-        .ok_or_else(|| Error::FieldOutOfBounds("hash_tree_end"))?;
+        .ok_or_else(|| Error::IntOverflow("hash_tree_end"))?;
     let fec_data_end = descriptor
         .fec_offset
         .checked_add(descriptor.fec_size)
-        .ok_or_else(|| Error::FieldOutOfBounds("fec_data_end"))?;
+        .ok_or_else(|| Error::IntOverflow("fec_data_end"))?;
     let header_end = footer
         .vbmeta_offset
         .checked_add(footer.vbmeta_size)
-        .ok_or_else(|| Error::FieldOutOfBounds("avb_end"))?;
+        .ok_or_else(|| Error::IntOverflow("avb_end"))?;
     let footer_start = image_size - Footer::SIZE as u64;
 
     let other_ranges = util::merge_overlapping(&[

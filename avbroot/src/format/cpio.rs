@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -54,8 +54,8 @@ pub enum Error {
     EntryHasData(CpioEntryType, Vec<u8>),
     #[error("No inodes available for device {0:x},{1:x}")]
     DeviceFull(u32, u32),
-    #[error("{0:?} field exceeds integer bounds")]
-    IntegerTooLarge(&'static str),
+    #[error("{0:?} overflowed integer bounds during calculations")]
+    IntOverflow(&'static str),
     #[error("I/O error")]
     Io(#[from] io::Error),
 }
@@ -211,10 +211,7 @@ impl CpioEntryData {
     pub fn size(&self) -> Result<u32> {
         let size = match self {
             Self::Size(s) => *s,
-            Self::Data(d) => d
-                .len()
-                .to_u32()
-                .ok_or_else(|| Error::IntegerTooLarge("data_size"))?,
+            Self::Data(d) => d.len().to_u32().ok_or(Error::IntOverflow("data_size"))?,
         };
 
         Ok(size)
@@ -475,7 +472,7 @@ impl<W: Write> ToWriter<W> for CpioEntry {
             .len()
             .checked_add(1)
             .and_then(|s| s.to_u32())
-            .ok_or_else(|| Error::IntegerTooLarge("path_size"))?;
+            .ok_or(Error::IntOverflow("path_size"))?;
 
         let file_size = self.data.size()?;
         if file_size != 0

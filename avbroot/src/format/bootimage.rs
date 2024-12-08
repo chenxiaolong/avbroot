@@ -22,8 +22,10 @@ use crate::{
         avb::{self, Descriptor, Header},
         padding::{self, ZeroPadding},
     },
-    stream::{CountingReader, CountingWriter, FromReader, HashingWriter, ReadStringExt, ToWriter},
-    util::{self, NumBytes},
+    stream::{
+        CountingReader, CountingWriter, FromReader, HashingWriter, ReadFixedSizeExt, ToWriter,
+    },
+    util::{self, NumBytes, OutOfBoundsError},
 };
 
 pub const BOOT_MAGIC: [u8; 8] = *b"ANDROID!";
@@ -63,20 +65,34 @@ pub enum Error {
     UnknownMagic([u8; 8]),
     #[error("Unknown header version: {0}")]
     UnknownHeaderVersion(u32),
-    #[error("Failed to read {0:?} field")]
-    ReadFieldError(&'static str, #[source] io::Error),
-    #[error("Failed to write {0:?} field")]
-    WriteFieldError(&'static str, #[source] io::Error),
-    #[error("{0:?} field: invalid value: {1}")]
-    InvalidFieldValue(&'static str, u32),
-    #[error("{0:?} field is not UTF-8 encoded: {data:?}", data = .1.as_bstr())]
-    StringNotUtf8(&'static str, Vec<u8>, #[source] Utf8Error),
-    #[error("{0:?} field is too long: {1:?}")]
-    StringTooLong(&'static str, String),
+    #[error("{0:?} field is not UTF-8 encoded: {data:?}", data = .2.as_bstr())]
+    StringNotUtf8(&'static str, #[source] Utf8Error, Vec<u8>),
+    #[error("{0:?} field is too long (>{1}): {2:?}")]
+    StringTooLong(&'static str, usize, String),
     #[error("{0:?} field is out of bounds")]
-    FieldOutOfBounds(&'static str),
-    #[error("Invalid data: {0}")]
-    InvalidData(&'static str),
+    IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
+    #[error("{0:?} overflowed integer bounds during calculations")]
+    IntOverflow(&'static str),
+    #[error("Page size must not be zero")]
+    PageSizeZero,
+    #[error("Invalid header size for boot image type: {0}")]
+    InvalidHeaderSize(u32),
+    #[error("Mismatched ramdisk ({ramdisks}) and metadata ({metas}) counts")]
+    MismatchedRamdiskCounts { ramdisks: usize, metas: usize },
+    #[error("Vendor V3 only supports a single ramdisk (count: {0})")]
+    VendorV3TooManyRamdisks(usize),
+    #[error("Invalid vendor v4 total ramdisk size: {field_value} != {total_size}")]
+    VendorV4InvalidRamdiskSize { field_value: u32, total_size: u32 },
+    #[error("Invalid vendor v4 ramdisk table size: {actual} != {expected}")]
+    VendorV4InvalidRamdiskTableSize { actual: u32, expected: u32 },
+    #[error("Invalid vendor v4 ramdisk entry size: {0}")]
+    VendorV4InvalidRamdiskEntrySize(u32),
+    #[error("Invalid vendor v4 ramdisk entry [{index}] offset: {field_value} != {reader_pos}")]
+    VendorV4InvalidRamdiskEntryOffset {
+        index: u32,
+        field_value: u32,
+        reader_pos: u64,
+    },
     #[error("VTS signature is missing hash descriptor")]
     MissingHashDescriptor,
     #[error("AVB error")]
@@ -283,37 +299,35 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
             return Err(Error::UnknownMagic(raw_v0.magic));
         }
 
-        let kernel_size = raw_v0.kernel_size.get();
-        let ramdisk_size = raw_v0.ramdisk_size.get();
-        let second_size = raw_v0.second_size.get();
-        let page_size = raw_v0.page_size.get();
-
         let header_version = raw_v0.header_version.get();
         if header_version > 2 {
             return Err(Error::UnknownHeaderVersion(header_version));
         }
 
-        if kernel_size > COMPONENT_MAX_SIZE {
-            return Err(Error::FieldOutOfBounds("kernel_size"));
-        } else if ramdisk_size > COMPONENT_MAX_SIZE {
-            return Err(Error::FieldOutOfBounds("ramdisk_size"));
-        } else if second_size > COMPONENT_MAX_SIZE {
-            return Err(Error::FieldOutOfBounds("second_size"));
-        } else if page_size == 0 {
-            return Err(Error::InvalidFieldValue("page_size", 0));
+        let kernel_size = util::check_bounds(raw_v0.kernel_size.get(), ..=COMPONENT_MAX_SIZE)
+            .map_err(|e| Error::IntOutOfBounds("Boot::V0::kernel_size", e))?;
+        let ramdisk_size = util::check_bounds(raw_v0.ramdisk_size.get(), ..=COMPONENT_MAX_SIZE)
+            .map_err(|e| Error::IntOutOfBounds("Boot::V0::ramdisk_size", e))?;
+        let second_size = util::check_bounds(raw_v0.second_size.get(), ..=COMPONENT_MAX_SIZE)
+            .map_err(|e| Error::IntOutOfBounds("Boot::V0::second_size", e))?;
+
+        let page_size = raw_v0.page_size.get();
+        if page_size == 0 {
+            return Err(Error::PageSizeZero);
         }
 
         let name = raw_v0.name.trim_end_padding();
-        let name =
-            str::from_utf8(name).map_err(|e| Error::StringNotUtf8("name", name.to_vec(), e))?;
+        let name = str::from_utf8(name)
+            .map_err(|e| Error::StringNotUtf8("Boot::V0::name", e, name.to_vec()))?;
 
         let cmdline = raw_v0.cmdline.trim_end_padding();
         let cmdline = str::from_utf8(cmdline)
-            .map_err(|e| Error::StringNotUtf8("cmdline", cmdline.to_vec(), e))?;
+            .map_err(|e| Error::StringNotUtf8("Boot::V0::cmdline", e, cmdline.to_vec()))?;
 
         let extra_cmdline = raw_v0.extra_cmdline.trim_end_padding();
-        let extra_cmdline = str::from_utf8(extra_cmdline)
-            .map_err(|e| Error::StringNotUtf8("extra_cmdline", extra_cmdline.to_vec(), e))?;
+        let extra_cmdline = str::from_utf8(extra_cmdline).map_err(|e| {
+            Error::StringNotUtf8("Boot::V0::extra_cmdline", e, extra_cmdline.to_vec())
+        })?;
 
         struct V1Data {
             v1_extra: V1Extra,
@@ -324,10 +338,9 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
         let mut v1_data = if header_version >= 1 {
             let raw_v1 = RawV1Extra::read_from_io(&mut reader)?;
 
-            let recovery_dtbo_size = raw_v1.recovery_dtbo_size.get();
-            if recovery_dtbo_size > COMPONENT_MAX_SIZE {
-                return Err(Error::FieldOutOfBounds("recovery_dtbo_size"));
-            }
+            let recovery_dtbo_size =
+                util::check_bounds(raw_v1.recovery_dtbo_size.get(), ..=COMPONENT_MAX_SIZE)
+                    .map_err(|e| Error::IntOutOfBounds("Boot::V1::recovery_dtbo_size", e))?;
 
             let v1_extra = V1Extra {
                 recovery_dtbo_offset: raw_v1.recovery_dtbo_offset.get(),
@@ -351,10 +364,8 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
         let mut v2_data = if header_version == 2 {
             let raw_v2 = RawV2Extra::read_from_io(&mut reader)?;
 
-            let dtb_size = raw_v2.dtb_size.get();
-            if dtb_size > COMPONENT_MAX_SIZE {
-                return Err(Error::FieldOutOfBounds("dtb_size"));
-            }
+            let dtb_size = util::check_bounds(raw_v2.dtb_size.get(), ..=COMPONENT_MAX_SIZE)
+                .map_err(|e| Error::IntOutOfBounds("Boot::V2::dtb_size", e))?;
 
             let v2_extra = V2Extra {
                 dtb_addr: raw_v2.dtb_addr.get(),
@@ -368,49 +379,32 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
 
         if let Some(v1) = &v1_data {
             if reader.stream_position()? != u64::from(v1.header_size) {
-                return Err(Error::InvalidFieldValue("header_size", v1.header_size));
+                return Err(Error::InvalidHeaderSize(v1.header_size));
             }
         }
 
         padding::read_discard(&mut reader, page_size.into())?;
 
-        let mut kernel = vec![];
-        let mut ramdisk = vec![];
-        let mut second = vec![];
-
-        kernel.resize(kernel_size as usize, 0);
-        reader
-            .read_exact(&mut kernel)
-            .map_err(|e| Error::ReadFieldError("kernel", e))?;
+        let kernel = reader.read_vec_exact(kernel_size as usize)?;
         padding::read_discard(&mut reader, page_size.into())?;
 
-        ramdisk.resize(ramdisk_size as usize, 0);
-        reader
-            .read_exact(&mut ramdisk)
-            .map_err(|e| Error::ReadFieldError("ramdisk", e))?;
+        let ramdisk = reader.read_vec_exact(ramdisk_size as usize)?;
         padding::read_discard(&mut reader, page_size.into())?;
 
-        second.resize(second_size as usize, 0);
-        reader
-            .read_exact(&mut second)
-            .map_err(|e| Error::ReadFieldError("second", e))?;
+        let second = reader.read_vec_exact(second_size as usize)?;
         padding::read_discard(&mut reader, page_size.into())?;
 
         if let Some(v1) = &mut v1_data {
             v1.v1_extra
                 .recovery_dtbo
                 .resize(v1.recovery_dtbo_size as usize, 0);
-            reader
-                .read_exact(&mut v1.v1_extra.recovery_dtbo)
-                .map_err(|e| Error::ReadFieldError("recovery_dtbo", e))?;
+            reader.read_exact(&mut v1.v1_extra.recovery_dtbo)?;
             padding::read_discard(&mut reader, page_size.into())?;
         }
 
         if let Some(v2) = &mut v2_data {
             v2.v2_extra.dtb.resize(v2.dtb_size as usize, 0);
-            reader
-                .read_exact(&mut v2.v2_extra.dtb)
-                .map_err(|e| Error::ReadFieldError("dtb", e))?;
+            reader.read_exact(&mut v2.v2_extra.dtb)?;
             padding::read_discard(&mut reader, page_size.into())?;
         }
 
@@ -440,42 +434,51 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
     type Error = Error;
 
     fn to_writer(&self, writer: W) -> Result<()> {
-        if self.kernel.len() > COMPONENT_MAX_SIZE as usize {
-            return Err(Error::FieldOutOfBounds("kernel_size"));
-        } else if self.ramdisk.len() > COMPONENT_MAX_SIZE as usize {
-            return Err(Error::FieldOutOfBounds("ramdisk_size"));
-        } else if self.second.len() > COMPONENT_MAX_SIZE as usize {
-            return Err(Error::FieldOutOfBounds("second_size"));
-        } else if self.page_size == 0 {
-            return Err(Error::InvalidFieldValue("page_size", 0));
+        util::check_bounds(self.kernel.len(), ..=COMPONENT_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("Boot::V0::kernel_size", e))?;
+        util::check_bounds(self.ramdisk.len(), ..=COMPONENT_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("Boot::V0::ramdisk_size", e))?;
+        util::check_bounds(self.second.len(), ..=COMPONENT_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("Boot::V0::second_size", e))?;
+
+        if self.page_size == 0 {
+            return Err(Error::PageSizeZero);
         }
 
         if let Some(v1) = &self.v1_extra {
-            if v1.recovery_dtbo.len() > COMPONENT_MAX_SIZE as usize {
-                return Err(Error::FieldOutOfBounds("recovery_dtbo_size"));
-            }
+            util::check_bounds(v1.recovery_dtbo.len(), ..=COMPONENT_MAX_SIZE as usize)
+                .map_err(|e| Error::IntOutOfBounds("Boot::V1::recovery_dtbo_size", e))?;
         }
         if let Some(v2) = &self.v2_extra {
-            if v2.dtb.len() > COMPONENT_MAX_SIZE as usize {
-                return Err(Error::FieldOutOfBounds("dtb_size"));
-            }
+            util::check_bounds(v2.dtb.len(), ..=COMPONENT_MAX_SIZE as usize)
+                .map_err(|e| Error::IntOutOfBounds("Boot::V2::dtb_size", e))?;
         }
 
         let name = self
             .name
             .as_bytes()
             .to_padded_array::<BOOT_NAME_SIZE>()
-            .ok_or_else(|| Error::StringTooLong("name", self.name.clone()))?;
+            .ok_or_else(|| {
+                Error::StringTooLong("Boot::V0::name", BOOT_NAME_SIZE, self.name.clone())
+            })?;
         let cmdline = self
             .cmdline
             .as_bytes()
             .to_padded_array::<BOOT_ARGS_SIZE>()
-            .ok_or_else(|| Error::StringTooLong("cmdline", self.cmdline.clone()))?;
+            .ok_or_else(|| {
+                Error::StringTooLong("Boot::V0::cmdline", BOOT_ARGS_SIZE, self.cmdline.clone())
+            })?;
         let extra_cmdline = self
             .extra_cmdline
             .as_bytes()
             .to_padded_array::<BOOT_EXTRA_ARGS_SIZE>()
-            .ok_or_else(|| Error::StringTooLong("extra_cmdline", self.extra_cmdline.clone()))?;
+            .ok_or_else(|| {
+                Error::StringTooLong(
+                    "Boot::V0::extra_cmdline",
+                    BOOT_EXTRA_ARGS_SIZE,
+                    self.extra_cmdline.clone(),
+                )
+            })?;
 
         let mut writer = CountingWriter::new(writer);
 
@@ -520,32 +523,22 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
 
         padding::write_zeros(&mut writer, self.page_size.into())?;
 
-        writer
-            .write_all(&self.kernel)
-            .map_err(|e| Error::WriteFieldError("kernel", e))?;
+        writer.write_all(&self.kernel)?;
         padding::write_zeros(&mut writer, self.page_size.into())?;
 
-        writer
-            .write_all(&self.ramdisk)
-            .map_err(|e| Error::WriteFieldError("ramdisk", e))?;
+        writer.write_all(&self.ramdisk)?;
         padding::write_zeros(&mut writer, self.page_size.into())?;
 
-        writer
-            .write_all(&self.second)
-            .map_err(|e| Error::WriteFieldError("second", e))?;
+        writer.write_all(&self.second)?;
         padding::write_zeros(&mut writer, self.page_size.into())?;
 
         if let Some(v1) = &self.v1_extra {
-            writer
-                .write_all(&v1.recovery_dtbo)
-                .map_err(|e| Error::WriteFieldError("recovery_dtbo", e))?;
+            writer.write_all(&v1.recovery_dtbo)?;
             padding::write_zeros(&mut writer, self.page_size.into())?;
         }
 
         if let Some(v2) = &self.v2_extra {
-            writer
-                .write_all(&v2.dtb)
-                .map_err(|e| Error::WriteFieldError("dtb", e))?;
+            writer.write_all(&v2.dtb)?;
             padding::write_zeros(&mut writer, self.page_size.into())?;
         }
 
@@ -659,66 +652,50 @@ impl<R: Read> FromReader<R> for BootImageV3Through4 {
             return Err(Error::UnknownMagic(raw_v3.magic));
         }
 
-        let kernel_size = raw_v3.kernel_size.get();
-        let ramdisk_size = raw_v3.ramdisk_size.get();
-        let header_size = raw_v3.header_size.get();
-
         let header_version = raw_v3.header_version.get();
         if !(3..=4).contains(&header_version) {
             return Err(Error::UnknownHeaderVersion(header_version));
         }
 
-        if kernel_size > COMPONENT_MAX_SIZE {
-            return Err(Error::FieldOutOfBounds("kernel_size"));
-        } else if ramdisk_size > COMPONENT_MAX_SIZE {
-            return Err(Error::FieldOutOfBounds("ramdisk_size"));
-        }
+        let kernel_size = util::check_bounds(raw_v3.kernel_size.get(), ..=COMPONENT_MAX_SIZE)
+            .map_err(|e| Error::IntOutOfBounds("Boot::V3::kernel_size", e))?;
+        let ramdisk_size = util::check_bounds(raw_v3.ramdisk_size.get(), ..=COMPONENT_MAX_SIZE)
+            .map_err(|e| Error::IntOutOfBounds("Boot::V3::ramdisk_size", e))?;
+        let header_size = raw_v3.header_size.get();
 
         let cmdline = raw_v3.cmdline.trim_end_padding();
         let cmdline = str::from_utf8(cmdline)
-            .map_err(|e| Error::StringNotUtf8("cmdline", cmdline.to_vec(), e))?;
+            .map_err(|e| Error::StringNotUtf8("Boot::V3::cmdline", e, cmdline.to_vec()))?;
 
         let signature_size = if header_version == 4 {
             let raw_v4 = RawV4Extra::read_from_io(&mut reader)?;
 
-            if raw_v4.signature_size > HDR_V4_SIGNATURE_SIZE as u32 {
-                return Err(Error::FieldOutOfBounds("signature_size"));
-            }
+            let size =
+                util::check_bounds(raw_v4.signature_size.get(), ..=HDR_V4_SIGNATURE_SIZE as u32)
+                    .map_err(|e| Error::IntOutOfBounds("Boot::V4::signature_size", e))?;
 
-            Some(raw_v4.signature_size.get())
+            Some(size)
         } else {
             None
         };
 
         if reader.stream_position()? != u64::from(header_size) {
-            return Err(Error::InvalidFieldValue("header_size", header_size));
+            return Err(Error::InvalidHeaderSize(header_size));
         }
 
         padding::read_discard(&mut reader, PAGE_SIZE.into())?;
 
-        let mut kernel = vec![];
-        let mut ramdisk = vec![];
-
-        kernel.resize(kernel_size as usize, 0);
-        reader
-            .read_exact(&mut kernel)
-            .map_err(|e| Error::ReadFieldError("kernel", e))?;
+        let kernel = reader.read_vec_exact(kernel_size as usize)?;
         padding::read_discard(&mut reader, PAGE_SIZE.into())?;
 
-        ramdisk.resize(ramdisk_size as usize, 0);
-        reader
-            .read_exact(&mut ramdisk)
-            .map_err(|e| Error::ReadFieldError("ramdisk", e))?;
+        let ramdisk = reader.read_vec_exact(ramdisk_size as usize)?;
         padding::read_discard(&mut reader, PAGE_SIZE.into())?;
 
         // Don't preserve the signature. It is only used for VTS tests and is
         // not relevant for booting.
         let v4_extra = if let Some(s) = signature_size {
             // OnePlus images have an invalid signature consisting of all zeros.
-            let mut data = vec![0u8; s as usize];
-            reader
-                .read_exact(&mut data)
-                .map_err(|e| Error::ReadFieldError("signature", e))?;
+            let data = reader.read_vec_exact(s as usize)?;
 
             let signature = if s > 0 && !util::is_zero(&data) {
                 Some(Header::from_reader(Cursor::new(data))?)
@@ -748,17 +725,22 @@ impl<R: Read> FromReader<R> for BootImageV3Through4 {
 
 impl BootImageV3Through4 {
     fn to_writer_internal(&self, writer: impl Write, skip_v4_sig: bool) -> Result<()> {
-        if self.kernel.len() > COMPONENT_MAX_SIZE as usize {
-            return Err(Error::FieldOutOfBounds("kernel_size"));
-        } else if self.ramdisk.len() > COMPONENT_MAX_SIZE as usize {
-            return Err(Error::FieldOutOfBounds("ramdisk_size"));
-        }
+        util::check_bounds(self.kernel.len(), ..=COMPONENT_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("Boot::V3::kernel_size", e))?;
+        util::check_bounds(self.ramdisk.len(), ..=COMPONENT_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("Boot::V3::ramdisk_size", e))?;
 
         let cmdline = self
             .cmdline
             .as_bytes()
             .to_padded_array::<{ BOOT_ARGS_SIZE + BOOT_EXTRA_ARGS_SIZE }>()
-            .ok_or_else(|| Error::StringTooLong("cmdline", self.cmdline.clone()))?;
+            .ok_or_else(|| {
+                Error::StringTooLong(
+                    "Boot::V3::cmdline",
+                    BOOT_ARGS_SIZE + BOOT_EXTRA_ARGS_SIZE,
+                    self.cmdline.clone(),
+                )
+            })?;
 
         let mut writer = CountingWriter::new(writer);
 
@@ -784,9 +766,8 @@ impl BootImageV3Through4 {
                 let size = sig_writer.stream_position()?;
 
                 // The VTS signature is always a fixed size.
-                if size > HDR_V4_SIGNATURE_SIZE {
-                    return Err(Error::FieldOutOfBounds("signature_size"));
-                }
+                util::check_bounds(size, ..=HDR_V4_SIGNATURE_SIZE)
+                    .map_err(|e| Error::IntOutOfBounds("Boot::V4::signature_size", e))?;
 
                 padding::write_zeros(&mut sig_writer, HDR_V4_SIGNATURE_SIZE)?;
             }
@@ -806,21 +787,15 @@ impl BootImageV3Through4 {
 
         padding::write_zeros(&mut writer, PAGE_SIZE.into())?;
 
-        writer
-            .write_all(&self.kernel)
-            .map_err(|e| Error::WriteFieldError("kernel", e))?;
+        writer.write_all(&self.kernel)?;
         padding::write_zeros(&mut writer, PAGE_SIZE.into())?;
 
-        writer
-            .write_all(&self.ramdisk)
-            .map_err(|e| Error::WriteFieldError("ramdisk", e))?;
+        writer.write_all(&self.ramdisk)?;
         padding::write_zeros(&mut writer, PAGE_SIZE.into())?;
 
         if !skip_v4_sig {
             if let Some(sig) = v4_signature {
-                writer
-                    .write_all(&sig)
-                    .map_err(|e| Error::WriteFieldError("signature", e))?;
+                writer.write_all(&sig)?;
                 padding::write_zeros(&mut writer, PAGE_SIZE.into())?;
             }
         }
@@ -1074,28 +1049,25 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
 
         let page_size = raw_v3.page_size.get();
         if page_size == 0 {
-            return Err(Error::InvalidFieldValue("page_size", 0));
+            return Err(Error::PageSizeZero);
         }
 
-        let vendor_ramdisk_size = raw_v3.vendor_ramdisk_size.get();
-        if vendor_ramdisk_size > COMPONENT_MAX_SIZE {
-            return Err(Error::FieldOutOfBounds("vendor_ramdisk_size"));
-        }
+        let vendor_ramdisk_size =
+            util::check_bounds(raw_v3.vendor_ramdisk_size.get(), ..=COMPONENT_MAX_SIZE)
+                .map_err(|e| Error::IntOutOfBounds("Vendor::V3::vendor_ramdisk_size", e))?;
 
         let cmdline = raw_v3.cmdline.trim_end_padding();
         let cmdline = str::from_utf8(cmdline)
-            .map_err(|e| Error::StringNotUtf8("cmdline", cmdline.to_vec(), e))?;
+            .map_err(|e| Error::StringNotUtf8("Vendor::V3::cmdline", e, cmdline.to_vec()))?;
 
         let name = raw_v3.name.trim_end_padding();
-        let name =
-            str::from_utf8(name).map_err(|e| Error::StringNotUtf8("name", name.to_vec(), e))?;
+        let name = str::from_utf8(name)
+            .map_err(|e| Error::StringNotUtf8("Vendor::V3::name", e, name.to_vec()))?;
 
         let header_size = raw_v3.header_size.get();
 
-        let dtb_size = raw_v3.dtb_size.get();
-        if dtb_size > COMPONENT_MAX_SIZE {
-            return Err(Error::FieldOutOfBounds("dtb_size"));
-        }
+        let dtb_size = util::check_bounds(raw_v3.dtb_size.get(), ..=COMPONENT_MAX_SIZE)
+            .map_err(|e| Error::IntOutOfBounds("Vendor::V3::dtb_size", e))?;
 
         struct V4Data {
             v4_extra: VendorV4Extra,
@@ -1110,21 +1082,22 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
             let table_entry_num = raw_v4.vendor_ramdisk_table_entry_num.get();
             let table_entry_size = raw_v4.vendor_ramdisk_table_entry_size.get();
 
-            let bootconfig_size = raw_v4.bootconfig_size.get();
-            if bootconfig_size > BOOTCONFIG_MAX_SIZE {
-                return Err(Error::FieldOutOfBounds("bootconfig_size"));
-            }
+            let bootconfig_size =
+                util::check_bounds(raw_v4.bootconfig_size.get(), ..=BOOTCONFIG_MAX_SIZE)
+                    .map_err(|e| Error::IntOutOfBounds("Vendor::V4::bootconfig_size", e))?;
 
             if table_entry_size != mem::size_of::<RawVendorV4RamdiskTableEntry>() as u32 {
-                return Err(Error::InvalidFieldValue(
-                    "vendor_ramdisk_table_entry_size",
-                    table_entry_size,
-                ));
-            } else if table_entry_num.checked_mul(table_entry_size) != Some(table_size) {
-                return Err(Error::InvalidFieldValue(
-                    "vendor_ramdisk_table_size",
-                    table_size,
-                ));
+                return Err(Error::VendorV4InvalidRamdiskEntrySize(table_entry_size));
+            }
+
+            let actual_table_size = table_entry_num
+                .checked_mul(table_entry_size)
+                .ok_or_else(|| Error::IntOverflow("Vendor::V4::actual_table_size"))?;
+            if actual_table_size != table_size {
+                return Err(Error::VendorV4InvalidRamdiskTableSize {
+                    actual: actual_table_size,
+                    expected: table_size,
+                });
             }
 
             Some(V4Data {
@@ -1140,17 +1113,14 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
         };
 
         if reader.stream_position()? != u64::from(header_size) {
-            return Err(Error::InvalidFieldValue("header_size", header_size));
+            return Err(Error::InvalidHeaderSize(header_size));
         }
 
         padding::read_discard(&mut reader, page_size.into())?;
 
         let mut ramdisks = vec![];
 
-        let mut vendor_ramdisk_data = vec![0u8; vendor_ramdisk_size as usize];
-        reader
-            .read_exact(&mut vendor_ramdisk_data)
-            .map_err(|e| Error::ReadFieldError("vendor_ramdisk_data", e))?;
+        let mut vendor_ramdisk_data = reader.read_vec_exact(vendor_ramdisk_size as usize)?;
         padding::read_discard(&mut reader, page_size.into())?;
 
         // For v3, this is just one big ramdisk. For v4, we have to wait until
@@ -1161,38 +1131,38 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
             vendor_ramdisk_data = vec![];
         }
 
-        let mut dtb = vec![0u8; dtb_size as usize];
-        reader
-            .read_exact(&mut dtb)
-            .map_err(|e| Error::ReadFieldError("dtb", e))?;
+        let dtb = reader.read_vec_exact(dtb_size as usize)?;
         padding::read_discard(&mut reader, page_size.into())?;
 
         if let Some(v4) = &mut v4_data {
             let mut ramdisk_reader = Cursor::new(vendor_ramdisk_data);
             let mut total_ramdisk_size = 0;
 
-            for _ in 0..v4.vendor_ramdisk_table_entry_num {
+            for index in 0..v4.vendor_ramdisk_table_entry_num {
                 let raw_entry = RawVendorV4RamdiskTableEntry::read_from_io(&mut reader)?;
 
-                let ramdisk_size = raw_entry.ramdisk_size.get();
-                if ramdisk_size > vendor_ramdisk_size {
-                    return Err(Error::FieldOutOfBounds("ramdisk_size"));
-                }
+                let ramdisk_size =
+                    util::check_bounds(raw_entry.ramdisk_size.get(), ..=vendor_ramdisk_size)
+                        .map_err(|e| Error::IntOutOfBounds("Vendor::V4::Meta::ramdisk_size", e))?;
 
                 let ramdisk_offset = raw_entry.ramdisk_offset.get();
 
                 let ramdisk_name = raw_entry.ramdisk_name.trim_end_padding();
-                let ramdisk_name = str::from_utf8(ramdisk_name)
-                    .map_err(|e| Error::StringNotUtf8("ramdisk_name", ramdisk_name.to_vec(), e))?;
+                let ramdisk_name = str::from_utf8(ramdisk_name).map_err(|e| {
+                    Error::StringNotUtf8("Vendor::V4::Meta::ramdisk_name", e, ramdisk_name.to_vec())
+                })?;
 
                 let table_offset = ramdisk_reader.stream_position()?;
 
                 if u64::from(ramdisk_offset) != table_offset {
-                    return Err(Error::InvalidFieldValue("ramdisk_offset", ramdisk_offset));
+                    return Err(Error::VendorV4InvalidRamdiskEntryOffset {
+                        index,
+                        field_value: ramdisk_offset,
+                        reader_pos: table_offset,
+                    });
                 }
 
-                let mut ramdisk = vec![0u8; ramdisk_size as usize];
-                ramdisk_reader.read_exact(&mut ramdisk)?;
+                let ramdisk = ramdisk_reader.read_vec_exact(ramdisk_size as usize)?;
                 ramdisks.push(ramdisk);
 
                 v4.v4_extra.ramdisk_metas.push(RamdiskMeta {
@@ -1205,17 +1175,18 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
             }
 
             if total_ramdisk_size != vendor_ramdisk_size {
-                return Err(Error::InvalidFieldValue(
-                    "vendor_ramdisk_size",
-                    vendor_ramdisk_size,
-                ));
+                return Err(Error::VendorV4InvalidRamdiskSize {
+                    field_value: vendor_ramdisk_size,
+                    total_size: total_ramdisk_size,
+                });
             }
 
             padding::read_discard(&mut reader, page_size.into())?;
 
-            v4.v4_extra.bootconfig = reader
-                .read_string_exact(v4.bootconfig_size as usize)
-                .map_err(|e| Error::ReadFieldError("bootconfig", e))?;
+            let bootconfig = reader.read_vec_exact(v4.bootconfig_size as usize)?;
+            v4.v4_extra.bootconfig = String::from_utf8(bootconfig).map_err(|e| {
+                Error::StringNotUtf8("Vendor::V4::bootconfig", e.utf8_error(), e.into_bytes())
+            })?;
         }
 
         let image = Self {
@@ -1243,38 +1214,47 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
         // instance was just parsed from a real boot image.
         if let Some(v4) = &self.v4_extra {
             if v4.ramdisk_metas.len() != self.ramdisks.len() {
-                return Err(Error::InvalidData(
-                    "Mismatched ramdisks and ramdisk_metas count",
-                ));
+                return Err(Error::MismatchedRamdiskCounts {
+                    ramdisks: self.ramdisks.len(),
+                    metas: v4.ramdisk_metas.len(),
+                });
             }
         } else if self.ramdisks.len() > 1 {
-            return Err(Error::InvalidData("v3 only supports one ramdisk"));
+            return Err(Error::VendorV3TooManyRamdisks(self.ramdisks.len()));
         }
 
         let vendor_ramdisk_size = self.ramdisks.iter().map(|r| r.len()).sum::<usize>();
-        if vendor_ramdisk_size > COMPONENT_MAX_SIZE as usize {
-            return Err(Error::FieldOutOfBounds("vendor_ramdisk_size"));
-        } else if self.dtb.len() > COMPONENT_MAX_SIZE as usize {
-            return Err(Error::FieldOutOfBounds("dtb_size"));
-        } else if self.page_size == 0 {
-            return Err(Error::InvalidFieldValue("page_size", 0));
+        util::check_bounds(vendor_ramdisk_size, ..=COMPONENT_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("Vendor::V3::vendor_ramdisk_size", e))?;
+        util::check_bounds(self.dtb.len(), ..=COMPONENT_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("Vendor::V3::dtb_size", e))?;
+
+        if self.page_size == 0 {
+            return Err(Error::PageSizeZero);
         }
 
         let cmdline = self
             .cmdline
             .as_bytes()
             .to_padded_array::<VENDOR_BOOT_ARGS_SIZE>()
-            .ok_or_else(|| Error::StringTooLong("cmdline", self.cmdline.clone()))?;
+            .ok_or_else(|| {
+                Error::StringTooLong(
+                    "Vendor::V3::cmdline",
+                    VENDOR_BOOT_ARGS_SIZE,
+                    self.cmdline.clone(),
+                )
+            })?;
         let name = self
             .name
             .as_bytes()
             .to_padded_array::<VENDOR_BOOT_NAME_SIZE>()
-            .ok_or_else(|| Error::StringTooLong("name", self.name.clone()))?;
+            .ok_or_else(|| {
+                Error::StringTooLong("Vendor::V3::name", VENDOR_BOOT_NAME_SIZE, self.name.clone())
+            })?;
 
         if let Some(v4) = &self.v4_extra {
-            if v4.bootconfig.len() > BOOTCONFIG_MAX_SIZE as usize {
-                return Err(Error::FieldOutOfBounds("bootconfig_size"));
-            }
+            util::check_bounds(v4.bootconfig.len(), ..=BOOTCONFIG_MAX_SIZE as usize)
+                .map_err(|e| Error::IntOutOfBounds("Vendor::V4::bootconfig_size", e))?;
         }
 
         let mut writer = CountingWriter::new(writer);
@@ -1297,16 +1277,15 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
         raw_v3.write_to_io(&mut writer)?;
 
         if let Some(v4) = &self.v4_extra {
-            let table_entry_num = self
-                .ramdisks
-                .len()
-                .to_u32()
-                .ok_or_else(|| Error::FieldOutOfBounds("vendor_ramdisk_table_entry_num"))?;
+            let table_entry_num =
+                self.ramdisks.len().to_u32().ok_or_else(|| {
+                    Error::IntOverflow("Vendor::V4::vendor_ramdisk_table_entry_num")
+                })?;
             let table_entry_size = mem::size_of::<RawVendorV4RamdiskTableEntry>() as u32;
             let table_size = table_entry_num
                 .checked_mul(table_entry_size)
                 .and_then(|v| v.to_u32())
-                .ok_or_else(|| Error::FieldOutOfBounds("vendor_ramdisk_table_size"))?;
+                .ok_or_else(|| Error::IntOverflow("Vendor::V4::vendor_ramdisk_table_size"))?;
 
             let raw_v4 = RawVendorV4Extra {
                 vendor_ramdisk_table_size: table_size.into(),
@@ -1321,15 +1300,11 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
         padding::write_zeros(&mut writer, self.page_size.into())?;
 
         for ramdisk in &self.ramdisks {
-            writer
-                .write_all(ramdisk)
-                .map_err(|e| Error::WriteFieldError("vendor_ramdisk_data", e))?;
+            writer.write_all(ramdisk)?;
         }
         padding::write_zeros(&mut writer, self.page_size.into())?;
 
-        writer
-            .write_all(&self.dtb)
-            .map_err(|e| Error::WriteFieldError("dtb", e))?;
+        writer.write_all(&self.dtb)?;
         padding::write_zeros(&mut writer, self.page_size.into())?;
 
         if let Some(v4) = &self.v4_extra {
@@ -1343,7 +1318,11 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
                     .as_bytes()
                     .to_padded_array::<VENDOR_RAMDISK_NAME_SIZE>()
                     .ok_or_else(|| {
-                        Error::StringTooLong("ramdisk_name", meta.ramdisk_name.clone())
+                        Error::StringTooLong(
+                            "Vendor::V4::Meta::ramdisk_name",
+                            VENDOR_RAMDISK_NAME_SIZE,
+                            meta.ramdisk_name.clone(),
+                        )
                     })?;
 
                 let raw_entry = RawVendorV4RamdiskTableEntry {
@@ -1360,9 +1339,7 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
             }
             padding::write_zeros(&mut writer, self.page_size.into())?;
 
-            writer
-                .write_all(v4.bootconfig.as_bytes())
-                .map_err(|e| Error::WriteFieldError("bootconfig", e))?;
+            writer.write_all(v4.bootconfig.as_bytes())?;
             padding::write_zeros(&mut writer, self.page_size.into())?;
         }
 

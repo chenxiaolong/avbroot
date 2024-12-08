@@ -22,7 +22,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 use crate::{
     format::verityrs,
     stream::{self, FromReader, ReadSeekReopen, ToWriter, WriteSeekReopen, WriteZerosExt},
-    util::{self, NumBytes},
+    util::{self, NumBytes, OutOfBoundsError},
 };
 
 // Not to be confused with the 255-byte RS block size.
@@ -65,7 +65,9 @@ pub enum Error {
     #[error("Expected FEC digest {expected}, but have {actual}")]
     InvalidFecDigest { expected: String, actual: String },
     #[error("{0:?} field is out of bounds")]
-    FieldOutOfBounds(&'static str),
+    IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
+    #[error("{0:?} overflowed integer bounds during calculations")]
+    IntOverflow(&'static str),
     #[error("I/O error")]
     Io(#[from] io::Error),
 }
@@ -156,9 +158,10 @@ impl Fec {
                 input: file_size,
                 block: block_size,
             });
-        } else if block_size > FEC_MAX_BLOCK_SIZE {
-            return Err(Error::FieldOutOfBounds("block_size"));
         }
+
+        util::check_bounds(block_size, ..=FEC_MAX_BLOCK_SIZE)
+            .map_err(|e| Error::IntOutOfBounds("block_size", e))?;
 
         let rs_k = 255 - parity;
         if !verityrs::FN_ENCODE.contains_key(&rs_k) {
@@ -173,11 +176,11 @@ impl Fec {
             .checked_mul(u64::from(parity))
             .and_then(|s| s.checked_mul(u64::from(block_size)))
             .and_then(|s| s.to_usize())
-            .ok_or_else(|| Error::FieldOutOfBounds("fec_data_size"))?;
+            .ok_or(Error::IntOverflow("fec_data_size"))?;
         rounds
             .checked_mul(u64::from(rs_k))
             .and_then(|s| s.checked_mul(u64::from(block_size)))
-            .ok_or_else(|| Error::FieldOutOfBounds("fec_grid_size"))?;
+            .ok_or(Error::IntOverflow("fec_grid_size"))?;
 
         Ok(Self {
             file_size,
@@ -211,9 +214,8 @@ impl Fec {
     fn rounds_for_ranges(&self, ranges: &[Range<u64>]) -> Result<HashSet<u64>> {
         let ranges = util::merge_overlapping(ranges);
         if let Some(last) = ranges.last() {
-            if last.end > self.file_size {
-                return Err(Error::FieldOutOfBounds("ranges"));
-            }
+            util::check_bounds(last.end, ..=self.file_size)
+                .map_err(|e| Error::IntOutOfBounds("ranges", e))?;
         }
 
         let block_size = u64::from(self.block_size);
@@ -689,11 +691,8 @@ impl FecImage {
     /// Build one instance of the FEC header. The caller is responsible for
     /// writing it to both of the header locations at the end of the file.
     fn build_header(&self) -> Result<RawHeader> {
-        let fec_size = self
-            .fec
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::FieldOutOfBounds("fec_size"))?;
+        let fec_size: u32 =
+            util::try_cast(self.fec.len()).map_err(|e| Error::IntOutOfBounds("fec_size", e))?;
 
         let digest = ring::digest::digest(&ring::digest::SHA256, &self.fec);
 
@@ -753,8 +752,8 @@ impl<R: Read> FromReader<R> for FecImage {
             return Err(Error::UnsupportedHeaderVersion(header.version.get()));
         }
 
-        let parity =
-            u8::try_from(header.parity.get()).map_err(|_| Error::FieldOutOfBounds("parity"))?;
+        let parity: u8 =
+            util::try_cast(header.parity.get()).map_err(|e| Error::IntOutOfBounds("parity", e))?;
 
         let fec_size = header.fec_size.get() as usize;
         let actual_fec_size = fec.len() - FEC_BLOCK_SIZE;

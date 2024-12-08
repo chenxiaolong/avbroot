@@ -35,14 +35,67 @@ pub const MINOR_VERSION: u16 = 0;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("Sparse header: {0}")]
-    Header(String),
-    #[error("Sparse chunk #{0}: {1}")]
-    Chunk(u32, String),
-    #[error("Sparse reader: {0}")]
-    Reader(String),
-    #[error("Sparse writer: {0}")]
-    Writer(String),
+    // Header errors.
+    #[error("Invalid magic: {0:#010x}")]
+    InvalidMagic(u32),
+    #[error("Unsupported major version: {0}")]
+    UnsupportedMajorVersion(u16),
+    #[error("Invalid file header size: {0} < {size}", size = mem::size_of::<RawHeader>())]
+    InvalidFileHeaderSize(u16),
+    #[error("Invalid chunk header size: {0} < {size}", size = mem::size_of::<RawChunk>())]
+    InvalidChunkHeaderSize(u16),
+    #[error("Invalid block size (must be a non-zero multiple of 4): {0}")]
+    InvalidBlockSize(u32),
+    // Chunk errors.
+    #[error("Chunk #{index}: Size overflow: {chunk_size} * {block_size}")]
+    ChunkSizeOverflow {
+        index: u32,
+        chunk_size: u32,
+        block_size: u32,
+    },
+    #[error("Chunk #{index}: Invalid type: {chunk_type}")]
+    InvalidChunkType { index: u32, chunk_type: u16 },
+    #[error("Chunk #{index}: Data size too large: {data_size}")]
+    DataSizeTooLarge { index: u32, data_size: u32 },
+    #[error("Chunk #{index}: Block count overflow: {start_block} + {chunk_size}")]
+    BlockCountOverflow {
+        index: u32,
+        start_block: u32,
+        chunk_size: u32,
+    },
+    #[error("Chunk #{index}: End block {end_block} exceeds total blocks {total_blocks}")]
+    EndBlockExceedsTotal {
+        index: u32,
+        end_block: u32,
+        total_blocks: u32,
+    },
+    #[error("Chunk #{index}: CRC32 chunk is not empty")]
+    Crc32ChunkNotEmpty { index: u32, chunk_size: u32 },
+    #[error("Chunk #{index}: Expected total size {expected_size}, but have {total_size}")]
+    InvalidChunkSize {
+        index: u32,
+        expected_size: u32,
+        total_size: u32,
+    },
+    // Reader errors.
+    #[error("Must fully consume data when CRC validation is enabled")]
+    Crc32RandomRead,
+    #[error("Previous chunk still has {0} unread bytes")]
+    UnreadChunkData(u32),
+    #[error("Expected checkpoint CRC32 {expected:08x}, but have {actual:08x}")]
+    MismatchedCrc32Checkpoint { expected: u32, actual: u32 },
+    #[error("Expected final CRC32 {expected:08x}, but have {actual:08x}")]
+    MismatchedCrc32Final { expected: u32, actual: u32 },
+    // Writer errors.
+    #[error("Minor version not supported for writing: {0}")]
+    UnsupportedMinorVersion(u16),
+    #[error("Previous chunk still has {0} unwritten bytes")]
+    UnwrittenChunkData(u32),
+    #[error("Already wrote all chunk headers")]
+    TooManyChunks,
+    #[error("Gap between end of last chunk {prev_end} and start of new chunk {cur_start}")]
+    GapBetweenChunks { prev_end: u32, cur_start: u32 },
+    // Wrapped errors.
     #[error("I/O error")]
     Io(#[from] io::Error),
 }
@@ -97,38 +150,21 @@ impl fmt::Debug for RawHeader {
 impl RawHeader {
     fn validate(&self) -> Result<()> {
         if self.magic.get() != HEADER_MAGIC {
-            return Err(Error::Header(format!(
-                "Invalid magic: {:#010x}",
-                self.magic.get(),
-            )));
+            return Err(Error::InvalidMagic(self.magic.get()));
         }
 
         if self.major_version.get() != MAJOR_VERSION {
-            return Err(Error::Header(format!(
-                "Unsupported major version: {}",
-                self.major_version.get(),
-            )));
+            return Err(Error::UnsupportedMajorVersion(self.major_version.get()));
         }
 
         if self.file_hdr_sz.get() < mem::size_of::<RawHeader>() as u16 {
-            return Err(Error::Header(format!(
-                "Invalid file header size: {} < {}",
-                self.file_hdr_sz.get(),
-                mem::size_of::<RawHeader>(),
-            )));
+            return Err(Error::InvalidFileHeaderSize(self.file_hdr_sz.get()));
         } else if self.chunk_hdr_sz.get() < mem::size_of::<RawChunk>() as u16 {
-            return Err(Error::Header(format!(
-                "Invalid chunk header size: {} < {}",
-                self.chunk_hdr_sz.get(),
-                mem::size_of::<RawChunk>(),
-            )));
+            return Err(Error::InvalidChunkHeaderSize(self.chunk_hdr_sz.get()));
         }
 
         if self.blk_sz.get() == 0 || self.blk_sz.get() % 4 != 0 {
-            return Err(Error::Header(format!(
-                "Invalid block size: {}",
-                self.blk_sz.get(),
-            )));
+            return Err(Error::InvalidBlockSize(self.blk_sz.get()));
         }
 
         Ok(())
@@ -176,69 +212,58 @@ impl RawChunk {
                 .chunk_sz
                 .get()
                 .checked_mul(header.blk_sz.get())
-                .ok_or_else(|| {
-                    Error::Chunk(
-                        index,
-                        format!(
-                            "Chunk size overflow: {} * {}",
-                            self.chunk_sz.get(),
-                            header.blk_sz.get(),
-                        ),
-                    )
+                .ok_or_else(|| Error::ChunkSizeOverflow {
+                    index,
+                    chunk_size: self.chunk_sz.get(),
+                    block_size: header.blk_sz.get(),
                 })?,
             CHUNK_TYPE_FILL | CHUNK_TYPE_CRC32 => 4,
             CHUNK_TYPE_DONT_CARE => 0,
-            t => return Err(Error::Chunk(index, format!("Invalid chunk type: {t}"))),
+            t => {
+                return Err(Error::InvalidChunkType {
+                    index,
+                    chunk_type: t,
+                })
+            }
         };
 
         data_size
             .checked_add(header.chunk_hdr_sz.into())
-            .ok_or_else(|| Error::Chunk(index, format!("Data size too large: {data_size}")))
+            .ok_or(Error::DataSizeTooLarge { index, data_size })
     }
 
     fn validate(&self, index: u32, header: &RawHeader, start_block: u32) -> Result<()> {
         let end_block = start_block
             .checked_add(self.chunk_sz.get())
-            .ok_or_else(|| {
-                Error::Chunk(
-                    index,
-                    format!(
-                        "Block count overflow: {start_block} + {}",
-                        self.chunk_sz.get(),
-                    ),
-                )
+            .ok_or_else(|| Error::BlockCountOverflow {
+                index,
+                start_block,
+                chunk_size: self.chunk_sz.get(),
             })?;
 
         if end_block > header.total_blks.get() {
-            return Err(Error::Chunk(
+            return Err(Error::EndBlockExceedsTotal {
                 index,
-                format!(
-                    "End block {end_block} exceeds total blocks {}",
-                    header.total_blks.get(),
-                ),
-            ))?;
+                end_block,
+                total_blocks: header.total_blks.get(),
+            })?;
         }
 
         if self.chunk_type.get() == CHUNK_TYPE_CRC32 && self.chunk_sz.get() != 0 {
-            return Err(Error::Chunk(
+            return Err(Error::Crc32ChunkNotEmpty {
                 index,
-                format!(
-                    "CRC32 chunk has non-zero blocks: {:?}",
-                    start_block..end_block,
-                ),
-            ));
+                chunk_size: self.chunk_sz.get(),
+            });
         }
 
         let expected_size = self.expected_size(index, header)?;
 
         if expected_size != self.total_sz.get() {
-            return Err(Error::Chunk(
+            return Err(Error::InvalidChunkSize {
                 index,
-                format!(
-                    "Expected total size {expected_size}, but have {}",
-                    self.total_sz.get(),
-                ),
-            ));
+                expected_size,
+                total_size: self.total_sz.get(),
+            });
         }
 
         Ok(())
@@ -713,18 +738,13 @@ impl<R: Read> SparseReader<R> {
         if self.data_remain != 0 {
             if let Some(seek) = self.seek {
                 if self.hasher.is_some() {
-                    return Err(Error::Reader(
-                        "Cannot skip data when CRC validation is enabled".into(),
-                    ));
+                    return Err(Error::Crc32RandomRead);
                 }
 
                 seek(&mut self.inner, SeekFrom::Current(self.data_remain.into()))?;
                 self.data_remain = 0;
             } else {
-                return Err(Error::Reader(format!(
-                    "Previous chunk still has {} bytes remaining",
-                    self.data_remain,
-                )));
+                return Err(Error::UnreadChunkData(self.data_remain));
             }
         }
 
@@ -771,9 +791,10 @@ impl<R: Read> SparseReader<R> {
                     let actual = hasher.clone().finalize();
 
                     if actual != expected.get() {
-                        return Err(Error::Reader(format!(
-                            "Expected checkpoint CRC32 {expected:08x}, but have {actual:08x}",
-                        )));
+                        return Err(Error::MismatchedCrc32Checkpoint {
+                            expected: expected.get(),
+                            actual,
+                        });
                     }
                 }
 
@@ -804,9 +825,7 @@ impl<R: Read> SparseReader<R> {
                 let actual = hasher.finalize();
 
                 if actual != expected {
-                    return Err(Error::Reader(format!(
-                        "Expected final CRC32 {expected:08x}, but have {actual:08x}",
-                    )));
+                    return Err(Error::MismatchedCrc32Final { expected, actual });
                 }
             }
         }
@@ -850,10 +869,7 @@ impl<W: Write> SparseWriter<W> {
     /// file to be seekable, so the [`Header`] must be fully known up front.
     pub fn new(mut inner: W, header: Header) -> Result<Self> {
         if header.minor_version != MINOR_VERSION {
-            return Err(Error::Writer(format!(
-                "Minor version not supported for writing: {}",
-                header.minor_version,
-            )));
+            return Err(Error::UnsupportedMinorVersion(header.minor_version));
         }
 
         let header = RawHeader {
@@ -888,21 +904,18 @@ impl<W: Write> SparseWriter<W> {
     /// [`ChunkData::Data`], the data must be fully written first.
     pub fn start_chunk(&mut self, chunk: Chunk) -> Result<()> {
         if self.data_remain != 0 {
-            return Err(Error::Writer(format!(
-                "Previous chunk still has {} bytes remaining",
-                self.data_remain,
-            )));
+            return Err(Error::UnwrittenChunkData(self.data_remain));
         }
 
         if self.chunk == self.header.total_chunks.get() {
-            return Err(Error::Writer("Already wrote all chunk headers".into()));
+            return Err(Error::TooManyChunks);
         }
 
         if chunk.bounds.start != self.block {
-            return Err(Error::Writer(format!(
-                "Gap between end of last chunk {} and start of new chunk {}",
-                self.block, chunk.bounds.start,
-            )));
+            return Err(Error::GapBetweenChunks {
+                prev_end: self.block,
+                cur_start: chunk.bounds.start,
+            });
         }
 
         let mut raw_chunk = RawChunk {
@@ -949,9 +962,7 @@ impl<W: Write> SparseWriter<W> {
 
                 let actual = self.hasher.clone().finalize();
                 if actual != expected {
-                    return Err(Error::Reader(format!(
-                        "Expected checkpoint CRC32 {expected:08x}, but have {actual:08x}",
-                    )));
+                    return Err(Error::MismatchedCrc32Checkpoint { expected, actual });
                 }
             }
         }
@@ -966,9 +977,7 @@ impl<W: Write> SparseWriter<W> {
             let actual = self.hasher.finalize();
 
             if actual != expected {
-                return Err(Error::Reader(format!(
-                    "Expected final CRC32 {expected:08x}, but have {actual:08x}",
-                )));
+                return Err(Error::MismatchedCrc32Final { expected, actual });
             }
         }
 

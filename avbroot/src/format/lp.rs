@@ -20,7 +20,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 use crate::{
     format::padding,
     stream::{CountingReader, FromReader, ReadDiscardExt, ToWriter, WriteZerosExt},
-    util::{self, is_zero},
+    util::{self, is_zero, DebugString},
 };
 
 /// Magic value for [`RawGeometry::magic`].
@@ -57,26 +57,134 @@ const METADATA_MAX_SIZE: u32 = 128 * 1024;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    // Naming errors.
     #[error("Invalid partition name: {0}")]
     PartitionNameInvalid(String),
-    #[error("Geometry: {0}")]
-    Geometry(String),
-    #[error("Descriptor offset #{0}: {1}")]
-    Descriptor(u32, String),
-    #[error("Header: {0}")]
-    Header(String),
-    #[error("Partition: {0}: {1}")]
-    Partition(String, String),
-    #[error("Metadata extent #{0}: {1}")]
-    Extent(usize, String),
-    #[error("Partition group: {0}: {1}")]
-    PartitionGroup(String, String),
-    #[error("Block device: {0}: {1}")]
-    BlockDevice(String, String),
-    #[error("Metadata: {0}")]
-    Metadata(String),
+    // Geometry errors.
+    #[error("Invalid geometry magic: {0:#010x}")]
+    GeometryInvalidMagic(u32),
+    #[error("Invalid geometry size: {0} != {size}", size = mem::size_of::<RawGeometry>())]
+    GeometryInvalidSize(u32),
+    #[error("Expected geometry digest {expected}, but have {actual}")]
+    GeometryInvalidDigest { expected: String, actual: String },
+    #[error("Maximum metadata size is not sector-aligned: {0}")]
+    MaxMetadataSizeUnaligned(u32),
+    #[error("Maximum metadata size exceeds limit: {0} > {METADATA_MAX_SIZE}")]
+    MaxMetadataSizeTooLarge(u32),
+    #[error("No metadata slots defined")]
+    NoMetadataSlots,
+    #[error("Logical block size is not sector-aligned: {0}")]
+    LogicalBlockSizeUnaligned(u32),
+    // Descriptor errors.
+    #[error("Descriptor offset #{0}: Entry count too large")]
+    DescriptorEntryCountTooLarge(u32),
+    #[error("Descriptor offset #{0}: Next entry offset too large")]
+    DescriptorNextOffsetTooLarge(u32),
+    // Header errors.
+    #[error("Invalid header magic: {0:#010x}")]
+    HeaderInvalidMagic(u32),
+    #[error("Unsupported header version: {major}.{minor}")]
+    HeaderUnsupportedVersion { major: u16, minor: u16 },
+    #[error("Invalid header size: {0} != {size}", size = mem::size_of::<RawHeader>())]
+    HeaderInvalidSize(u32),
+    #[error("Expected header digest {expected}, but have {actual}")]
+    HeaderInvalidDigest { expected: String, actual: String },
+    #[error("Metadata slot exceeds maximum size: {metadata_size} > {max_size} - {header_size}")]
+    MetadataTooLarge {
+        metadata_size: u32,
+        max_size: u32,
+        header_size: u32,
+    },
+    #[error("Descriptors too large or have gaps")]
+    DescriptorsTooLargeOrHaveGaps,
+    #[error("Gap after last descriptor")]
+    DescriptorsFinalGap,
+    #[error("Invalid descriptor entry sizes")]
+    DescriptorsInvalidEntrySizes,
+    #[error("Descriptor entry count {entry_count} does not match {name} table length {table_len}")]
+    DescriptorMismatchedEntryCount {
+        name: &'static str,
+        entry_count: u32,
+        table_len: usize,
+    },
+    #[error("Expected tables digest {expected}, but have {actual}")]
+    HeaderInvalidTablesDigest { expected: String, actual: String },
+    // Partition errors.
+    #[error("Partition {name:?}: Invalid attributes: {}", .attributes.0)]
+    PartitionInvalidAttributes {
+        name: DebugString,
+        attributes: PartitionAttributes,
+    },
+    #[error("Partition {name:?}: Extent indices too large")]
+    PartitionExtentIndicesTooLarge { name: DebugString },
+    #[error("Partition {name:?}: Extent indices set on empty image")]
+    PartitionExtentIndicesEmptyImage { name: DebugString },
+    #[error("Partition {name:?}: Extent index too large")]
+    PartitionExtentIndexTooLarge { name: DebugString },
+    #[error("Partition {name:?}: Extent count too large")]
+    PartitionExtentCountTooLarge { name: DebugString },
+    #[error("Partition {name:?}: Invalid partition group index: {index}")]
+    PartitionInvalidGroupIndex { name: DebugString, index: u32 },
+    #[error("Partition {name:?}: Sector count too large")]
+    PartitionSectorCountTooLarge { name: DebugString },
+    #[error("Partition {name:?}: Byte count too large")]
+    PartitionByteCountTooLarge { name: DebugString },
+    // Extent errors.
+    #[error("Extent #{index}: Invalid block device index: {device_index}")]
+    ExtentInvalidDeviceIndex { index: usize, device_index: u32 },
+    #[error("Extent #{index}: End sector too large: {start} + {count}")]
+    ExtentEndSectorTooLarge {
+        index: usize,
+        start: u64,
+        count: u64,
+    },
+    #[error("Extent #{index}: {start} starts before block device's first sector {sector}")]
+    ExtentStartBeforeDeviceStart {
+        index: usize,
+        start: u64,
+        sector: u64,
+    },
+    #[error("Extent #{index}: {end} ends after block device's last sector {sector}")]
+    ExtentEndsAfterDeviceEnd { index: usize, end: u64, sector: u64 },
+    #[error("Extent #{index}: Type zero extents cannot have non-zero sector or device")]
+    ExtentTypeZeroNotEmpty { index: usize },
+    #[error("Extent #{index}: Invalid type: {extent_type}")]
+    ExtentInvalidType { index: usize, extent_type: u32 },
+    #[error("Extent #{index}: Overlaps previous extent")]
+    ExtentOverlapsPrevious { index: usize },
+    #[error("Extent #{index}: Earlier block device index than previous extent")]
+    ExtentDeviceNotConsecutive { index: usize },
+    #[error("Extent #{index}: Block device index too large")]
+    ExtentDeviceIndexTooLarge { index: usize },
+    // Partition group errors.
+    #[error("Group {name:?}: Total size of partitions too large")]
+    GroupTotalSizeTooLarge { name: DebugString },
+    #[error("Group {name:?}: Total partition size {size} exceeds limit {limit}")]
+    GroupTotalSizeExceedsLimit {
+        name: DebugString,
+        size: u64,
+        limit: u64,
+    },
+    #[error("Group {name:?}: Index too large")]
+    GroupIndexTooLarge { name: DebugString },
+    // Block device errors.
+    #[error("Device {name:?}: Alignment is 0")]
+    DeviceAlignmentIsZero { name: DebugString },
+    #[error("Device {name:?}: Partition alignment is not sector-aligned")]
+    DeviceAlignmentNotSectorAligned { name: DebugString },
+    #[error("Device {name:?}: First logical sector is not partition-aligned")]
+    DeviceFirstSectorNotAligned { name: DebugString },
+    #[error("Device {name:?}: Alignment offset is not sector-aligned")]
+    DeviceOffsetNotSectorAligned { name: DebugString },
+    #[error("Device {name:?}: Size is not sector-aligned")]
+    DeviceSizeNotSectorAligned { name: DebugString },
+    // Metadata errors.
+    #[error("Expected slot count {expected}, but have {actual}")]
+    MismatchedSlotCount { expected: usize, actual: usize },
+    // Allocator errors.
     #[error("Insufficient space on block devices to allocate sectors")]
     AllocatorDeviceFull,
+    // Wrapped errors.
     #[error("I/O error")]
     Io(#[from] io::Error),
 }
@@ -180,17 +288,11 @@ impl RawGeometry {
     /// further checks.
     fn validate(&self) -> Result<()> {
         if self.magic.get() != GEOMETRY_MAGIC {
-            return Err(Error::Geometry(format!(
-                "Invalid magic: {:#010x}",
-                self.magic.get(),
-            )));
+            return Err(Error::GeometryInvalidMagic(self.magic.get()));
         }
 
         if self.struct_size.get() != mem::size_of::<Self>() as u32 {
-            return Err(Error::Geometry(format!(
-                "Invalid struct size: {}",
-                self.struct_size.get(),
-            )));
+            return Err(Error::GeometryInvalidSize(self.struct_size.get()));
         }
 
         #[cfg(not(fuzzing))]
@@ -200,33 +302,27 @@ impl RawGeometry {
 
             let digest = ring::digest::digest(&ring::digest::SHA256, copy.as_bytes());
             if digest.as_ref() != self.checksum {
-                return Err(Error::Geometry(format!(
-                    "Expected digest {}, but have {}",
-                    hex::encode(self.checksum),
-                    hex::encode(digest),
-                )));
+                return Err(Error::GeometryInvalidDigest {
+                    expected: hex::encode(self.checksum),
+                    actual: hex::encode(digest),
+                });
             }
         }
 
         if self.metadata_max_size.get() == 0 || self.metadata_max_size.get() % SECTOR_SIZE != 0 {
-            return Err(Error::Geometry(format!(
-                "Maximum metadata size is not sector-aligned: {}",
+            return Err(Error::MaxMetadataSizeUnaligned(
                 self.metadata_max_size.get(),
-            )));
+            ));
         } else if self.metadata_max_size.get() > METADATA_MAX_SIZE {
-            return Err(Error::Geometry(format!(
-                "Maximum metadata size exceeds limit: {} > {METADATA_MAX_SIZE}",
-                self.metadata_max_size.get(),
-            )));
+            return Err(Error::MaxMetadataSizeTooLarge(self.metadata_max_size.get()));
         } else if self.metadata_slot_count.get() == 0 {
-            return Err(Error::Geometry("No metadata slots defined".into()));
+            return Err(Error::NoMetadataSlots);
         }
 
         if self.logical_block_size.get() % SECTOR_SIZE != 0 {
-            return Err(Error::Geometry(format!(
-                "Logical block size is not sector-aligned: {}",
+            return Err(Error::LogicalBlockSizeUnaligned(
                 self.logical_block_size.get(),
-            )));
+            ));
         }
 
         Ok(())
@@ -278,11 +374,11 @@ impl RawTableDescriptor {
         let num_entries: u32 = items
             .len()
             .try_into()
-            .map_err(|_| Error::Descriptor(offset, "Entry count out of bounds".into()))?;
+            .map_err(|_| Error::DescriptorEntryCountTooLarge(offset))?;
         let next_offset = entry_size
             .checked_mul(num_entries)
             .and_then(|o| o.checked_add(offset))
-            .ok_or_else(|| Error::Descriptor(offset, "Next entry offset out of bounds".into()))?;
+            .ok_or(Error::DescriptorNextOffsetTooLarge(offset))?;
 
         self.offset = offset.into();
         self.entry_size = entry_size.into();
@@ -390,28 +486,21 @@ impl RawHeader {
     /// function is called.
     fn validate(&self, geometry: &RawGeometry) -> Result<()> {
         if self.magic.get() != HEADER_MAGIC {
-            return Err(Error::Header(format!(
-                "Invalid magic: {:#010x}",
-                self.magic.get(),
-            )));
+            return Err(Error::HeaderInvalidMagic(self.magic.get()));
         }
 
         if self.major_version.get() != MAJOR_VERSION || self.minor_version.get() > MINOR_VERSION_MAX
         {
-            return Err(Error::Header(format!(
-                "Unsupported version: {}.{}",
-                self.major_version.get(),
-                self.minor_version.get(),
-            )));
+            return Err(Error::HeaderUnsupportedVersion {
+                major: self.major_version.get(),
+                minor: self.minor_version.get(),
+            });
         }
 
         let expected_size = self.size();
 
         if self.header_size.get() != expected_size as u32 {
-            return Err(Error::Header(format!(
-                "Invalid struct size: {}",
-                self.header_size.get(),
-            )));
+            return Err(Error::HeaderInvalidSize(self.header_size.get()));
         }
 
         if self.minor_version.get() < VERSION_FOR_EXPANDED_HEADER {
@@ -429,18 +518,21 @@ impl RawHeader {
 
             let digest = ring::digest::digest(&ring::digest::SHA256, portion);
             if digest.as_ref() != self.header_checksum {
-                return Err(Error::Header(format!(
-                    "Expected header digest {}, but have {}",
-                    hex::encode(self.header_checksum),
-                    hex::encode(digest),
-                )));
+                return Err(Error::HeaderInvalidDigest {
+                    expected: hex::encode(self.header_checksum),
+                    actual: hex::encode(digest),
+                });
             }
         }
 
         // metadata_max_size is guaranteed to be at least one sector, so the
         // subtraction cannot overflow.
         if self.tables_size.get() > geometry.metadata_max_size.get() - self.header_size.get() {
-            return Err(Error::Header("Metadata slot exceeds maximum size".into()));
+            return Err(Error::MetadataTooLarge {
+                metadata_size: self.tables_size.get(),
+                max_size: geometry.metadata_max_size.get(),
+                header_size: self.header_size.get(),
+            });
         }
 
         let mut offset = 0;
@@ -454,12 +546,12 @@ impl RawHeader {
         ] {
             offset = self
                 .validate_descriptor(descriptor, offset)
-                .ok_or_else(|| Error::Header("Descriptors out of bounds".into()))?;
+                .ok_or(Error::DescriptorsTooLargeOrHaveGaps)?;
         }
 
         // There cannot be a gap at the end either.
         if offset != self.tables_size.get() {
-            return Err(Error::Header("Gap after last descriptor".into()));
+            return Err(Error::DescriptorsFinalGap);
         }
 
         if self.partitions.entry_size.get() != mem::size_of::<RawPartition>() as u32
@@ -467,7 +559,7 @@ impl RawHeader {
             || self.groups.entry_size.get() != mem::size_of::<RawPartitionGroup>() as u32
             || self.block_devices.entry_size.get() != mem::size_of::<RawBlockDevice>() as u32
         {
-            return Err(Error::Header("Invalid descriptor entry sizes".into()));
+            return Err(Error::DescriptorsInvalidEntrySizes);
         }
 
         Ok(())
@@ -598,10 +690,10 @@ impl RawPartition {
         let attributes = PartitionAttributes::from_bits_retain(self.attributes.get());
 
         if !(attributes - valid_attributes).is_empty() {
-            return Err(Error::Partition(
-                format!("{:?}", self.name),
-                format!("Invalid attributes: {}", attributes.0),
-            ));
+            return Err(Error::PartitionInvalidAttributes {
+                name: DebugString::new(self.name),
+                attributes,
+            });
         }
 
         match image_type {
@@ -612,27 +704,25 @@ impl RawPartition {
                     .checked_add(self.num_extents.get())
                     .map_or(true, |n| n as usize > extents.len())
                 {
-                    return Err(Error::Partition(
-                        format!("{:?}", self.name),
-                        "Extent indices out of bounds".into(),
-                    ));
+                    return Err(Error::PartitionExtentIndicesTooLarge {
+                        name: DebugString::new(self.name),
+                    });
                 }
             }
             ImageType::Empty => {
                 if self.first_extent_index.get() != 0 || self.num_extents.get() != 0 {
-                    return Err(Error::Partition(
-                        format!("{:?}", self.name),
-                        "Extent indices set on empty image".into(),
-                    ));
+                    return Err(Error::PartitionExtentIndicesEmptyImage {
+                        name: DebugString::new(self.name),
+                    });
                 }
             }
         }
 
         if self.group_index.get() as usize >= groups.len() {
-            return Err(Error::Partition(
-                format!("{:?}", self.name),
-                format!("Invalid partition group index: {}", self.group_index.get()),
-            ));
+            return Err(Error::PartitionInvalidGroupIndex {
+                name: DebugString::new(self.name),
+                index: self.group_index.get(),
+            });
         }
 
         Ok(())
@@ -680,49 +770,51 @@ impl RawExtent {
         match self.target_type.get() {
             Self::TARGET_TYPE_LINEAR => {
                 let Some(device) = block_devices.get(self.target_source.get() as usize) else {
-                    return Err(Error::Extent(
+                    return Err(Error::ExtentInvalidDeviceIndex {
                         index,
-                        format!("Invalid block device index: {}", self.target_source.get()),
-                    ));
+                        device_index: self.target_source.get(),
+                    });
                 };
 
                 let count = self.num_sectors.get();
                 let start = self.target_data.get();
-                let end = start.checked_add(count).ok_or_else(|| {
-                    Error::Extent(
+                let end = start.checked_add(count).ok_or({
+                    Error::ExtentEndSectorTooLarge {
                         index,
-                        format!("End sector out of bounds: {start} + {count}"),
-                    )
+                        start,
+                        count,
+                    }
                 })?;
 
                 if start < device.first_logical_sector.get() {
-                    return Err(Error::Extent(
+                    return Err(Error::ExtentStartBeforeDeviceStart {
                         index,
-                        format!(
-                            "{start} starts before block device's first logical sector {}",
-                            device.first_logical_sector,
-                        ),
-                    ));
+                        start,
+                        sector: device.first_logical_sector.get(),
+                    });
                 }
 
                 let device_sectors = device.size.get() / u64::from(SECTOR_SIZE);
 
                 if end > device_sectors {
-                    return Err(Error::Extent(
+                    return Err(Error::ExtentEndsAfterDeviceEnd {
                         index,
-                        format!("{end} ends after block device's sector size {device_sectors}"),
-                    ));
+                        end,
+                        sector: device_sectors,
+                    });
                 }
             }
             Self::TARGET_TYPE_ZERO => {
                 if self.target_data.get() != 0 || self.target_source.get() != 0 {
-                    return Err(Error::Extent(
-                        index,
-                        "Type zero extents cannot have non-zero sector or device".into(),
-                    ));
+                    return Err(Error::ExtentTypeZeroNotEmpty { index });
                 }
             }
-            n => return Err(Error::Extent(index, format!("Invalid type: {n}"))),
+            n => {
+                return Err(Error::ExtentInvalidType {
+                    index,
+                    extent_type: n,
+                })
+            }
         }
 
         Ok(())
@@ -776,24 +868,19 @@ impl RawPartitionGroup {
                     for extent in &extents[first..][..count] {
                         total_size = total_size
                             .checked_add(extent.num_sectors.get())
-                            .ok_or_else(|| {
-                                Error::PartitionGroup(
-                                    format!("{:?}", self.name),
-                                    "Size of group's partitions out of bounds".into(),
-                                )
+                            .ok_or_else(|| Error::GroupTotalSizeTooLarge {
+                                name: DebugString::new(self.name),
                             })?;
                     }
                 }
             }
 
             if total_size > self.maximum_size.get() {
-                return Err(Error::PartitionGroup(
-                    format!("{:?}", self.name),
-                    format!(
-                        "Total partition size {total_size} exceeds limit {}",
-                        self.maximum_size.get(),
-                    ),
-                ));
+                return Err(Error::GroupTotalSizeExceedsLimit {
+                    name: DebugString::new(self.name),
+                    size: total_size,
+                    limit: self.maximum_size.get(),
+                });
             }
         }
 
@@ -840,37 +927,32 @@ impl RawBlockDevice {
     /// further checks.
     fn validate(&self) -> Result<()> {
         if self.alignment.get() == 0 {
-            return Err(Error::BlockDevice(
-                format!("{:?}", self.partition_name),
-                "Alignment is 0".into(),
-            ));
+            return Err(Error::DeviceAlignmentIsZero {
+                name: DebugString::new(self.partition_name),
+            });
         } else if self.alignment.get() % SECTOR_SIZE != 0 {
-            return Err(Error::BlockDevice(
-                format!("{:?}", self.partition_name),
-                "Partition alignment is not sector-aligned".into(),
-            ));
+            return Err(Error::DeviceAlignmentNotSectorAligned {
+                name: DebugString::new(self.partition_name),
+            });
         }
 
         let alignment_sectors = u64::from(self.alignment.get() / SECTOR_SIZE);
         if self.first_logical_sector.get() % alignment_sectors != 0 {
-            return Err(Error::BlockDevice(
-                format!("{:?}", self.partition_name),
-                "First logical sector is not partition-aligned".into(),
-            ));
+            return Err(Error::DeviceFirstSectorNotAligned {
+                name: DebugString::new(self.partition_name),
+            });
         }
 
         if self.alignment_offset.get() % SECTOR_SIZE != 0 {
-            return Err(Error::BlockDevice(
-                format!("{:?}", self.partition_name),
-                "Alignment offset is not sector-aligned".into(),
-            ));
+            return Err(Error::DeviceOffsetNotSectorAligned {
+                name: DebugString::new(self.partition_name),
+            });
         }
 
         if self.size.get() % u64::from(SECTOR_SIZE) != 0 {
-            return Err(Error::BlockDevice(
-                format!("{:?}", self.partition_name),
-                "Size is not sector-aligned".into(),
-            ));
+            return Err(Error::DeviceSizeNotSectorAligned {
+                name: DebugString::new(self.partition_name),
+            });
         }
 
         self.partition_name.validate()
@@ -904,10 +986,11 @@ impl RawMetadataSlot {
             ),
         ] {
             if len != descriptor.num_entries.get() as usize {
-                return Err(Error::Header(format!(
-                    "Descriptor entries {} does not match {name} table length {len}",
-                    descriptor.num_entries.get(),
-                )));
+                return Err(Error::DescriptorMismatchedEntryCount {
+                    name,
+                    entry_count: descriptor.num_entries.get(),
+                    table_len: len,
+                });
             }
         }
 
@@ -933,14 +1016,11 @@ impl RawMetadataSlot {
             match a.target_source.get().cmp(&b.target_source.get()) {
                 Ordering::Equal => {
                     if a.target_data.get() + a.num_sectors.get() > b.target_data.get() {
-                        return Err(Error::Extent(i, "Overlaps previous extent".into()));
+                        return Err(Error::ExtentOverlapsPrevious { index: i });
                     }
                 }
                 Ordering::Greater => {
-                    return Err(Error::Extent(
-                        i,
-                        "Earlier block device index than previous extent".into(),
-                    ));
+                    return Err(Error::ExtentDeviceNotConsecutive { index: i });
                 }
                 Ordering::Less => {}
             }
@@ -1078,10 +1158,10 @@ impl RawMetadata {
             ImageType::Empty => 1,
         };
         if self.slots.len() != expected_slots {
-            return Err(Error::Metadata(format!(
-                "Expected slot count {expected_slots}, but have {}",
-                self.slots.len(),
-            )));
+            return Err(Error::MismatchedSlotCount {
+                expected: expected_slots,
+                actual: self.slots.len(),
+            });
         }
 
         for slot in &self.slots {
@@ -1095,11 +1175,10 @@ impl RawMetadata {
                 let digest = context.finish();
 
                 if digest.as_ref() != slot.header.tables_checksum {
-                    return Err(Error::Header(format!(
-                        "Expected tables digest {}, but have {}",
-                        hex::encode(slot.header.tables_checksum),
-                        hex::encode(digest),
-                    )));
+                    return Err(Error::HeaderInvalidTablesDigest {
+                        expected: hex::encode(slot.header.tables_checksum),
+                        actual: hex::encode(digest),
+                    });
                 }
             }
 
@@ -1262,7 +1341,9 @@ impl Partition {
         self.extents
             .iter()
             .try_fold(0u64, |total, e| total.checked_add(e.num_sectors))
-            .ok_or_else(|| Error::Partition(self.name.clone(), "Sector count overflow".into()))
+            .ok_or_else(|| Error::PartitionSectorCountTooLarge {
+                name: DebugString::new(&self.name),
+            })
     }
 
     /// Compute the number of bytes covered by the extents.
@@ -1270,7 +1351,9 @@ impl Partition {
         self.num_sectors()
             .ok()
             .and_then(|n| n.checked_mul(SECTOR_SIZE.into()))
-            .ok_or_else(|| Error::Partition(self.name.clone(), "Byte count overflow".into()))
+            .ok_or_else(|| Error::PartitionByteCountTooLarge {
+                name: DebugString::new(&self.name),
+            })
     }
 }
 
@@ -1621,16 +1704,24 @@ impl TryFrom<&MetadataSlot> for RawMetadataSlot {
             };
 
             let group_index: u32 =
-                raw_slot.groups.len().try_into().map_err(|_| {
-                    Error::PartitionGroup(group.name.clone(), "Index too large".into())
-                })?;
+                raw_slot
+                    .groups
+                    .len()
+                    .try_into()
+                    .map_err(|_| Error::GroupIndexTooLarge {
+                        name: DebugString::new(&group.name),
+                    })?;
 
             for partition in &group.partitions {
                 let extent_index: u32 = raw_slot.extents.len().try_into().map_err(|_| {
-                    Error::Partition(partition.name.clone(), "Extent index too large".into())
+                    Error::PartitionExtentIndexTooLarge {
+                        name: DebugString::new(&partition.name),
+                    }
                 })?;
                 let num_extents: u32 = partition.extents.len().try_into().map_err(|_| {
-                    Error::Partition(partition.name.clone(), "Too many extents".into())
+                    Error::PartitionExtentCountTooLarge {
+                        name: DebugString::new(&partition.name),
+                    }
                 })?;
 
                 let raw_partition = RawPartition {
@@ -1649,10 +1740,9 @@ impl TryFrom<&MetadataSlot> for RawMetadataSlot {
                         } => {
                             let block_device_index: u32 =
                                 block_device_index.try_into().map_err(|_| {
-                                    Error::Extent(
-                                        raw_slot.extents.len(),
-                                        "Block device index too large".into(),
-                                    )
+                                    Error::ExtentDeviceIndexTooLarge {
+                                        index: raw_slot.extents.len(),
+                                    }
                                 })?;
 
                             (

@@ -10,7 +10,6 @@ use std::{
 };
 
 use bstr::ByteSlice;
-use num_traits::ToPrimitive;
 use rayon::{
     iter::{IndexedParallelIterator, ParallelIterator},
     slice::ParallelSliceMut,
@@ -26,7 +25,7 @@ use crate::{
         padding::{self, ZeroPadding},
     },
     stream::{self, FromReader, ReadSeekReopen, ToWriter},
-    util::{self, NumBytes},
+    util::{self, NumBytes, OutOfBoundsError},
 };
 
 #[derive(Debug, Error)]
@@ -48,7 +47,9 @@ pub enum Error {
     #[error("Hashing algorithm not supported: {:?}", .0.as_bstr())]
     UnsupportedHashAlgorithm(Vec<u8>),
     #[error("{0:?} field is out of bounds")]
-    FieldOutOfBounds(&'static str),
+    IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
+    #[error("{0:?} overflowed integer bounds during calculations")]
+    IntOverflow(&'static str),
     #[error("I/O error")]
     Io(#[from] io::Error),
 }
@@ -86,13 +87,12 @@ impl HashTree {
             level_size = blocks
                 .checked_mul(digest_size as u64)
                 .and_then(|s| padding::round(s, u64::from(self.block_size)))
-                .ok_or_else(|| Error::FieldOutOfBounds("level_size"))?;
+                .ok_or(Error::IntOverflow("level_size"))?;
 
             // Depending on the chosen block size, the original file size could
             // overflow a usize without the first level's size doing the same.
-            let level_size_usize = level_size
-                .to_usize()
-                .ok_or_else(|| Error::FieldOutOfBounds("level_size"))?;
+            let level_size_usize: usize =
+                util::try_cast(level_size).map_err(|e| Error::IntOutOfBounds("level_size", e))?;
 
             ranges.push(0..level_size_usize);
         }
@@ -114,9 +114,8 @@ impl HashTree {
     fn blocks_for_ranges(&self, image_size: u64, ranges: &[Range<u64>]) -> Result<Vec<Range<u64>>> {
         let ranges = util::merge_overlapping(ranges);
         if let Some(last) = ranges.last() {
-            if last.end > image_size {
-                return Err(Error::FieldOutOfBounds("ranges"));
-            }
+            util::check_bounds(last.end, ..=image_size)
+                .map_err(|e| Error::IntOutOfBounds("ranges", e))?;
         }
 
         let block_size = u64::from(self.block_size);
@@ -601,21 +600,12 @@ impl<W: Write> ToWriter<W> for HashTreeImage {
             .to_padded_array::<16>()
             .ok_or_else(|| Error::UnsupportedHashAlgorithm(self.algorithm.as_bytes().to_vec()))?;
 
-        let salt_size = self
-            .salt
-            .len()
-            .to_u16()
-            .ok_or_else(|| Error::FieldOutOfBounds("salt_size"))?;
-        let root_digest_size = self
-            .root_digest
-            .len()
-            .to_u16()
-            .ok_or_else(|| Error::FieldOutOfBounds("root_digest_size"))?;
-        let hash_tree_size = self
-            .hash_tree
-            .len()
-            .to_u32()
-            .ok_or_else(|| Error::FieldOutOfBounds("hash_tree_size"))?;
+        let salt_size: u16 =
+            util::try_cast(self.salt.len()).map_err(|e| Error::IntOutOfBounds("salt_size", e))?;
+        let root_digest_size: u16 = util::try_cast(self.root_digest.len())
+            .map_err(|e| Error::IntOutOfBounds("root_digest_size", e))?;
+        let hash_tree_size: u32 = util::try_cast(self.hash_tree.len())
+            .map_err(|e| Error::IntOutOfBounds("hash_tree_size", e))?;
 
         let header = RawHeader {
             magic: *Self::MAGIC,
@@ -676,7 +666,7 @@ mod tests {
         );
         assert_matches!(
             hash_tree.blocks_for_ranges(16384, &[0..16385]),
-            Err(Error::FieldOutOfBounds(_))
+            Err(Error::IntOutOfBounds(_, _))
         );
     }
 

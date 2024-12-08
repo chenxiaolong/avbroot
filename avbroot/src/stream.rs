@@ -10,7 +10,6 @@ use std::{
     },
 };
 
-use bstr::ByteSlice;
 use num_traits::ToPrimitive;
 use ring::digest::Context;
 
@@ -122,23 +121,26 @@ impl<W: Write> WriteZerosExt for W {
     }
 }
 
-/// Extensions for readers to read strings.
-pub trait ReadStringExt {
-    /// Read exact sized string.
-    fn read_string_exact(&mut self, size: usize) -> io::Result<String>;
+/// Extensions for readers to read fixed-size buffers.
+pub trait ReadFixedSizeExt {
+    /// Read fixed-size array.
+    fn read_array_exact<const N: usize>(&mut self) -> io::Result<[u8; N]>;
+
+    /// Read fixed-sized [`Vec`].
+    fn read_vec_exact(&mut self, size: usize) -> io::Result<Vec<u8>>;
 }
 
-impl<R: Read> ReadStringExt for R {
-    fn read_string_exact(&mut self, size: usize) -> io::Result<String> {
+impl<R: Read> ReadFixedSizeExt for R {
+    fn read_array_exact<const N: usize>(&mut self) -> io::Result<[u8; N]> {
+        let mut buf = [0u8; N];
+        self.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    fn read_vec_exact(&mut self, size: usize) -> io::Result<Vec<u8>> {
         let mut buf = vec![0u8; size];
         self.read_exact(&mut buf)?;
-
-        String::from_utf8(buf).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid UTF-8: {:?}: {e}", e.as_bytes().as_bstr()),
-            )
-        })
+        Ok(buf)
     }
 }
 
@@ -641,7 +643,7 @@ mod tests {
 
     use super::{
         CountingReader, CountingWriter, HashingReader, HashingWriter, PSeekFile, ReadDiscardExt,
-        ReadStringExt, Reopen, SectionReader, SharedCursor, WriteZerosExt,
+        Reopen, SectionReader, SharedCursor, WriteZerosExt,
     };
 
     const FOOBAR_SHA256: [u8; 32] = [
@@ -676,14 +678,6 @@ mod tests {
         assert_eq!(n, 1);
 
         assert_eq!(&writer.into_inner(), b"\0\0foo\0");
-    }
-
-    #[test]
-    fn read_string() {
-        let mut reader = Cursor::new(b"foo\0\0bar\0\0");
-
-        assert_eq!(reader.read_string_exact(3).unwrap(), "foo");
-        assert_eq!(reader.read_string_exact(0).unwrap(), "");
     }
 
     #[test]

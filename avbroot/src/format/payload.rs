@@ -17,7 +17,6 @@ use liblzma::{
     write::XzDecoder,
     write::XzEncoder,
 };
-use num_traits::ToPrimitive;
 use prost::Message;
 use rayon::{
     iter::{IndexedParallelIterator, IntoParallelRefMutIterator},
@@ -40,7 +39,7 @@ use crate::{
         self, CountingReader, FromReader, HashingWriter, ReadDiscardExt, ReadSeekReopen, WriteSeek,
         WriteSeekReopen,
     },
-    util,
+    util::{self, OutOfBoundsError},
 };
 
 const PAYLOAD_MAGIC: &[u8; 4] = b"CrAU";
@@ -92,7 +91,9 @@ pub enum Error {
     #[error("{0:?} field is missing")]
     MissingField(&'static str),
     #[error("{0:?} field is out of bounds")]
-    FieldOutOfBounds(&'static str),
+    IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
+    #[error("{0:?} overflowed integer bounds during calculations")]
+    IntOverflow(&'static str),
     #[error("Crypto error")]
     Crypto(#[from] crypto::Error),
     #[error("Failed to decode protobuf message")]
@@ -156,18 +157,9 @@ impl<R: Read> FromReader<R> for PayloadHeader {
             return Err(Error::UnsupportedVersion(header.file_format_version.get()));
         }
 
-        let manifest_size = header
-            .manifest_size
-            .get()
-            .to_usize()
-            .and_then(|s| {
-                if s <= MANIFEST_MAX_SIZE {
-                    Some(s)
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| Error::FieldOutOfBounds("manifest_size"))?;
+        let manifest_size: usize = util::try_cast(header.manifest_size.get())
+            .and_then(|s| util::check_bounds(s, ..=MANIFEST_MAX_SIZE))
+            .map_err(|e| Error::IntOutOfBounds("manifest_size", e))?;
 
         let mut manifest_raw = vec![0u8; manifest_size];
         reader.read_exact(&mut manifest_raw)?;
@@ -702,10 +694,10 @@ pub fn apply_operation(
 
         let out_offset = start_block
             .checked_mul(block_size.into())
-            .ok_or_else(|| Error::FieldOutOfBounds("out_offset"))?;
+            .ok_or_else(|| Error::IntOverflow("out_offset"))?;
         let out_data_length = num_blocks
             .checked_mul(block_size.into())
-            .ok_or_else(|| Error::FieldOutOfBounds("out_data_length"))?;
+            .ok_or_else(|| Error::IntOverflow("out_data_length"))?;
 
         writer.seek(SeekFrom::Start(out_offset))?;
 
@@ -732,7 +724,7 @@ pub fn apply_operation(
                     .ok_or_else(|| Error::MissingField("data_length"))?;
                 let in_offset = blob_offset
                     .checked_add(data_offset)
-                    .ok_or_else(|| Error::FieldOutOfBounds("in_offset"))?;
+                    .ok_or_else(|| Error::IntOverflow("in_offset"))?;
 
                 reader.seek(SeekFrom::Start(in_offset))?;
 
@@ -1167,20 +1159,19 @@ pub fn compress_modified_image(
                 let extents_start = operation.dst_extents[0]
                     .start_block()
                     .checked_mul(u64::from(block_size))
-                    .ok_or_else(|| Error::FieldOutOfBounds("extents_start"))?;
+                    .ok_or_else(|| Error::IntOverflow("extents_start"))?;
                 let extents_size = operation
                     .dst_extents
                     .iter()
                     .map(|e| e.num_blocks())
                     .try_fold(0u64, |acc, n| acc.checked_add(n))
                     .and_then(|n| n.checked_mul(u64::from(block_size)))
-                    .ok_or_else(|| Error::FieldOutOfBounds("extents_size"))?;
+                    .ok_or_else(|| Error::IntOverflow("extents_size"))?;
                 let extents_end = extents_start
                     .checked_add(extents_size)
-                    .ok_or_else(|| Error::FieldOutOfBounds("extents_end"))?;
-                let extents_size = extents_size
-                    .to_usize()
-                    .ok_or_else(|| Error::FieldOutOfBounds("extents_size"))?;
+                    .ok_or_else(|| Error::IntOverflow("extents_end"))?;
+                let extents_size: usize = util::try_cast(extents_size)
+                    .map_err(|e| Error::IntOutOfBounds("extents_size", e))?;
 
                 let mut reader = input.reopen_boxed()?;
                 reader.seek(SeekFrom::Start(extents_start))?;
