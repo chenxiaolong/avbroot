@@ -218,7 +218,7 @@ impl CpioEntryData {
     }
 
     fn is_size(&self) -> bool {
-        matches!(self, CpioEntryData::Size(_))
+        matches!(self, Self::Size(_))
     }
 }
 
@@ -680,7 +680,7 @@ pub fn load(
         stream::check_cancel(cancel_signal)?;
 
         if entry.file_type != CpioEntryType::Directory && entry.nlink > 1 {
-            return Err(Error::HardLinksNotSupported(entry.path.clone()));
+            return Err(Error::HardLinksNotSupported(entry.path));
         }
 
         if let CpioEntryData::Size(s) = entry.data {

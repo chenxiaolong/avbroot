@@ -340,7 +340,13 @@ fn sign_or_clear(info: &mut AvbInfo, orig_header: &Header, key_group: &KeyGroup)
     }
 
     let originally_signed = !info.header.signature.is_empty();
-    let mut sign_action = if originally_signed && &info.header != orig_header {
+    let sign_action = if key_group.force {
+        if key_group.key.is_some() {
+            SignAction::Sign
+        } else {
+            SignAction::Clear
+        }
+    } else if originally_signed && &info.header != orig_header {
         SignAction::Sign
     } else {
         // If the original image was signed, we can preserve the existing
@@ -348,14 +354,6 @@ fn sign_or_clear(info: &mut AvbInfo, orig_header: &Header, key_group: &KeyGroup)
         // signed, then there's nothing to do anyway.
         SignAction::None
     };
-
-    if key_group.force {
-        sign_action = if key_group.key.is_some() {
-            SignAction::Sign
-        } else {
-            SignAction::Clear
-        };
-    }
 
     match sign_action {
         SignAction::None => {
@@ -521,10 +519,7 @@ fn verify_and_repair(
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let _span = debug_span!("image", name = name.unwrap_or_default()).entered();
-    let suffix = match name {
-        Some(n) => format!(" for: {n}"),
-        None => String::new(),
-    };
+    let suffix = name.map_or_else(String::new, |n| format!(" for: {n}"));
 
     match descriptor {
         AppendedDescriptorRef::HashTree(d) => {
@@ -538,7 +533,7 @@ fn verify_and_repair(
                     d.repair(&file, &file, cancel_signal)
                         .with_context(|| format!("Failed to repair data{suffix}"))?;
 
-                    d.verify(&file, cancel_signal).map(|_| {
+                    d.verify(&file, cancel_signal).inspect(|()| {
                         info!("Successfully repaired data{suffix}");
                     })
                 }

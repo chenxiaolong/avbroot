@@ -86,5 +86,5 @@ assert_matches = "1.5.0"
 [features]
 static = ["bzip2/static", "liblzma/static"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+[lints]
+workspace = true

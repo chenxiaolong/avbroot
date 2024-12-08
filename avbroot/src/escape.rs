@@ -66,7 +66,7 @@ where
 {
     struct EscapedStrVisitor<T>(PhantomData<T>);
 
-    impl<'de, T> Visitor<'de> for EscapedStrVisitor<T>
+    impl<T> Visitor<'_> for EscapedStrVisitor<T>
     where
         T: FromEscaped,
         <T as FromEscaped>::Error: fmt::Display,

@@ -351,23 +351,23 @@ mod tests {
 
     #[test]
     fn test_ranges_overlaps() {
-        assert_eq!(ranges_overlaps(&[0..4], &(0..0)), false);
-        assert_eq!(ranges_overlaps(&[0..4], &(0..4)), true);
-        assert_eq!(ranges_overlaps(&[0..4], &(1..4)), true);
-        assert_eq!(ranges_overlaps(&[0..4], &(0..3)), true);
-        assert_eq!(ranges_overlaps(&[0..4], &(4..5)), false);
-        assert_eq!(ranges_overlaps(&[5..8], &(5..9)), true);
-        assert_eq!(ranges_overlaps(&[5..8], &(4..8)), true);
-        assert_eq!(ranges_overlaps(&[5..8], &(4..9)), true);
-        assert_eq!(ranges_overlaps(&[0..4, 5..8], &(4..5)), true);
-        assert_eq!(ranges_overlaps(&[0..4, 5..8], &(0..9)), true);
+        assert!(!ranges_overlaps(&[0..4], &(0..0)));
+        assert!(ranges_overlaps(&[0..4], &(0..4)));
+        assert!(ranges_overlaps(&[0..4], &(1..4)));
+        assert!(ranges_overlaps(&[0..4], &(0..3)));
+        assert!(!ranges_overlaps(&[0..4], &(4..5)));
+        assert!(ranges_overlaps(&[5..8], &(5..9)));
+        assert!(ranges_overlaps(&[5..8], &(4..8)));
+        assert!(ranges_overlaps(&[5..8], &(4..9)));
+        assert!(ranges_overlaps(&[0..4, 5..8], &(4..5)));
+        assert!(ranges_overlaps(&[0..4, 5..8], &(0..9)));
     }
 
     #[test]
     fn test_ranges_contains() {
-        assert_eq!(ranges_contains(&[0..4], &0), true);
-        assert_eq!(ranges_contains(&[0..4], &4), false);
-        assert_eq!(ranges_contains(&[0..4, 5..8], &4), false);
-        assert_eq!(ranges_contains(&[0..4, 5..8], &6), true);
+        assert!(ranges_contains(&[0..4], &0));
+        assert!(!ranges_contains(&[0..4], &4));
+        assert!(!ranges_contains(&[0..4, 5..8], &4));
+        assert!(ranges_contains(&[0..4, 5..8], &6));
     }
 }

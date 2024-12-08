@@ -189,7 +189,7 @@ impl HashTree {
         cancel_signal: &AtomicBool,
     ) -> io::Result<()> {
         assert!(
-            size > self.block_size as u64,
+            size > u64::from(self.block_size),
             "Images smaller than block size must use a normal hash",
         );
 
@@ -329,7 +329,7 @@ impl HashTree {
         cancel_signal: &AtomicBool,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
         let offsets = self.compute_level_offsets(image_size)?;
-        let hash_tree_size = offsets.first().map(|r| r.end).unwrap_or(0);
+        let hash_tree_size = offsets.first().map_or(0, |r| r.end);
         let mut hash_tree_data = vec![0u8; hash_tree_size];
 
         let root_digest = self.calculate(
@@ -355,7 +355,7 @@ impl HashTree {
         cancel_signal: &AtomicBool,
     ) -> Result<Vec<u8>> {
         let offsets = self.compute_level_offsets(image_size)?;
-        let hash_tree_size = offsets.first().map(|r| r.end).unwrap_or(0);
+        let hash_tree_size = offsets.first().map_or(0, |r| r.end);
         if hash_tree_data.len() != hash_tree_size {
             return Err(Error::InvalidHashTreeSize {
                 input: image_size,
@@ -384,7 +384,7 @@ impl HashTree {
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         let offsets = self.compute_level_offsets(image_size)?;
-        let hash_tree_size = offsets.first().map(|r| r.end).unwrap_or(0);
+        let hash_tree_size = offsets.first().map_or(0, |r| r.end);
         if hash_tree_data.len() != hash_tree_size {
             return Err(Error::InvalidHashTreeSize {
                 input: image_size,
@@ -468,6 +468,7 @@ pub struct HashTreeImage {
 impl fmt::Debug for HashTreeImage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HashTreeImage")
+            .field("image_size", &self.image_size)
             .field("block_size", &self.block_size)
             .field("algorithm", &self.algorithm)
             .field("salt", &hex::encode(&self.salt))

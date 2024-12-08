@@ -153,13 +153,13 @@ pub trait Reopen: Sized {
 
 impl<R: Read + Reopen> Reopen for BufReader<R> {
     fn reopen(&self) -> io::Result<Self> {
-        Ok(BufReader::new(self.get_ref().reopen()?))
+        Ok(Self::new(self.get_ref().reopen()?))
     }
 }
 
 impl<W: Write + Reopen> Reopen for BufWriter<W> {
     fn reopen(&self) -> io::Result<Self> {
-        Ok(BufWriter::new(self.get_ref().reopen()?))
+        Ok(Self::new(self.get_ref().reopen()?))
     }
 }
 
@@ -499,9 +499,7 @@ pub struct SharedCursor {
 
 impl SharedCursor {
     pub fn new() -> Self {
-        Self {
-            ..Default::default()
-        }
+        Self::default()
     }
 }
 

@@ -1,3 +1,6 @@
+#![allow(clippy::nursery)]
+#![allow(clippy::pedantic)]
+
 pub mod build {
     pub mod tools {
         pub mod releasetools {

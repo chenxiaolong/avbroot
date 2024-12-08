@@ -28,7 +28,7 @@ use crate::{
 
 struct CompactView<'a, T>(&'a [T]);
 
-impl<'a, T: fmt::Debug> fmt::Debug for CompactView<'a, T> {
+impl<T: fmt::Debug> fmt::Debug for CompactView<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut list = f.debug_list();
 
@@ -110,7 +110,7 @@ fn split_chunks(chunks: &[Chunk], block_size: u32) -> Vec<Chunk> {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn find_allocated_regions(
     path: &Path,
-    reader: &mut File,
+    reader: &File,
     cancel_signal: &AtomicBool,
 ) -> Result<Vec<Range<u64>>> {
     use rustix::{fs::SeekFrom, io::Errno};
@@ -122,13 +122,13 @@ fn find_allocated_regions(
     loop {
         stream::check_cancel(cancel_signal)?;
 
-        start = match rustix::fs::seek(&*reader, SeekFrom::Data(end as i64)) {
+        start = match rustix::fs::seek(reader, SeekFrom::Data(end as i64)) {
             Ok(offset) => offset,
             Err(e) if e == Errno::NXIO => break,
             Err(e) => return Err(e).with_context(|| format!("Failed to seek to data: {path:?}")),
         };
 
-        end = rustix::fs::seek(&*reader, SeekFrom::Hole(start as i64))
+        end = rustix::fs::seek(reader, SeekFrom::Hole(start as i64))
             .with_context(|| format!("Failed to seek to hole: {path:?}"))?;
 
         result.push(start..end);
@@ -375,7 +375,7 @@ fn pack_subcommand(
     } else {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let regions = find_allocated_regions(&cli.input, &mut reader, cancel_signal)?;
+            let regions = find_allocated_regions(&cli.input, &reader, cancel_signal)?;
 
             (regions, false)
         }

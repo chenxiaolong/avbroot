@@ -586,10 +586,10 @@ impl fmt::Debug for PartitionName {
 
 impl PartitionName {
     fn split(&self) -> (&[u8], &[u8]) {
-        match self.0.iter().position(|b| *b == 0) {
-            Some(i) => self.0.split_at(i),
-            None => (&self.0, &[]),
-        }
+        self.0
+            .iter()
+            .position(|b| *b == 0)
+            .map_or((&self.0, &[]), |i| self.0.split_at(i))
     }
 
     fn validate(&self) -> Result<()> {
@@ -1071,18 +1071,15 @@ impl RawMetadata {
 
                 let mut geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
 
-                match geometry.validate() {
-                    Ok(_) => {
-                        // Skip the backup copy.
-                        reader.read_discard_exact(GEOMETRY_SIZE.into())?;
-                    }
-                    Err(_) => {
-                        // Try to parse the backup copy.
-                        reader.read_exact(&mut buf)?;
+                if geometry.validate().is_ok() {
+                    // Skip the backup copy.
+                    reader.read_discard_exact(GEOMETRY_SIZE.into())?;
+                } else {
+                    // Try to parse the backup copy.
+                    reader.read_exact(&mut buf)?;
 
-                        geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
-                        geometry.validate()?;
-                    }
+                    geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
+                    geometry.validate()?;
                 }
 
                 geometry

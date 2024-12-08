@@ -97,7 +97,7 @@ impl Codeword {
         &mut self.data[..usize::from(self.rs_k)]
     }
 
-    fn parity(&mut self) -> &[u8] {
+    fn parity(&self) -> &[u8] {
         &self.data[usize::from(self.rs_k)..]
     }
 

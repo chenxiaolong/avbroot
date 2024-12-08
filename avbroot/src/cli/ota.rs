@@ -8,7 +8,6 @@ use std::{
     fmt::Display,
     fs::{self, File},
     io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    mem,
     ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Mutex},
@@ -193,7 +192,7 @@ fn open_input_files(
 fn patch_boot_images<'a, 'b: 'a>(
     required_images: &'b RequiredImages,
     input_files: &mut HashMap<String, InputFile>,
-    boot_patchers: Vec<Box<dyn BootImagePatch + Sync>>,
+    boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     key_avb: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
@@ -219,7 +218,7 @@ fn patch_boot_images<'a, 'b: 'a>(
             WriteSeekReopen::reopen_boxed(&input_file.file)
         },
         key_avb,
-        &boot_patchers,
+        boot_patchers,
         cancel_signal,
     )
     .with_context(|| {
@@ -348,7 +347,7 @@ fn ensure_partitions_protected(
 /// determine the order to patch the vbmeta images so that it can be done in a
 /// single pass.
 fn get_vbmeta_patch_order(
-    images: &mut HashMap<String, InputFile>,
+    images: &HashMap<String, InputFile>,
     vbmeta_headers: &HashMap<String, Header>,
 ) -> Result<Vec<(String, HashSet<String>)>> {
     let mut dep_graph = HashMap::<&str, HashSet<String>>::new();
@@ -722,7 +721,7 @@ fn patch_ota_payload(
     payload: &(dyn ReadSeekReopen + Sync),
     writer: impl Write,
     external_images: &HashMap<String, PathBuf>,
-    boot_patchers: Vec<Box<dyn BootImagePatch + Sync>>,
+    boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     clear_vbmeta_flags: bool,
     key_avb: &RsaSigningKey,
     key_ota: &RsaSigningKey,
@@ -794,7 +793,7 @@ fn patch_ota_payload(
 
     ensure_partitions_protected(&required_images, &vbmeta_headers)?;
 
-    let mut vbmeta_order = get_vbmeta_patch_order(&mut input_files, &vbmeta_headers)?;
+    let mut vbmeta_order = get_vbmeta_patch_order(&input_files, &vbmeta_headers)?;
 
     info!(
         "Patching vbmeta images: {}",
@@ -914,7 +913,7 @@ fn patch_ota_zip(
     zip_reader: &mut ZipArchive<impl Read + Seek>,
     mut zip_writer: &mut ZipWriter<impl Write>,
     external_images: &HashMap<String, PathBuf>,
-    mut boot_patchers: Vec<Box<dyn BootImagePatch + Sync>>,
+    boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     clear_vbmeta_flags: bool,
     zip_mode: ZipMode,
     key_avb: &RsaSigningKey,
@@ -1036,8 +1035,7 @@ fn patch_ota_zip(
                     &payload_reader,
                     &mut writer,
                     external_images,
-                    // There's only one payload in the OTA.
-                    mem::take(&mut boot_patchers),
+                    boot_patchers,
                     clear_vbmeta_flags,
                     key_avb,
                     key_ota,
@@ -1347,7 +1345,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &mut zip_reader,
         &mut zip_writer,
         &external_images,
-        boot_patchers,
+        &boot_patchers,
         cli.clear_vbmeta_flags,
         cli.zip_mode,
         &key_avb,
@@ -1633,7 +1631,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         );
     } else if let Some(p) = &cli.cert_ota {
         let verify_cert = crypto::read_pem_cert_file(p)
-            .with_context(|| format!("Failed to load certificate: {:?}", p))?;
+            .with_context(|| format!("Failed to load certificate: {p:?}"))?;
 
         if embedded_cert != verify_cert {
             bail!("OTA has a valid signature, but was not signed with: {p:?}");

@@ -534,27 +534,24 @@ impl HashTreeDescriptor {
             let parity: u8 = util::try_cast(self.fec_num_roots)
                 .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::fec_num_roots", e))?;
 
-            let fec_data = match ranges {
-                Some(r) => {
-                    let mut r_with_hash_tree = r.to_vec();
-                    r_with_hash_tree.push(self.tree_offset..self.tree_offset + tree_size);
+            let fec_data = if let Some(r) = ranges {
+                let mut r_with_hash_tree = r.to_vec();
+                r_with_hash_tree.push(self.tree_offset..self.tree_offset + tree_size);
 
-                    let (fec, fec_size) = self.get_fec()?;
+                let (fec, fec_size) = self.get_fec()?;
 
-                    let mut reader = input.reopen_boxed()?;
-                    reader.seek(SeekFrom::Start(self.fec_offset))?;
+                let mut reader = input.reopen_boxed()?;
+                reader.seek(SeekFrom::Start(self.fec_offset))?;
 
-                    let mut fec_data = reader.read_vec_exact(fec_size)?;
+                let mut fec_data = reader.read_vec_exact(fec_size)?;
 
-                    fec.update(input, &r_with_hash_tree, &mut fec_data, cancel_signal)?;
+                fec.update(input, &r_with_hash_tree, &mut fec_data, cancel_signal)?;
 
-                    fec_data
-                }
-                None => {
-                    // The FEC covers the hash tree as well.
-                    let fec = Fec::new(self.image_size + tree_size, self.data_block_size, parity)?;
-                    fec.generate(input, cancel_signal)?
-                }
+                fec_data
+            } else {
+                // The FEC covers the hash tree as well.
+                let fec = Fec::new(self.image_size + tree_size, self.data_block_size, parity)?;
+                fec.generate(input, cancel_signal)?
             };
 
             // Already seeked to FEC.

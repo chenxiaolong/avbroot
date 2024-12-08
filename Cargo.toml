@@ -8,3 +8,11 @@ version = "3.9.0"
 license = "GPL-3.0-only"
 edition = "2021"
 repository = "https://github.com/chenxiaolong/avbroot"
+
+[workspace.lints.clippy]
+cast_lossless = "deny"
+missing_fields_in_debug = "warn"
+redundant_clone = "deny"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }

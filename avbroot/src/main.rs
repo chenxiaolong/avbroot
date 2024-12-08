@@ -26,7 +26,7 @@ fn main() -> ExitCode {
     }
 
     match avbroot::cli::args::main(&LOGGING_INITIALIZED, &cancel_signal) {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             if LOGGING_INITIALIZED.load(Ordering::SeqCst) {
                 error!("{e:?}");

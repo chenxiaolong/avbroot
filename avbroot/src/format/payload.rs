@@ -218,7 +218,7 @@ fn verify_digest(digest: &[u8], signatures: &Signatures, cert: &Certificate) -> 
         let without_padding = &data[..size];
 
         match public_key.verify_sig(SignatureAlgorithm::Sha256WithRsa, digest, without_padding) {
-            Ok(_) => return Ok(()),
+            Ok(()) => return Ok(()),
             Err(e) => last_error = Some(e),
         }
     }
@@ -902,7 +902,7 @@ impl VabcAlgo {
         }
     }
 
-    fn compressed_size(&self, mut raw_data: &[u8], block_size: u32) -> u64 {
+    fn compressed_size(self, mut raw_data: &[u8], block_size: u32) -> u64 {
         let mut total = 0;
 
         while !raw_data.is_empty() {
@@ -1011,11 +1011,8 @@ pub fn compress_image(
             .map(
                 |(raw_offset, raw_data)| -> Result<(Vec<u8>, InstallOperation, u64)> {
                     let (data, digest_compressed) = compress_chunk(&raw_data, cancel_signal)?;
-                    let cow_size = if let Some(algo) = vabc_algo {
-                        algo.compressed_size(&raw_data, block_size)
-                    } else {
-                        0
-                    };
+                    let cow_size =
+                        vabc_algo.map_or(0, |a| a.compressed_size(&raw_data, block_size));
 
                     let extent = Extent {
                         start_block: Some(raw_offset / u64::from(block_size)),

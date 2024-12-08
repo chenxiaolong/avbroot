@@ -28,7 +28,7 @@ where
 {
     struct OctalStrVisitor<T>(PhantomData<T>);
 
-    impl<'de, T> Visitor<'de> for OctalStrVisitor<T>
+    impl<T> Visitor<'_> for OctalStrVisitor<T>
     where
         T: PrimInt,
         <T as Num>::FromStrRadixErr: fmt::Display,

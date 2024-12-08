@@ -16,3 +16,6 @@ publish = false
 [target.'cfg(unix)'.dependencies]
 avbroot = { path = "../avbroot" }
 honggfuzz = "0.5.55"
+
+[lints]
+workspace = true

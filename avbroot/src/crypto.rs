@@ -235,8 +235,8 @@ impl RsaSigningKey {
     /// Get the public key portion of the signing key.
     pub fn to_public_key(&self) -> RsaPublicKey {
         match self {
-            RsaSigningKey::Internal(key) => key.to_public_key(),
-            RsaSigningKey::External { public_key, .. } => public_key.clone(),
+            Self::Internal(key) => key.to_public_key(),
+            Self::External { public_key, .. } => public_key.clone(),
         }
     }
 

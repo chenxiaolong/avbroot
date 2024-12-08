@@ -135,7 +135,7 @@ pub fn parse_legacy_metadata(data: &str) -> Result<OtaMetadata> {
             }
             "ota-wipe" => metadata.wipe = parse_yes()?,
             "ota-retrofit-dynamic-partitions" => {
-                metadata.retrofit_dynamic_partitions = parse_yes()?
+                metadata.retrofit_dynamic_partitions = parse_yes()?;
             }
             "ota-downgrade" => metadata.downgrade = parse_yes()?,
             "ota-required-cache" => {
@@ -190,7 +190,7 @@ pub fn parse_legacy_metadata(data: &str) -> Result<OtaMetadata> {
 
 /// Generate the legacy plain-text and modern protobuf serializations of the
 /// given metadata instance.
-fn serialize_metadata(metadata: &OtaMetadata) -> Result<(String, Vec<u8>)> {
+fn serialize_metadata(metadata: &OtaMetadata) -> (String, Vec<u8>) {
     use std::fmt::Write;
 
     let mut pairs = BTreeMap::<String, String>::new();
@@ -254,7 +254,7 @@ fn serialize_metadata(metadata: &OtaMetadata) -> Result<(String, Vec<u8>)> {
     });
     let modern_metadata = metadata.encode_to_vec();
 
-    Ok((legacy_metadata, modern_metadata))
+    (legacy_metadata, modern_metadata)
 }
 
 #[derive(Clone, Debug)]
@@ -426,7 +426,7 @@ pub fn add_metadata(
 
     // Add the placeholders to a temporary zip to compute final property files.
     let (temp_legacy_offset, temp_modern_offset) = {
-        let (legacy_raw, modern_raw) = serialize_metadata(&metadata)?;
+        let (legacy_raw, modern_raw) = serialize_metadata(&metadata);
         let raw_writer = Cursor::new(Vec::new());
         let mut writer = match zip_mode {
             ZipMode::Streaming => ZipWriter::new_streaming(raw_writer),
@@ -462,7 +462,7 @@ pub fn add_metadata(
 
     // Add the final metadata files to the real zip.
     {
-        let (legacy_raw, modern_raw) = serialize_metadata(&metadata)?;
+        let (legacy_raw, modern_raw) = serialize_metadata(&metadata);
 
         zip_writer.start_file_with_extra_data(PATH_METADATA, options)?;
         let legacy_offset = zip_writer.end_extra_data()?;

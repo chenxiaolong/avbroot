@@ -32,3 +32,6 @@ default-features = false
 
 [features]
 static = ["avbroot/static"]
+
+[lints]
+workspace = true

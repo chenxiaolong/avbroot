@@ -610,7 +610,6 @@ impl OtaCertPatcher {
     }
 
     fn patch_ramdisk(
-        &self,
         ramdisk: &mut Vec<u8>,
         zip: &[u8],
         cancel_signal: &AtomicBool,
@@ -681,7 +680,7 @@ impl BootImagePatch for OtaCertPatcher {
                 continue;
             }
 
-            if self.patch_ramdisk(ramdisk, &new_zip, cancel_signal)? {
+            if Self::patch_ramdisk(ramdisk, &new_zip, cancel_signal)? {
                 return Ok(());
             }
         }
@@ -794,7 +793,7 @@ impl BootImagePatch for DsuPubKeyPatcher {
             // For builds that don't trust any DSU keys, pick the first boot
             // image that contains a first stage ramdisk directory.
             if !first_stage_targets.is_empty() {
-                first_stage_targets.sort();
+                first_stage_targets.sort_unstable();
                 first_stage_targets.resize(1, "");
             }
 
@@ -1228,5 +1227,5 @@ pub fn patch_boot_images<'a>(
         })
         .collect::<Result<()>>()?;
 
-    Ok(groups.keys().cloned().collect())
+    Ok(groups.keys().copied().collect())
 }

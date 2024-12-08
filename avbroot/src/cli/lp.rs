@@ -129,22 +129,19 @@ fn split_extents(extents: &[Extent]) -> Vec<CopyExtent> {
 /// Use the CLI-specified slot or automatically select one if all slots are
 /// identical.
 fn get_slot_number(metadata: &Metadata, cli_slot: Option<u32>) -> Result<usize> {
-    match cli_slot {
-        Some(n) => {
-            let n = n as usize;
-            if n >= metadata.slots.len() {
-                bail!("Slot out of range: {n}");
-            }
-
-            Ok(n)
+    if let Some(n) = cli_slot {
+        let n = n as usize;
+        if n >= metadata.slots.len() {
+            bail!("Slot out of range: {n}");
         }
-        None => {
-            if metadata.slots.windows(2).any(|w| w[0] != w[1]) {
-                bail!("A slot must be specified because they are not all identical");
-            }
 
-            Ok(0)
+        Ok(n)
+    } else {
+        if metadata.slots.windows(2).any(|w| w[0] != w[1]) {
+            bail!("A slot must be specified because they are not all identical");
         }
+
+        Ok(0)
     }
 }
 
