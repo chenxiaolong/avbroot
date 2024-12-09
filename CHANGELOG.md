@@ -11,7 +11,7 @@
 
 * Switch to using zerocopy library for all binary file format parsers ([PR #384])
 * Update to latest AOSP protobuf schema for the `payload.bin` metadata file format ([PR #385])
-* Update dependencies and pin Github Actions actions to specific commits ([PR #386])
+* Update dependencies and pin Github Actions actions to specific commits ([PR #386], [PR #392])
 * Improve error messages from file format parsers ([PR #390])
 * Add support for Magisk 28100 ([PR #391])
 
@@ -409,3 +409,4 @@ Behind-the-scenes changes:
 [PR #386]: https://github.com/chenxiaolong/avbroot/pull/386
 [PR #390]: https://github.com/chenxiaolong/avbroot/pull/390
 [PR #391]: https://github.com/chenxiaolong/avbroot/pull/391
+[PR #392]: https://github.com/chenxiaolong/avbroot/pull/392
