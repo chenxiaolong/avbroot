@@ -8,7 +8,7 @@ use std::{
     fs::File,
     io::{self, BufRead, BufReader, Cursor, Read, Seek},
     num::ParseIntError,
-    ops::Range,
+    ops::{Range, RangeFrom},
     path::{Path, PathBuf},
     slice,
     sync::atomic::AtomicBool,
@@ -152,13 +152,13 @@ impl MagiskRootPatcher {
     //   RULESDEVICE config option, which stored the writable block device as an
     //   rdev major/minor pair, which was not consistent across reboots and was
     //   replaced by PREINITDEVICE
+    // - Versions newer than the latest supported version are assumed to support
+    //   the same features as the latest version
     const VERS_SUPPORTED: &'static [Range<u32>] = &[25102..25207, 25211..28200];
-    const VER_PREINIT_DEVICE: Range<u32> =
-        25211..Self::VERS_SUPPORTED[Self::VERS_SUPPORTED.len() - 1].end;
+    const VER_PREINIT_DEVICE: RangeFrom<u32> = 25211..;
     const VER_RANDOM_SEED: Range<u32> = 25211..26103;
     const VER_PATCH_VBMETA: Range<u32> = Self::VERS_SUPPORTED[0].start..26202;
-    const VER_XZ_BACKUP: Range<u32> =
-        26403..Self::VERS_SUPPORTED[Self::VERS_SUPPORTED.len() - 1].end;
+    const VER_XZ_BACKUP: RangeFrom<u32> = 26403..;
 
     const ZIP_INIT_LD: &'static str = "lib/arm64-v8a/libinit-ld.so";
     const ZIP_LIBMAGISK: &'static str = "lib/arm64-v8a/libmagisk.so";
@@ -499,7 +499,7 @@ impl BootImagePatch for MagiskRootPatcher {
 
         if Self::VER_PREINIT_DEVICE.contains(&self.version) {
             if let Some(device) = &self.preinit_device {
-                write!(&mut magisk_config, "PREINITDEVICE={device}\n").unwrap();
+                writeln!(&mut magisk_config, "PREINITDEVICE={device}").unwrap();
             }
         }
 
@@ -510,7 +510,7 @@ impl BootImagePatch for MagiskRootPatcher {
         magisk_config.push_str("SHA1=0000000000000000000000000000000000000000\n");
 
         if Self::VER_RANDOM_SEED.contains(&self.version) {
-            write!(&mut magisk_config, "RANDOMSEED={:#x}\n", self.random_seed).unwrap();
+            writeln!(&mut magisk_config, "RANDOMSEED={:#x}", self.random_seed).unwrap();
         }
 
         trace!("Magisk config: {magisk_config:?}");
