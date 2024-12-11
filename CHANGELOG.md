@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Fix crash when ignoring warning about `--magisk-preinit-device` not being specified ([PR #394])
+* When using `--ignore-magisk-warnings`, assume that unsupported Magisk versions newer than the latest supported version are capable of all features ([Issue #393], [PR #395])
 
 ### Version 3.10.0
 
@@ -288,6 +289,7 @@ Behind-the-scenes changes:
 [Issue #332]: https://github.com/chenxiaolong/avbroot/issues/332
 [Issue #356]: https://github.com/chenxiaolong/avbroot/issues/356
 [Issue #366]: https://github.com/chenxiaolong/avbroot/issues/366
+[Issue #393]: https://github.com/chenxiaolong/avbroot/issues/393
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -415,3 +417,4 @@ Behind-the-scenes changes:
 [PR #391]: https://github.com/chenxiaolong/avbroot/pull/391
 [PR #392]: https://github.com/chenxiaolong/avbroot/pull/392
 [PR #394]: https://github.com/chenxiaolong/avbroot/pull/394
+[PR #395]: https://github.com/chenxiaolong/avbroot/pull/395
