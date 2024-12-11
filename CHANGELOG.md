@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix crash when ignoring warning about `--magisk-preinit-device` not being specified ([PR #394])
+
 ### Version 3.10.0
 
 * Switch to using zerocopy library for all binary file format parsers ([PR #384])
@@ -410,3 +414,4 @@ Behind-the-scenes changes:
 [PR #390]: https://github.com/chenxiaolong/avbroot/pull/390
 [PR #391]: https://github.com/chenxiaolong/avbroot/pull/391
 [PR #392]: https://github.com/chenxiaolong/avbroot/pull/392
+[PR #394]: https://github.com/chenxiaolong/avbroot/pull/394
