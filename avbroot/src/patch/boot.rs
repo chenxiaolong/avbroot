@@ -4,6 +4,7 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
+    fmt::Write,
     fs::File,
     io::{self, BufRead, BufReader, Cursor, Read, Seek},
     num::ParseIntError,
@@ -497,10 +498,9 @@ impl BootImagePatch for MagiskRootPatcher {
         magisk_config.push_str("RECOVERYMODE=false\n");
 
         if Self::VER_PREINIT_DEVICE.contains(&self.version) {
-            magisk_config.push_str(&format!(
-                "PREINITDEVICE={}\n",
-                self.preinit_device.as_ref().unwrap(),
-            ));
+            if let Some(device) = &self.preinit_device {
+                write!(&mut magisk_config, "PREINITDEVICE={device}\n").unwrap();
+            }
         }
 
         // Magisk normally saves the original SHA1 digest in its config file. It
@@ -510,7 +510,7 @@ impl BootImagePatch for MagiskRootPatcher {
         magisk_config.push_str("SHA1=0000000000000000000000000000000000000000\n");
 
         if Self::VER_RANDOM_SEED.contains(&self.version) {
-            magisk_config.push_str(&format!("RANDOMSEED={:#x}\n", self.random_seed));
+            write!(&mut magisk_config, "RANDOMSEED={:#x}\n", self.random_seed).unwrap();
         }
 
         trace!("Magisk config: {magisk_config:?}");
