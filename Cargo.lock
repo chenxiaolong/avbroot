@@ -234,17 +234,18 @@ checksum = "325918d6fe32f23b19878fe4b34794ae41fc19ddbe53b10571a4874d44ffd39b"
 
 [[package]]
 name = "bzip2"
-version = "0.4.4"
-source = "git+https://github.com/chenxiaolong/bzip2-rs?rev=6e0f9836ec87b19261461b6cc1772e14aff8e851#6e0f9836ec87b19261461b6cc1772e14aff8e851"
+version = "0.5.0"
+source = "git+https://github.com/chenxiaolong/bzip2-rs?rev=554b916bf68d246fe20b4c7da509d8a3c4e66e5f#554b916bf68d246fe20b4c7da509d8a3c4e66e5f"
 dependencies = [
  "bzip2-sys",
+ "libbz2-rs-sys",
  "libc",
 ]
 
 [[package]]
 name = "bzip2-sys"
 version = "0.1.11+1.0.8"
-source = "git+https://github.com/chenxiaolong/bzip2-rs?rev=6e0f9836ec87b19261461b6cc1772e14aff8e851#6e0f9836ec87b19261461b6cc1772e14aff8e851"
+source = "git+https://github.com/chenxiaolong/bzip2-rs?rev=554b916bf68d246fe20b4c7da509d8a3c4e66e5f#554b916bf68d246fe20b4c7da509d8a3c4e66e5f"
 dependencies = [
  "cc",
  "libc",
@@ -827,6 +828,12 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
  "spin",
 ]
+
+[[package]]
+name = "libbz2-rs-sys"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55bbb91f13e5136d00496b884cdb605fb983d6f964c8735bc5837d1c98550fd5"
 
 [[package]]
 name = "libc"

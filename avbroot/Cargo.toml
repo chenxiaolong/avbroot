@@ -57,12 +57,12 @@ x509-cert = { version = "0.2.4", features = ["builder"] }
 zerocopy = { version = "0.8.10", features = ["std"] }
 zerocopy-derive = "0.8.5"
 
-# There are multiple upstream bugs that cause infinite loops in the Drop
-# implementation of write::BzDecoder. Unfortunately, the project is no longer
-# maintained, so we have to maintain our own fork with the necessary fixes.
+# https://github.com/trifectatechfoundation/bzip2-rs/pull/118
 [dependencies.bzip2]
 git = "https://github.com/chenxiaolong/bzip2-rs"
-rev = "6e0f9836ec87b19261461b6cc1772e14aff8e851"
+rev = "554b916bf68d246fe20b4c7da509d8a3c4e66e5f"
+default-features = false
+features = ["libbz2-rs-sys"]
 
 # https://github.com/zip-rs/zip/pull/383
 [dependencies.zip]
