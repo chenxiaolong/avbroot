@@ -11,6 +11,7 @@
 
 * Fix crash when ignoring warning about `--magisk-preinit-device` not being specified ([PR #394])
 * When using `--ignore-magisk-warnings`, assume that unsupported Magisk versions newer than the latest supported version are capable of all features ([Issue #393], [PR #395])
+* Rebase our fork of bzip2-rs on top of v0.5.0 and switch to the Rust backend ([PR #397])
 
 ### Version 3.10.0
 
@@ -418,3 +419,4 @@ Behind-the-scenes changes:
 [PR #392]: https://github.com/chenxiaolong/avbroot/pull/392
 [PR #394]: https://github.com/chenxiaolong/avbroot/pull/394
 [PR #395]: https://github.com/chenxiaolong/avbroot/pull/395
+[PR #397]: https://github.com/chenxiaolong/avbroot/pull/397
