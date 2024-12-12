@@ -4,7 +4,9 @@
 use std::{
     cmp::Ordering,
     fmt, mem,
-    ops::{Bound, Range, RangeBounds},
+    ops::{
+        Bound, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
+    },
     path::Path,
 };
 
@@ -43,59 +45,118 @@ impl fmt::Debug for DebugString {
     }
 }
 
-/// A single bound in a range.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IntBound<T: PrimInt> {
-    Included(T),
-    Excluded(T),
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub enum AnyRange<T> {
+    Range(Range<T>),
+    RangeFrom(RangeFrom<T>),
+    RangeFull(RangeFull),
+    RangeInclusive(RangeInclusive<T>),
+    RangeTo(RangeTo<T>),
+    RangeToInclusive(RangeToInclusive<T>),
 }
 
-/// A bounded primitive integer range. Unlike std's range types, this is a
-/// single type that can represent open, closed, and half-open intervals.
-#[derive(Clone, Copy, Debug)]
-pub struct IntRange<T: PrimInt> {
-    pub start: IntBound<T>,
-    pub end: IntBound<T>,
-}
-
-impl<T: PrimInt> IntRange<T> {
-    /// Returns [`None`] if the range bounds cannot be represented by `T`. If
-    /// the start and end of `range` are unbounded, then it gets converted to
-    /// [`IntBound::Included`] with `N`'s minimum or maximum value.
-    pub fn new<N: PrimInt, R: RangeBounds<N>>(range: R) -> Option<Self> {
-        let start = match range.start_bound() {
-            Bound::Included(n) => IntBound::Included(T::from(*n)?),
-            Bound::Excluded(n) => IntBound::Excluded(T::from(*n)?),
-            Bound::Unbounded => IntBound::Included(T::from(N::min_value())?),
+impl<T> AnyRange<T> {
+    pub fn with_bounds(start: Bound<T>, end: Bound<T>) -> Option<Self> {
+        let result = match (start, end) {
+            (Bound::Included(s), Bound::Excluded(e)) => Self::Range(s..e),
+            (Bound::Included(s), Bound::Unbounded) => Self::RangeFrom(s..),
+            (Bound::Unbounded, Bound::Unbounded) => Self::RangeFull(..),
+            (Bound::Included(s), Bound::Included(e)) => Self::RangeInclusive(s..=e),
+            (Bound::Unbounded, Bound::Excluded(e)) => Self::RangeTo(..e),
+            (Bound::Unbounded, Bound::Included(e)) => Self::RangeToInclusive(..=e),
+            (Bound::Excluded(_), _) => return None,
         };
 
-        let end = match range.end_bound() {
-            Bound::Included(n) => IntBound::Included(T::from(*n)?),
-            Bound::Excluded(n) => IntBound::Excluded(T::from(*n)?),
-            Bound::Unbounded => IntBound::Included(T::from(N::max_value())?),
-        };
-
-        Some(Self { start, end })
+        Some(result)
     }
 }
 
-impl<T: PrimInt + fmt::Display> fmt::Display for IntRange<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.start {
-            IntBound::Included(n) => write!(f, "[{n}, ")?,
-            IntBound::Excluded(n) => write!(f, "({n}, ")?,
-        }
+impl<T: PartialOrd<T>> AnyRange<T> {
+    pub fn contains<U>(&self, item: &U) -> bool
+    where
+        T: PartialOrd<U>,
+        U: ?Sized + PartialOrd<T>,
+    {
+        <Self as RangeBounds<T>>::contains(self, item)
+    }
+}
 
-        match self.end {
-            IntBound::Included(n) => write!(f, "{n}]"),
-            IntBound::Excluded(n) => write!(f, "{n})"),
+impl<T: fmt::Debug> fmt::Debug for AnyRange<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Range(r) => r.fmt(f),
+            Self::RangeFrom(r) => r.fmt(f),
+            Self::RangeFull(r) => r.fmt(f),
+            Self::RangeInclusive(r) => r.fmt(f),
+            Self::RangeTo(r) => r.fmt(f),
+            Self::RangeToInclusive(r) => r.fmt(f),
         }
+    }
+}
+
+impl<T> RangeBounds<T> for AnyRange<T> {
+    fn start_bound(&self) -> Bound<&T> {
+        match self {
+            Self::Range(r) => r.start_bound(),
+            Self::RangeFrom(r) => r.start_bound(),
+            Self::RangeFull(r) => r.start_bound(),
+            Self::RangeInclusive(r) => r.start_bound(),
+            Self::RangeTo(r) => r.start_bound(),
+            Self::RangeToInclusive(r) => r.start_bound(),
+        }
+    }
+
+    fn end_bound(&self) -> Bound<&T> {
+        match self {
+            Self::Range(r) => r.end_bound(),
+            Self::RangeFrom(r) => r.end_bound(),
+            Self::RangeFull(r) => r.end_bound(),
+            Self::RangeInclusive(r) => r.end_bound(),
+            Self::RangeTo(r) => r.end_bound(),
+            Self::RangeToInclusive(r) => r.end_bound(),
+        }
+    }
+}
+
+impl<T> From<Range<T>> for AnyRange<T> {
+    fn from(value: Range<T>) -> Self {
+        Self::Range(value)
+    }
+}
+
+impl<T> From<RangeFrom<T>> for AnyRange<T> {
+    fn from(value: RangeFrom<T>) -> Self {
+        Self::RangeFrom(value)
+    }
+}
+
+impl<T> From<RangeFull> for AnyRange<T> {
+    fn from(value: RangeFull) -> Self {
+        Self::RangeFull(value)
+    }
+}
+
+impl<T> From<RangeInclusive<T>> for AnyRange<T> {
+    fn from(value: RangeInclusive<T>) -> Self {
+        Self::RangeInclusive(value)
+    }
+}
+
+impl<T> From<RangeTo<T>> for AnyRange<T> {
+    fn from(value: RangeTo<T>) -> Self {
+        Self::RangeTo(value)
+    }
+}
+
+impl<T> From<RangeToInclusive<T>> for AnyRange<T> {
+    fn from(value: RangeToInclusive<T>) -> Self {
+        Self::RangeToInclusive(value)
     }
 }
 
 /// A non-generic type that can represent any 64-bit or smaller primitive
 /// integer.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LargeInt {
     Signed(i64),
     Unsigned(u64),
@@ -112,13 +173,13 @@ impl fmt::Display for LargeInt {
 
 /// A non-generic type that can represent any 64-bit or smaller primitive
 /// integer range.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum LargeIntRange {
-    Signed(IntRange<i64>),
-    Unsigned(IntRange<u64>),
+    Signed(AnyRange<i64>),
+    Unsigned(AnyRange<u64>),
 }
 
-impl fmt::Display for LargeIntRange {
+impl fmt::Debug for LargeIntRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Signed(r) => r.fmt(f),
@@ -128,8 +189,8 @@ impl fmt::Display for LargeIntRange {
 }
 
 /// An error returned when a value is not within a specific range.
-#[derive(Clone, Copy, Debug, Error)]
-#[error("Integer value {value} not in bounds: {range}")]
+#[derive(Clone, Debug, Error)]
+#[error("Integer value {value} not in bounds: {range:?}")]
 pub struct OutOfBoundsError {
     value: LargeInt,
     range: LargeIntRange,
@@ -138,7 +199,7 @@ pub struct OutOfBoundsError {
 /// Verify that `value` is within `bounds` and then return `value` if it is.
 pub fn check_bounds<T: PrimInt>(
     value: T,
-    bounds: impl RangeBounds<T>,
+    range: impl Into<AnyRange<T>>,
 ) -> Result<T, OutOfBoundsError> {
     const {
         assert!(
@@ -147,7 +208,9 @@ pub fn check_bounds<T: PrimInt>(
         );
     }
 
-    if !bounds.contains(&value) {
+    let range = range.into();
+
+    if !range.contains(&value) {
         let value = if T::min_value() != T::zero() {
             LargeInt::Signed(NumCast::from(value).unwrap())
         } else {
@@ -155,9 +218,33 @@ pub fn check_bounds<T: PrimInt>(
         };
 
         let range = if T::min_value() != T::zero() {
-            LargeIntRange::Signed(IntRange::new(bounds).unwrap())
+            let start = match range.start_bound() {
+                Bound::Excluded(n) => Bound::Excluded(NumCast::from(*n).unwrap()),
+                Bound::Included(n) => Bound::Included(NumCast::from(*n).unwrap()),
+                Bound::Unbounded => Bound::Unbounded,
+            };
+
+            let end = match range.end_bound() {
+                Bound::Excluded(n) => Bound::Excluded(NumCast::from(*n).unwrap()),
+                Bound::Included(n) => Bound::Included(NumCast::from(*n).unwrap()),
+                Bound::Unbounded => Bound::Unbounded,
+            };
+
+            LargeIntRange::Signed(AnyRange::with_bounds(start, end).unwrap())
         } else {
-            LargeIntRange::Unsigned(IntRange::new(bounds).unwrap())
+            let start = match range.start_bound() {
+                Bound::Excluded(n) => Bound::Excluded(NumCast::from(*n).unwrap()),
+                Bound::Included(n) => Bound::Included(NumCast::from(*n).unwrap()),
+                Bound::Unbounded => Bound::Unbounded,
+            };
+
+            let end = match range.end_bound() {
+                Bound::Excluded(n) => Bound::Excluded(NumCast::from(*n).unwrap()),
+                Bound::Included(n) => Bound::Included(NumCast::from(*n).unwrap()),
+                Bound::Unbounded => Bound::Unbounded,
+            };
+
+            LargeIntRange::Unsigned(AnyRange::with_bounds(start, end).unwrap())
         };
 
         return Err(OutOfBoundsError { value, range });
@@ -184,9 +271,15 @@ pub fn try_cast<T: PrimInt, V: PrimInt>(value: V) -> Result<T, OutOfBoundsError>
         };
 
         let range = if T::min_value() != T::zero() {
-            LargeIntRange::Signed(IntRange::new::<T, _>(..).unwrap())
+            let min = NumCast::from(T::min_value()).unwrap();
+            let max = NumCast::from(T::max_value()).unwrap();
+
+            LargeIntRange::Signed((min..=max).into())
         } else {
-            LargeIntRange::Unsigned(IntRange::new::<T, _>(..).unwrap())
+            let min = NumCast::from(T::min_value()).unwrap();
+            let max = NumCast::from(T::max_value()).unwrap();
+
+            LargeIntRange::Unsigned((min..=max).into())
         };
 
         OutOfBoundsError { value, range }
@@ -287,21 +380,27 @@ where
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
-
     use super::*;
 
     #[test]
-    fn test_int_range() {
-        let range = IntRange::new::<u8, _>(..).unwrap();
-        assert_eq!(range.start, IntBound::Included(u8::MIN));
-        assert_eq!(range.end, IntBound::Included(u8::MAX));
+    fn test_any_range() {
+        let range = AnyRange::with_bounds(Bound::Included(0), Bound::Excluded(1)).unwrap();
+        assert_eq!(range, AnyRange::from(0..1));
 
-        let range = IntRange::<i8>::new(-2i16..2i16).unwrap();
-        assert_eq!(range.start, IntBound::Included(-2));
-        assert_eq!(range.end, IntBound::Excluded(2));
+        let range = AnyRange::with_bounds(Bound::Included(0), Bound::Unbounded).unwrap();
+        assert_eq!(range, AnyRange::from(0..));
 
-        assert!(IntRange::<u8>::new::<u16, _>(..).is_none());
+        let range = AnyRange::<i32>::with_bounds(Bound::Unbounded, Bound::Unbounded).unwrap();
+        assert_eq!(range, AnyRange::from(..));
+
+        let range = AnyRange::with_bounds(Bound::Included(0), Bound::Included(1)).unwrap();
+        assert_eq!(range, AnyRange::from(0..=1));
+
+        let range = AnyRange::with_bounds(Bound::Unbounded, Bound::Excluded(1)).unwrap();
+        assert_eq!(range, AnyRange::from(..1));
+
+        let range = AnyRange::with_bounds(Bound::Unbounded, Bound::Included(1)).unwrap();
+        assert_eq!(range, AnyRange::from(..=1));
     }
 
     #[test]
@@ -313,24 +412,12 @@ mod tests {
         check_bounds(0, -1..=1).unwrap();
 
         let err = check_bounds(i8::MAX, 0..=0).unwrap_err();
-        assert_matches!(err.value, LargeInt::Signed(127));
-        assert_matches!(
-            err.range,
-            LargeIntRange::Signed(IntRange {
-                start: IntBound::Included(0),
-                end: IntBound::Included(0),
-            })
-        );
+        assert_eq!(err.value, LargeInt::Signed(127));
+        assert_eq!(err.range, LargeIntRange::Signed(AnyRange::from(0..=0)));
 
         let err = check_bounds(u8::MAX, 0..=0).unwrap_err();
-        assert_matches!(err.value, LargeInt::Unsigned(255));
-        assert_matches!(
-            err.range,
-            LargeIntRange::Unsigned(IntRange {
-                start: IntBound::Included(0),
-                end: IntBound::Included(0),
-            })
-        );
+        assert_eq!(err.value, LargeInt::Unsigned(255));
+        assert_eq!(err.range, LargeIntRange::Unsigned(AnyRange::from(0..=0)));
     }
 
     #[test]
@@ -339,14 +426,8 @@ mod tests {
         assert_eq!(value, 255);
 
         let err = try_cast::<i8, _>(256u16).unwrap_err();
-        assert_matches!(err.value, LargeInt::Unsigned(256));
-        assert_matches!(
-            err.range,
-            LargeIntRange::Signed(IntRange {
-                start: IntBound::Included(-128),
-                end: IntBound::Included(127),
-            })
-        );
+        assert_eq!(err.value, LargeInt::Unsigned(256));
+        assert_eq!(err.range, LargeIntRange::Signed(AnyRange::from(-128..=127)));
     }
 
     #[test]
