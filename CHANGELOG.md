@@ -11,7 +11,7 @@
 
 * Fix crash when ignoring warning about `--magisk-preinit-device` not being specified ([PR #394])
 * When using `--ignore-magisk-warnings`, assume that unsupported Magisk versions newer than the latest supported version are capable of all features ([Issue #393], [PR #395])
-* Rebase our fork of bzip2-rs on top of v0.5.0 and switch to the Rust backend ([PR #397])
+* Update bzip2-rs and switch to the Rust backend ([PR #397], [PR #402])
 * Minor code cleanup for custom integer range type ([PR #398])
 * Improve errors to make them less ambiguous about what went wrong ([PR #401])
 * Fix bug where a vendor v4 boot image that was truncated in the bootconfig padding section would be accepted as valid ([PR #401])
@@ -425,3 +425,4 @@ Behind-the-scenes changes:
 [PR #397]: https://github.com/chenxiaolong/avbroot/pull/397
 [PR #398]: https://github.com/chenxiaolong/avbroot/pull/398
 [PR #401]: https://github.com/chenxiaolong/avbroot/pull/401
+[PR #402]: https://github.com/chenxiaolong/avbroot/pull/402
