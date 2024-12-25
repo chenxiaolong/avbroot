@@ -103,14 +103,16 @@ pub enum Error {
     UnsupportedRsaPublicExponent(BigUint),
     #[error("AVB binary public key data is too small")]
     BinaryPublicKeyTooSmall,
+    #[error("Invalid RSA modulus: {0}")]
+    InvalidRsaModulus(BigUint, #[source] Box<rsa::Error>),
     #[error("Signature algorithm not supported: {0:?}")]
     UnsupportedAlgorithm(AlgorithmType),
     #[error("Hashing algorithm not supported: {0:?}")]
     UnsupportedHashAlgorithm(String),
-    #[error("Incorrect key size ({bytes}) for algorithm {1:?}", bytes = .0 * 8)]
+    #[error("Incorrect key size ({bits}) for algorithm {1:?}", bits = .0 * 8)]
     IncorrectKeySize(usize, AlgorithmType),
     #[error("RSA key size ({}) is not compatible with any AVB signing algorithm", .0 * 8)]
-    UnsupportedKey(usize),
+    UnsupportedKeySize(usize),
     #[error("Hash tree does not immediately follow image data")]
     HashTreeGap,
     #[error("FEC data does not immediately follow hash tree")]
@@ -125,16 +127,38 @@ pub enum Error {
     TooSmallForHeader(u64),
     #[error("{0} byte image size is too small to fit footer")]
     TooSmallForFooter(u64),
-    #[error("Crypto error")]
-    Crypto(#[from] crypto::Error),
-    #[error("Hash tree error")]
-    HashTree(#[from] hashtree::Error),
-    #[error("FEC error")]
-    Fec(#[from] fec::Error),
-    #[error("RSA error")]
-    Rsa(#[from] rsa::Error),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("Failed to sign AVB header")]
+    HeaderSign(#[source] crypto::Error),
+    #[error("Failed to verify AVB header signature")]
+    HeaderVerify(#[source] crypto::Error),
+    #[error("Expected root digest {expected}, but have {actual}")]
+    InvalidRootDigest { expected: String, actual: String },
+    #[error("Failed to generate hash tree data")]
+    HashTreeGenerate(#[source] hashtree::Error),
+    #[error("Failed to update hash tree data")]
+    HashTreeUpdate(#[source] hashtree::Error),
+    #[error("Failed to verify hash tree data")]
+    HashTreeVerify(#[source] hashtree::Error),
+    #[error("Failed to initialize FEC instance")]
+    FecInit(#[source] fec::Error),
+    #[error("Failed to generate FEC data")]
+    FecGenerate(#[source] fec::Error),
+    #[error("Failed to update FEC data")]
+    FecUpdate(#[source] fec::Error),
+    #[error("Failed to verify FEC data")]
+    FecVerify(#[source] fec::Error),
+    #[error("Failed to repair file with FEC data")]
+    FecRepair(#[source] fec::Error),
+    #[error("Failed to reopen input file")]
+    InputReopen(#[source] io::Error),
+    #[error("Failed to reopen output file")]
+    OutputReopen(#[source] io::Error),
+    #[error("Failed to compute hash of input file")]
+    InputDigest(#[source] io::Error),
+    #[error("Failed to read AVB data: {0}")]
+    DataRead(&'static str, #[source] io::Error),
+    #[error("Failed to write AVB data: {0}")]
+    DataWrite(&'static str, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -241,7 +265,7 @@ impl AlgorithmType {
             };
         };
 
-        key.sign(algo, digest).map_err(|e| e.into())
+        key.sign(algo, digest).map_err(Error::HeaderSign)
     }
 
     pub fn verify(self, key: &RsaPublicKey, digest: &[u8], signature: &[u8]) -> Result<()> {
@@ -254,7 +278,7 @@ impl AlgorithmType {
         };
 
         key.verify_sig(algo, digest, signature)
-            .map_err(|e| e.into())
+            .map_err(Error::HeaderVerify)
     }
 }
 
@@ -298,29 +322,37 @@ impl<R: Read> FromReader<R> for PropertyDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let raw_descriptor = RawPropertyDescriptor::read_from_io(&mut reader)?;
+        let raw_descriptor = RawPropertyDescriptor::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("Property::descriptor", e))?;
 
         let key_size = util::check_bounds(raw_descriptor.key_size.get(), ..=HEADER_MAX_SIZE)
-            .map_err(|e| Error::IntOutOfBounds("PropertyDescriptor::key_size", e))?;
+            .map_err(|e| Error::IntOutOfBounds("Property::key_size", e))?;
         let value_size = util::check_bounds(raw_descriptor.value_size.get(), ..=HEADER_MAX_SIZE)
-            .map_err(|e| Error::IntOutOfBounds("PropertyDescriptor::value_size", e))?;
+            .map_err(|e| Error::IntOutOfBounds("Property::value_size", e))?;
 
-        let key = reader.read_vec_exact(key_size as usize)?;
-        let key = String::from_utf8(key).map_err(|e| {
-            Error::StringNotUtf8("PropertyDescriptor::key", e.utf8_error(), e.into_bytes())
-        })?;
+        let key = reader
+            .read_vec_exact(key_size as usize)
+            .map_err(|e| Error::DataRead("Property::key", e))?;
+        let key = String::from_utf8(key)
+            .map_err(|e| Error::StringNotUtf8("Property::key", e.utf8_error(), e.into_bytes()))?;
 
-        let null = reader.read_array_exact::<1>()?;
+        let null = reader
+            .read_array_exact::<1>()
+            .map_err(|e| Error::DataRead("Property::key", e))?;
         if null[0] != b'\0' {
-            return Err(Error::StringNotNullTerminated("PropertyDescriptor::key"));
+            return Err(Error::StringNotNullTerminated("Property::key"));
         }
 
-        let value = reader.read_vec_exact(value_size as usize)?;
+        let value = reader
+            .read_vec_exact(value_size as usize)
+            .map_err(|e| Error::DataRead("Property::value", e))?;
 
         // The non-string value is also null terminated.
-        let null = reader.read_array_exact::<1>()?;
+        let null = reader
+            .read_array_exact::<1>()
+            .map_err(|e| Error::DataRead("Property::value", e))?;
         if null[0] != b'\0' {
-            return Err(Error::StringNotNullTerminated("PropertyDescriptor::value"));
+            return Err(Error::StringNotNullTerminated("Property::value"));
         }
 
         Ok(Self { key, value })
@@ -332,20 +364,30 @@ impl<W: Write> ToWriter<W> for PropertyDescriptor {
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
         util::check_bounds(self.key.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("PropertyDescriptor::key_size", e))?;
+            .map_err(|e| Error::IntOutOfBounds("Property::key_size", e))?;
         util::check_bounds(self.value.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("PropertyDescriptor::value_size", e))?;
+            .map_err(|e| Error::IntOutOfBounds("Property::value_size", e))?;
 
         let raw_descriptor = RawPropertyDescriptor {
             key_size: (self.key.len() as u64).into(),
             value_size: (self.value.len() as u64).into(),
         };
 
-        raw_descriptor.write_to_io(&mut writer)?;
-        writer.write_all(self.key.as_bytes())?;
-        writer.write_all(b"\0")?;
-        writer.write_all(&self.value)?;
-        writer.write_all(b"\0")?;
+        raw_descriptor
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("Property::descriptor", e))?;
+        writer
+            .write_all(self.key.as_bytes())
+            .map_err(|e| Error::DataWrite("Property::key", e))?;
+        writer
+            .write_all(b"\0")
+            .map_err(|e| Error::DataWrite("Property::key", e))?;
+        writer
+            .write_all(&self.value)
+            .map_err(|e| Error::DataWrite("Property::value", e))?;
+        writer
+            .write_all(b"\0")
+            .map_err(|e| Error::DataWrite("Property::value", e))?;
 
         Ok(())
     }
@@ -449,18 +491,19 @@ impl HashTreeDescriptor {
         }
 
         util::check_bounds(self.fec_size, ..=FEC_DATA_MAX_SIZE)
-            .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::fec_size", e))?;
+            .map_err(|e| Error::IntOutOfBounds("HashTree::fec_size", e))?;
 
         // Fec will check the validity of this field.
         let parity: u8 = util::try_cast(self.fec_num_roots)
-            .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::fec_num_roots", e))?;
+            .map_err(|e| Error::IntOutOfBounds("HashTree::fec_num_roots", e))?;
 
         // The FEC covers the hash tree as well.
         let fec = Fec::new(
             self.image_size + self.tree_size,
             self.data_block_size,
             parity,
-        )?;
+        )
+        .map_err(Error::FecInit)?;
 
         Ok((fec, self.fec_size as usize))
     }
@@ -495,32 +538,44 @@ impl HashTreeDescriptor {
         let hash_tree = HashTree::new(self.data_block_size, algorithm, &self.salt);
         let (root_digest, hash_tree_data) = match ranges {
             Some(r) => {
-                let mut reader = input.reopen_boxed()?;
-                reader.seek(SeekFrom::Start(self.tree_offset))?;
+                let mut reader = input.reopen_boxed().map_err(Error::InputReopen)?;
+                reader
+                    .seek(SeekFrom::Start(self.tree_offset))
+                    .map_err(|e| Error::DataRead("HashTree::tree_data", e))?;
 
-                let mut hash_tree_data = reader.read_vec_exact(self.tree_size as usize)?;
+                let mut hash_tree_data = reader
+                    .read_vec_exact(self.tree_size as usize)
+                    .map_err(|e| Error::DataRead("HashTree::tree_data", e))?;
 
-                let root_digest = hash_tree.update(
-                    input,
-                    self.image_size,
-                    r,
-                    &mut hash_tree_data,
-                    cancel_signal,
-                )?;
+                let root_digest = hash_tree
+                    .update(
+                        input,
+                        self.image_size,
+                        r,
+                        &mut hash_tree_data,
+                        cancel_signal,
+                    )
+                    .map_err(Error::HashTreeUpdate)?;
 
                 (root_digest, hash_tree_data)
             }
-            None => hash_tree.generate(input, self.image_size, cancel_signal)?,
+            None => hash_tree
+                .generate(input, self.image_size, cancel_signal)
+                .map_err(Error::HashTreeGenerate)?,
         };
 
         util::check_bounds(hash_tree_data.len(), ..=HASH_TREE_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::tree_size", e))?;
+            .map_err(|e| Error::IntOutOfBounds("HashTree::tree_size", e))?;
 
         let tree_size = hash_tree_data.len() as u64;
 
-        let mut writer = output.reopen_boxed()?;
-        writer.seek(SeekFrom::Start(self.image_size))?;
-        writer.write_all(&hash_tree_data)?;
+        let mut writer = output.reopen_boxed().map_err(Error::OutputReopen)?;
+        writer
+            .seek(SeekFrom::Start(self.image_size))
+            .map_err(|e| Error::DataWrite("HashTree::tree_data", e))?;
+        writer
+            .write_all(&hash_tree_data)
+            .map_err(|e| Error::DataWrite("HashTree::tree_data", e))?;
 
         // The FEC data section is optional.
         if self.fec_num_roots != 0 {
@@ -532,7 +587,7 @@ impl HashTreeDescriptor {
             }
 
             let parity: u8 = util::try_cast(self.fec_num_roots)
-                .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::fec_num_roots", e))?;
+                .map_err(|e| Error::IntOutOfBounds("HashTree::fec_num_roots", e))?;
 
             let fec_data = if let Some(r) = ranges {
                 let mut r_with_hash_tree = r.to_vec();
@@ -540,22 +595,31 @@ impl HashTreeDescriptor {
 
                 let (fec, fec_size) = self.get_fec()?;
 
-                let mut reader = input.reopen_boxed()?;
-                reader.seek(SeekFrom::Start(self.fec_offset))?;
+                let mut reader = input.reopen_boxed().map_err(Error::InputReopen)?;
+                reader
+                    .seek(SeekFrom::Start(self.fec_offset))
+                    .map_err(|e| Error::DataRead("HashTree::fec_data", e))?;
 
-                let mut fec_data = reader.read_vec_exact(fec_size)?;
+                let mut fec_data = reader
+                    .read_vec_exact(fec_size)
+                    .map_err(|e| Error::DataRead("HashTree::fec_data", e))?;
 
-                fec.update(input, &r_with_hash_tree, &mut fec_data, cancel_signal)?;
+                fec.update(input, &r_with_hash_tree, &mut fec_data, cancel_signal)
+                    .map_err(Error::FecUpdate)?;
 
                 fec_data
             } else {
                 // The FEC covers the hash tree as well.
-                let fec = Fec::new(self.image_size + tree_size, self.data_block_size, parity)?;
-                fec.generate(input, cancel_signal)?
+                let fec = Fec::new(self.image_size + tree_size, self.data_block_size, parity)
+                    .map_err(Error::FecInit)?;
+                fec.generate(input, cancel_signal)
+                    .map_err(Error::FecGenerate)?
             };
 
             // Already seeked to FEC.
-            writer.write_all(&fec_data)?;
+            writer
+                .write_all(&fec_data)
+                .map_err(|e| Error::DataWrite("HashTree::fec_data", e))?;
 
             self.fec_offset = self.image_size + tree_size;
             self.fec_size = fec_data.len() as u64;
@@ -581,31 +645,40 @@ impl HashTreeDescriptor {
         let algorithm = ring_algorithm(&self.hash_algorithm, true)?;
 
         util::check_bounds(self.tree_size, ..=HASH_TREE_MAX_SIZE)
-            .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::tree_size", e))?;
+            .map_err(|e| Error::IntOutOfBounds("HashTree::tree_size", e))?;
 
-        let mut reader = input.reopen_boxed()?;
-        reader.seek(SeekFrom::Start(self.tree_offset))?;
+        let mut reader = input.reopen_boxed().map_err(Error::InputReopen)?;
+        reader
+            .seek(SeekFrom::Start(self.tree_offset))
+            .map_err(|e| Error::DataRead("HashTree::tree_data", e))?;
 
-        let hash_tree_data = reader.read_vec_exact(self.tree_size as usize)?;
+        let hash_tree_data = reader
+            .read_vec_exact(self.tree_size as usize)
+            .map_err(|e| Error::DataRead("HashTree::tree_data", e))?;
 
         let hash_tree = HashTree::new(self.data_block_size, algorithm, &self.salt);
 
-        hash_tree.verify(
-            input,
-            self.image_size,
-            &self.root_digest,
-            &hash_tree_data,
-            cancel_signal,
-        )?;
+        hash_tree
+            .verify(
+                input,
+                self.image_size,
+                &self.root_digest,
+                &hash_tree_data,
+                cancel_signal,
+            )
+            .map_err(Error::HashTreeVerify)?;
 
         // The FEC data section is optional.
         if self.fec_num_roots != 0 {
             let (fec, fec_size) = self.get_fec()?;
 
             // Already seeked to FEC.
-            let fec_data = reader.read_vec_exact(fec_size)?;
+            let fec_data = reader
+                .read_vec_exact(fec_size)
+                .map_err(|e| Error::DataRead("HashTree::fec_data", e))?;
 
-            fec.verify(input, &fec_data, cancel_signal)?;
+            fec.verify(input, &fec_data, cancel_signal)
+                .map_err(Error::FecVerify)?;
         }
 
         Ok(())
@@ -632,15 +705,20 @@ impl HashTreeDescriptor {
             return Err(Error::FecMissing);
         }
 
-        let mut reader = input.reopen_boxed()?;
-        reader.seek(SeekFrom::Start(self.fec_offset))?;
+        let mut reader = input.reopen_boxed().map_err(Error::InputReopen)?;
+        reader
+            .seek(SeekFrom::Start(self.fec_offset))
+            .map_err(|e| Error::DataRead("HashTree::fec_data", e))?;
 
         let (fec, fec_size) = self.get_fec()?;
 
         // Already seeked to FEC.
-        let fec_data = reader.read_vec_exact(fec_size)?;
+        let fec_data = reader
+            .read_vec_exact(fec_size)
+            .map_err(|e| Error::DataRead("HashTree::fec_data", e))?;
 
-        fec.repair(input, output, &fec_data, cancel_signal)?;
+        fec.repair(input, output, &fec_data, cancel_signal)
+            .map_err(Error::FecRepair)?;
 
         Ok(())
     }
@@ -654,19 +732,16 @@ impl<R: Read> FromReader<R> for HashTreeDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let raw_descriptor = RawHashTreeDescriptor::read_from_io(&mut reader)?;
+        let raw_descriptor = RawHashTreeDescriptor::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("HashTree::descriptor", e))?;
 
         let hash_algorithm = raw_descriptor.hash_algorithm.trim_end_padding();
         let hash_algorithm = str::from_utf8(hash_algorithm).map_err(|e| {
-            Error::StringNotUtf8(
-                "HashTreeDescriptor::hash_algorithm",
-                e,
-                hash_algorithm.to_vec(),
-            )
+            Error::StringNotUtf8("HashTree::hash_algorithm", e, hash_algorithm.to_vec())
         })?;
         if !hash_algorithm.is_ascii() {
             return Err(Error::StringNotAscii(
-                "HashTreeDescriptor::hash_algorithm",
+                "HashTree::hash_algorithm",
                 hash_algorithm.to_owned(),
             ));
         }
@@ -675,28 +750,30 @@ impl<R: Read> FromReader<R> for HashTreeDescriptor {
             raw_descriptor.partition_name_len.get(),
             ..=HEADER_MAX_SIZE as u32,
         )
-        .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::partition_name_len", e))?;
+        .map_err(|e| Error::IntOutOfBounds("HashTree::partition_name_len", e))?;
         let salt_len = util::check_bounds(raw_descriptor.salt_len.get(), ..=HEADER_MAX_SIZE as u32)
-            .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::salt_len", e))?;
+            .map_err(|e| Error::IntOutOfBounds("HashTree::salt_len", e))?;
         let root_digest_len = util::check_bounds(
             raw_descriptor.root_digest_len.get(),
             ..=HEADER_MAX_SIZE as u32,
         )
-        .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::root_digest_len", e))?;
+        .map_err(|e| Error::IntOutOfBounds("HashTree::root_digest_len", e))?;
 
         // Not NULL-terminated.
-        let partition_name = reader.read_vec_exact(partition_name_len as usize)?;
+        let partition_name = reader
+            .read_vec_exact(partition_name_len as usize)
+            .map_err(|e| Error::DataRead("HashTree::partition_name", e))?;
         let partition_name = String::from_utf8(partition_name).map_err(|e| {
-            Error::StringNotUtf8(
-                "HashTreeDescriptor::partition_name",
-                e.utf8_error(),
-                e.into_bytes(),
-            )
+            Error::StringNotUtf8("HashTree::partition_name", e.utf8_error(), e.into_bytes())
         })?;
 
-        let salt = reader.read_vec_exact(salt_len as usize)?;
+        let salt = reader
+            .read_vec_exact(salt_len as usize)
+            .map_err(|e| Error::DataRead("HashTree::salt", e))?;
 
-        let root_digest = reader.read_vec_exact(root_digest_len as usize)?;
+        let root_digest = reader
+            .read_vec_exact(root_digest_len as usize)
+            .map_err(|e| Error::DataRead("HashTree::root_digest", e))?;
 
         let descriptor = Self {
             dm_verity_version: raw_descriptor.dm_verity_version.into(),
@@ -725,15 +802,15 @@ impl<W: Write> ToWriter<W> for HashTreeDescriptor {
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
         util::check_bounds(self.partition_name.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::partition_name_len", e))?;
+            .map_err(|e| Error::IntOutOfBounds("HashTree::partition_name_len", e))?;
         util::check_bounds(self.salt.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::salt_len", e))?;
+            .map_err(|e| Error::IntOutOfBounds("HashTree::salt_len", e))?;
         util::check_bounds(self.root_digest.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("HashTreeDescriptor::root_digest_len", e))?;
+            .map_err(|e| Error::IntOutOfBounds("HashTree::root_digest_len", e))?;
 
         if !self.hash_algorithm.is_ascii() {
             return Err(Error::StringNotAscii(
-                "HashTreeDescriptor::hash_algorithm",
+                "HashTree::hash_algorithm",
                 self.hash_algorithm.clone(),
             ));
         }
@@ -743,10 +820,7 @@ impl<W: Write> ToWriter<W> for HashTreeDescriptor {
             .as_bytes()
             .to_padded_array::<32>()
             .ok_or_else(|| {
-                Error::StringTooLong(
-                    "HashTreeDescriptor::hash_algorithm",
-                    self.hash_algorithm.clone(),
-                )
+                Error::StringTooLong("HashTree::hash_algorithm", self.hash_algorithm.clone())
             })?;
 
         let raw_descriptor = RawHashTreeDescriptor {
@@ -767,10 +841,18 @@ impl<W: Write> ToWriter<W> for HashTreeDescriptor {
             reserved: self.reserved,
         };
 
-        raw_descriptor.write_to_io(&mut writer)?;
-        writer.write_all(self.partition_name.as_bytes())?;
-        writer.write_all(&self.salt)?;
-        writer.write_all(&self.root_digest)?;
+        raw_descriptor
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("HashTree::descriptor", e))?;
+        writer
+            .write_all(self.partition_name.as_bytes())
+            .map_err(|e| Error::DataWrite("HashTree::partition_name", e))?;
+        writer
+            .write_all(&self.salt)
+            .map_err(|e| Error::DataWrite("HashTree::salt", e))?;
+        writer
+            .write_all(&self.root_digest)
+            .map_err(|e| Error::DataWrite("HashTree::root_digest", e))?;
 
         Ok(())
     }
@@ -834,7 +916,8 @@ impl HashDescriptor {
             self.image_size,
             |data| context.update(data),
             cancel_signal,
-        )?;
+        )
+        .map_err(Error::InputDigest)?;
 
         Ok(context.finish())
     }
@@ -851,11 +934,10 @@ impl HashDescriptor {
         let digest = self.calculate(reader, true, cancel_signal)?;
 
         if self.root_digest != digest.as_ref() {
-            return Err(hashtree::Error::InvalidRootDigest {
+            return Err(Error::InvalidRootDigest {
                 expected: hex::encode(&self.root_digest),
                 actual: hex::encode(digest),
-            }
-            .into());
+            });
         }
 
         Ok(())
@@ -870,15 +952,16 @@ impl<R: Read> FromReader<R> for HashDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let raw_descriptor = RawHashDescriptor::read_from_io(&mut reader)?;
+        let raw_descriptor = RawHashDescriptor::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("Hash::descriptor", e))?;
 
         let hash_algorithm = raw_descriptor.hash_algorithm.trim_end_padding();
         let hash_algorithm = str::from_utf8(hash_algorithm).map_err(|e| {
-            Error::StringNotUtf8("HashDescriptor::hash_algorithm", e, hash_algorithm.to_vec())
+            Error::StringNotUtf8("Hash::hash_algorithm", e, hash_algorithm.to_vec())
         })?;
         if !hash_algorithm.is_ascii() {
             return Err(Error::StringNotAscii(
-                "HashDescriptor::hash_algorithm",
+                "Hash::hash_algorithm",
                 hash_algorithm.to_owned(),
             ));
         }
@@ -887,28 +970,30 @@ impl<R: Read> FromReader<R> for HashDescriptor {
             raw_descriptor.partition_name_len.get(),
             ..=HEADER_MAX_SIZE as u32,
         )
-        .map_err(|e| Error::IntOutOfBounds("HashDescriptor::partition_name_len", e))?;
+        .map_err(|e| Error::IntOutOfBounds("Hash::partition_name_len", e))?;
         let salt_len = util::check_bounds(raw_descriptor.salt_len.get(), ..=HEADER_MAX_SIZE as u32)
-            .map_err(|e| Error::IntOutOfBounds("HashDescriptor::salt_len", e))?;
+            .map_err(|e| Error::IntOutOfBounds("Hash::salt_len", e))?;
         let root_digest_len = util::check_bounds(
             raw_descriptor.root_digest_len.get(),
             ..=HEADER_MAX_SIZE as u32,
         )
-        .map_err(|e| Error::IntOutOfBounds("HashDescriptor::root_digest_len", e))?;
+        .map_err(|e| Error::IntOutOfBounds("Hash::root_digest_len", e))?;
 
         // Not NULL-terminated.
-        let partition_name = reader.read_vec_exact(partition_name_len as usize)?;
+        let partition_name = reader
+            .read_vec_exact(partition_name_len as usize)
+            .map_err(|e| Error::DataRead("Hash::partition_name", e))?;
         let partition_name = String::from_utf8(partition_name).map_err(|e| {
-            Error::StringNotUtf8(
-                "HashDescriptor::partition_name",
-                e.utf8_error(),
-                e.into_bytes(),
-            )
+            Error::StringNotUtf8("Hash::partition_name", e.utf8_error(), e.into_bytes())
         })?;
 
-        let salt = reader.read_vec_exact(salt_len as usize)?;
+        let salt = reader
+            .read_vec_exact(salt_len as usize)
+            .map_err(|e| Error::DataRead("Hash::salt", e))?;
 
-        let root_digest = reader.read_vec_exact(root_digest_len as usize)?;
+        let root_digest = reader
+            .read_vec_exact(root_digest_len as usize)
+            .map_err(|e| Error::DataRead("Hash::root_digest", e))?;
 
         let descriptor = Self {
             image_size: raw_descriptor.image_size.get(),
@@ -929,15 +1014,15 @@ impl<W: Write> ToWriter<W> for HashDescriptor {
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
         util::check_bounds(self.partition_name.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("HashDescriptor::partition_name_len", e))?;
+            .map_err(|e| Error::IntOutOfBounds("Hash::partition_name_len", e))?;
         util::check_bounds(self.salt.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("HashDescriptor::salt_len", e))?;
+            .map_err(|e| Error::IntOutOfBounds("Hash::salt_len", e))?;
         util::check_bounds(self.root_digest.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("HashDescriptor::root_digest_len", e))?;
+            .map_err(|e| Error::IntOutOfBounds("Hash::root_digest_len", e))?;
 
         if !self.hash_algorithm.is_ascii() {
             return Err(Error::StringNotAscii(
-                "HashDescriptor::hash_algorithm",
+                "Hash::hash_algorithm",
                 self.hash_algorithm.clone(),
             ));
         }
@@ -947,10 +1032,7 @@ impl<W: Write> ToWriter<W> for HashDescriptor {
             .as_bytes()
             .to_padded_array::<32>()
             .ok_or_else(|| {
-                Error::StringTooLong(
-                    "HashDescriptor::hash_algorithm",
-                    self.hash_algorithm.clone(),
-                )
+                Error::StringTooLong("Hash::hash_algorithm", self.hash_algorithm.clone())
             })?;
 
         let raw_descriptor = RawHashDescriptor {
@@ -963,10 +1045,18 @@ impl<W: Write> ToWriter<W> for HashDescriptor {
             reserved: self.reserved,
         };
 
-        raw_descriptor.write_to_io(&mut writer)?;
-        writer.write_all(self.partition_name.as_bytes())?;
-        writer.write_all(&self.salt)?;
-        writer.write_all(&self.root_digest)?;
+        raw_descriptor
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("Hash::descriptor", e))?;
+        writer
+            .write_all(self.partition_name.as_bytes())
+            .map_err(|e| Error::DataWrite("Hash::partition_name", e))?;
+        writer
+            .write_all(&self.salt)
+            .map_err(|e| Error::DataWrite("Hash::salt", e))?;
+        writer
+            .write_all(&self.root_digest)
+            .map_err(|e| Error::DataWrite("Hash::root_digest", e))?;
 
         Ok(())
     }
@@ -1000,20 +1090,19 @@ impl<R: Read> FromReader<R> for KernelCmdlineDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let raw_descriptor = RawKernelCmdlineDescriptor::read_from_io(&mut reader)?;
+        let raw_descriptor = RawKernelCmdlineDescriptor::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("KernelCmdline::descriptor", e))?;
 
         let cmdline_len =
             util::check_bounds(raw_descriptor.cmdline_len.get(), ..=HEADER_MAX_SIZE as u32)
-                .map_err(|e| Error::IntOutOfBounds("KernelCmdlineDescriptor::cmdline_len", e))?;
+                .map_err(|e| Error::IntOutOfBounds("KernelCmdline::cmdline_len", e))?;
 
         // Not NULL-terminated.
-        let cmdline = reader.read_vec_exact(cmdline_len as usize)?;
+        let cmdline = reader
+            .read_vec_exact(cmdline_len as usize)
+            .map_err(|e| Error::DataRead("KernelCmdline::cmdline", e))?;
         let cmdline = String::from_utf8(cmdline).map_err(|e| {
-            Error::StringNotUtf8(
-                "KernelCmdlineDescriptor::cmdline",
-                e.utf8_error(),
-                e.into_bytes(),
-            )
+            Error::StringNotUtf8("KernelCmdline::cmdline", e.utf8_error(), e.into_bytes())
         })?;
 
         let descriptor = Self {
@@ -1030,15 +1119,19 @@ impl<W: Write> ToWriter<W> for KernelCmdlineDescriptor {
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
         util::check_bounds(self.cmdline.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("KernelCmdlineDescriptor::cmdline_len", e))?;
+            .map_err(|e| Error::IntOutOfBounds("KernelCmdline::cmdline_len", e))?;
 
         let raw_descriptor = RawKernelCmdlineDescriptor {
             flags: self.flags.into(),
             cmdline_len: (self.cmdline.len() as u32).into(),
         };
 
-        raw_descriptor.write_to_io(&mut writer)?;
-        writer.write_all(self.cmdline.as_bytes())?;
+        raw_descriptor
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("KernelCmdline::descriptor", e))?;
+        writer
+            .write_all(self.cmdline.as_bytes())
+            .map_err(|e| Error::DataWrite("KernelCmdline::cmdline", e))?;
 
         Ok(())
     }
@@ -1090,30 +1183,35 @@ impl<R: Read> FromReader<R> for ChainPartitionDescriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let raw_descriptor = RawChainPartitionDescriptor::read_from_io(&mut reader)?;
+        let raw_descriptor = RawChainPartitionDescriptor::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("ChainPartition::descriptor", e))?;
 
         let partition_name_len = util::check_bounds(
             raw_descriptor.partition_name_len.get(),
             ..=HEADER_MAX_SIZE as u32,
         )
-        .map_err(|e| Error::IntOutOfBounds("ChainPartitionDescriptor::partition_name_len", e))?;
+        .map_err(|e| Error::IntOutOfBounds("ChainPartition::partition_name_len", e))?;
         let public_key_len = util::check_bounds(
             raw_descriptor.public_key_len.get(),
             ..=HEADER_MAX_SIZE as u32,
         )
-        .map_err(|e| Error::IntOutOfBounds("ChainPartitionDescriptor::public_key_len", e))?;
+        .map_err(|e| Error::IntOutOfBounds("ChainPartition::public_key_len", e))?;
 
         // Not NULL-terminated.
-        let partition_name = reader.read_vec_exact(partition_name_len as usize)?;
+        let partition_name = reader
+            .read_vec_exact(partition_name_len as usize)
+            .map_err(|e| Error::DataRead("ChainPartition::partition_name", e))?;
         let partition_name = String::from_utf8(partition_name).map_err(|e| {
             Error::StringNotUtf8(
-                "ChainPartitionDescriptor::partition_name",
+                "ChainPartition::partition_name",
                 e.utf8_error(),
                 e.into_bytes(),
             )
         })?;
 
-        let public_key = reader.read_vec_exact(public_key_len as usize)?;
+        let public_key = reader
+            .read_vec_exact(public_key_len as usize)
+            .map_err(|e| Error::DataRead("ChainPartition::public_key", e))?;
 
         let descriptor = Self {
             rollback_index_location: raw_descriptor.rollback_index_location.get(),
@@ -1131,11 +1229,10 @@ impl<W: Write> ToWriter<W> for ChainPartitionDescriptor {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
-        util::check_bounds(self.partition_name.len(), ..=HEADER_MAX_SIZE as usize).map_err(
-            |e| Error::IntOutOfBounds("ChainPartitionDescriptor::partition_name_len", e),
-        )?;
+        util::check_bounds(self.partition_name.len(), ..=HEADER_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("ChainPartition::partition_name_len", e))?;
         util::check_bounds(self.public_key.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("ChainPartitionDescriptor::public_key_len", e))?;
+            .map_err(|e| Error::IntOutOfBounds("ChainPartition::public_key_len", e))?;
 
         let raw_descriptor = RawChainPartitionDescriptor {
             rollback_index_location: self.rollback_index_location.into(),
@@ -1145,9 +1242,15 @@ impl<W: Write> ToWriter<W> for ChainPartitionDescriptor {
             reserved: self.reserved,
         };
 
-        raw_descriptor.write_to_io(&mut writer)?;
-        writer.write_all(self.partition_name.as_bytes())?;
-        writer.write_all(&self.public_key)?;
+        raw_descriptor
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("ChainPartition::descriptor", e))?;
+        writer
+            .write_all(self.partition_name.as_bytes())
+            .map_err(|e| Error::DataWrite("ChainPartition::partition_name", e))?;
+        writer
+            .write_all(&self.public_key)
+            .map_err(|e| Error::DataWrite("ChainPartition::public_key", e))?;
 
         Ok(())
     }
@@ -1202,7 +1305,8 @@ impl<R: Read> FromReader<R> for Descriptor {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let raw_descriptor = RawDescriptor::read_from_io(&mut reader)?;
+        let raw_descriptor = RawDescriptor::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("Descriptor::prefix", e))?;
 
         let nbf = util::check_bounds(raw_descriptor.num_bytes_following.get(), ..=HEADER_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Descriptor::num_bytes_following", e))?;
@@ -1231,15 +1335,22 @@ impl<R: Read> FromReader<R> for Descriptor {
                 Self::ChainPartition(d)
             }
             tag => {
-                let data = inner_reader.read_vec_exact(nbf as usize)?;
+                let data = inner_reader
+                    .read_vec_exact(nbf as usize)
+                    .map_err(|e| Error::DataRead("Descriptor::unknown", e))?;
 
                 Self::Unknown { tag, data }
             }
         };
 
         // The descriptor data is always aligned to 8 bytes.
-        padding::read_discard(&mut inner_reader, 8)?;
-        if inner_reader.stream_position()? != nbf {
+        padding::read_discard(&mut inner_reader, 8)
+            .map_err(|e| Error::DataRead("Descriptor::padding", e))?;
+        if inner_reader
+            .stream_position()
+            .map_err(|e| Error::DataRead("Descriptor::padding", e))?
+            != nbf
+        {
             return Err(Error::PaddingTooLong);
         }
 
@@ -1275,7 +1386,9 @@ impl<W: Write> ToWriter<W> for Descriptor {
                 d.get_tag()
             }
             Self::Unknown { tag, data } => {
-                inner_writer.write_all(data)?;
+                inner_writer
+                    .write_all(data)
+                    .map_err(|e| Error::DataWrite("Descriptor::unknown", e))?;
                 *tag
             }
         };
@@ -1293,9 +1406,15 @@ impl<W: Write> ToWriter<W> for Descriptor {
             num_bytes_following: (nbf as u64).into(),
         };
 
-        raw_descriptor.write_to_io(&mut writer)?;
-        writer.write_all(&inner_data)?;
-        writer.write_zeros_exact(padding_len as u64)?;
+        raw_descriptor
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("Descriptor::prefix", e))?;
+        writer
+            .write_all(&inner_data)
+            .map_err(|e| Error::DataWrite("Descriptor::descriptors", e))?;
+        writer
+            .write_zeros_exact(padding_len as u64)
+            .map_err(|e| Error::DataWrite("Descriptor::padding", e))?;
 
         Ok(())
     }
@@ -1435,11 +1554,11 @@ impl Header {
             .hash
             .len()
             .checked_add(self.signature.len())
-            .ok_or_else(|| Error::IntOverflow("Header::auth_block_data_size"))?;
+            .ok_or(Error::IntOverflow("Header::auth_block_data_size"))?;
         let auth_block_padding_size = padding::calc(auth_block_data_size, 64);
         let auth_block_size = auth_block_data_size
             .checked_add(auth_block_padding_size)
-            .ok_or_else(|| Error::IntOverflow("Header::auth_block_size"))?;
+            .ok_or(Error::IntOverflow("Header::auth_block_size"))?;
 
         let hash_offset = 0usize;
         let signature_offset = hash_offset + self.hash.len();
@@ -1450,11 +1569,11 @@ impl Header {
             .len()
             .checked_add(self.public_key.len())
             .and_then(|s| s.checked_add(self.public_key_metadata.len()))
-            .ok_or_else(|| Error::IntOverflow("Header::aux_block_data_size"))?;
+            .ok_or(Error::IntOverflow("Header::aux_block_data_size"))?;
         let aux_block_padding_size = padding::calc(aux_block_data_size, 64);
         let aux_block_size = aux_block_data_size
             .checked_add(aux_block_padding_size)
-            .ok_or_else(|| Error::IntOverflow("Header::aux_block_size"))?;
+            .ok_or(Error::IntOverflow("Header::aux_block_size"))?;
 
         let descriptors_offset = 0usize;
         let public_key_offset = descriptors_offset + descriptors_raw.len();
@@ -1463,7 +1582,7 @@ impl Header {
         let total_size = Self::SIZE
             .checked_add(auth_block_data_size)
             .and_then(|s| s.checked_add(aux_block_data_size))
-            .ok_or_else(|| Error::IntOverflow("Header::total_size"))?;
+            .ok_or(Error::IntOverflow("Header::total_size"))?;
         if total_size > HEADER_MAX_SIZE as usize {
             return Err(Error::HeaderTooLarge);
         }
@@ -1503,20 +1622,36 @@ impl Header {
             reserved: self.reserved,
         };
 
-        raw_header.write_to_io(&mut writer)?;
+        raw_header
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("Header::header", e))?;
 
         // Auth block.
         if !skip_auth_block {
-            writer.write_all(&self.hash)?;
-            writer.write_all(&self.signature)?;
-            writer.write_zeros_exact(auth_block_padding_size as u64)?;
+            writer
+                .write_all(&self.hash)
+                .map_err(|e| Error::DataWrite("Header::hash", e))?;
+            writer
+                .write_all(&self.signature)
+                .map_err(|e| Error::DataWrite("Header::signature", e))?;
+            writer
+                .write_zeros_exact(auth_block_padding_size as u64)
+                .map_err(|e| Error::DataWrite("Header::auth_block_padding", e))?;
         }
 
         // Aux block.
-        writer.write_all(&descriptors_raw)?;
-        writer.write_all(&self.public_key)?;
-        writer.write_all(&self.public_key_metadata)?;
-        writer.write_zeros_exact(aux_block_padding_size as u64)?;
+        writer
+            .write_all(&descriptors_raw)
+            .map_err(|e| Error::DataWrite("Header::descriptors", e))?;
+        writer
+            .write_all(&self.public_key)
+            .map_err(|e| Error::DataWrite("Header::public_key", e))?;
+        writer
+            .write_all(&self.public_key_metadata)
+            .map_err(|e| Error::DataWrite("Header::public_key_metadata", e))?;
+        writer
+            .write_zeros_exact(aux_block_padding_size as u64)
+            .map_err(|e| Error::DataWrite("Header::aux_block_padding", e))?;
 
         Ok(())
     }
@@ -1583,7 +1718,7 @@ impl Header {
             }
         }
 
-        Err(Error::UnsupportedKey(key.size()))
+        Err(Error::UnsupportedKeySize(key.size()))
     }
 
     pub fn clear_sig(&mut self) {
@@ -1652,7 +1787,8 @@ impl<R: Read> FromReader<R> for Header {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let raw_header = RawHeader::read_from_io(&mut reader)?;
+        let raw_header = RawHeader::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("Header::header", e))?;
 
         if raw_header.magic != HEADER_MAGIC {
             return Err(Error::InvalidHeaderMagic(raw_header.magic));
@@ -1668,7 +1804,7 @@ impl<R: Read> FromReader<R> for Header {
 
         let auth_block_combined = hash_size
             .checked_add(signature_size)
-            .ok_or_else(|| Error::IntOverflow("Header::auth_block_combined"))?;
+            .ok_or(Error::IntOverflow("Header::auth_block_combined"))?;
         let auth_block_padding = padding::calc(auth_block_combined, 64);
         if auth_block_combined.checked_add(auth_block_padding) != Some(auth_block_size) {
             return Err(Error::IntOverflow("Header::auth_block_size"));
@@ -1688,7 +1824,7 @@ impl<R: Read> FromReader<R> for Header {
         let aux_block_combined = public_key_size
             .checked_add(public_key_metadata_size)
             .and_then(|s| s.checked_add(descriptors_size))
-            .ok_or_else(|| Error::IntOverflow("Header::aux_block_combined"))?;
+            .ok_or(Error::IntOverflow("Header::aux_block_combined"))?;
         let aux_block_padding = padding::calc(aux_block_combined, 64);
         if aux_block_combined.checked_add(aux_block_padding) != Some(aux_block_size) {
             return Err(Error::IntOverflow("Header::aux_block_size"));
@@ -1705,20 +1841,26 @@ impl<R: Read> FromReader<R> for Header {
             Error::StringNotUtf8("Header::release_string", e, release_string.to_vec())
         })?;
 
-        let header_size = reader.stream_position()?;
+        let header_size = reader
+            .stream_position()
+            .map_err(|e| Error::DataRead("Header::header_size", e))?;
         let total_size = header_size
             .checked_add(auth_block_size)
             .and_then(|v| v.checked_add(aux_block_size))
-            .ok_or_else(|| Error::IntOverflow("Header::total_size"))?;
+            .ok_or(Error::IntOverflow("Header::total_size"))?;
         if total_size > HEADER_MAX_SIZE {
             return Err(Error::HeaderTooLarge);
         }
 
         // All of the size fields above are now guaranteed to fit in usize.
 
-        let auth_block = reader.read_vec_exact(auth_block_size as usize)?;
+        let auth_block = reader
+            .read_vec_exact(auth_block_size as usize)
+            .map_err(|e| Error::DataRead("Header::auth_block", e))?;
 
-        let aux_block = reader.read_vec_exact(aux_block_size as usize)?;
+        let aux_block = reader
+            .read_vec_exact(aux_block_size as usize)
+            .map_err(|e| Error::DataRead("Header::aux_block", e))?;
 
         // When we verify() the signatures, we're doing so on re-serialized
         // fields. The padding is the only thing that can escape this, so make
@@ -1743,12 +1885,16 @@ impl<R: Read> FromReader<R> for Header {
 
         let mut descriptors: Vec<Descriptor> = vec![];
         let mut descriptor_reader = Cursor::new(&aux_block);
-        let mut pos = descriptor_reader.seek(SeekFrom::Start(descriptors_offset))?;
+        let mut pos = descriptor_reader
+            .seek(SeekFrom::Start(descriptors_offset))
+            .map_err(|e| Error::DataRead("Header::descriptors_offset", e))?;
 
         while pos < descriptors_offset + descriptors_size {
             let descriptor = Descriptor::from_reader(&mut descriptor_reader)?;
             descriptors.push(descriptor);
-            pos = descriptor_reader.stream_position()?;
+            pos = descriptor_reader
+                .stream_position()
+                .map_err(|e| Error::DataRead("Header::descriptors_offset", e))?;
         }
 
         let header = Self {
@@ -1825,7 +1971,8 @@ impl<R: Read> FromReader<R> for Footer {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let raw_footer = RawFooter::read_from_io(&mut reader)?;
+        let raw_footer = RawFooter::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("Footer::footer", e))?;
 
         if raw_footer.magic != FOOTER_MAGIC {
             return Err(Error::InvalidFooterMagic(raw_footer.magic));
@@ -1858,7 +2005,9 @@ impl<W: Write> ToWriter<W> for Footer {
             reserved: self.reserved,
         };
 
-        raw_footer.write_to_io(&mut writer)?;
+        raw_footer
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("Footer::footer", e))?;
 
         Ok(())
     }
@@ -1925,7 +2074,8 @@ pub fn decode_public_key(data: &[u8]) -> Result<RsaPublicKey> {
     }
 
     let modulus = BigUint::from_bytes_be(&suffix[..key_bits / 8]);
-    let public_key = RsaPublicKey::new(modulus, BigUint::from(65537u32))?;
+    let public_key = RsaPublicKey::new(modulus.clone(), BigUint::from(65537u32))
+        .map_err(|e| Error::InvalidRsaModulus(modulus, Box::new(e)))?;
 
     Ok(public_key)
 }
@@ -1934,19 +2084,25 @@ pub fn decode_public_key(data: &[u8]) -> Result<RsaPublicKey> {
 /// present only if the file is not a vbmeta partition image (ie. the header
 /// follows actual data).
 pub fn load_image(mut reader: impl Read + Seek) -> Result<(Header, Option<Footer>, u64)> {
-    let image_size = reader.seek(SeekFrom::End(0))?;
+    let image_size = reader
+        .seek(SeekFrom::End(0))
+        .map_err(|e| Error::DataRead("image_size", e))?;
 
-    reader.seek(SeekFrom::End(-(Footer::SIZE as i64)))?;
+    reader
+        .seek(SeekFrom::End(-(Footer::SIZE as i64)))
+        .map_err(|e| Error::DataRead("footer_offset", e))?;
 
     let footer = match Footer::from_reader(&mut reader) {
         Ok(f) => Some(f),
-        Err(e @ Error::Io(_)) => return Err(e),
+        Err(e @ Error::DataRead(_, _)) => return Err(e),
         Err(_) => None,
     };
 
     let vbmeta_offset = footer.as_ref().map_or(0, |f| f.vbmeta_offset);
 
-    reader.seek(SeekFrom::Start(vbmeta_offset))?;
+    reader
+        .seek(SeekFrom::Start(vbmeta_offset))
+        .map_err(|e| Error::DataRead("vbmeta_offset", e))?;
     let header = Header::from_reader(&mut reader)?;
 
     Ok((header, footer, image_size))
@@ -1959,9 +2115,14 @@ pub fn write_root_image(writer: impl Write, header: &Header, block_size: u64) ->
     let mut counting_writer = CountingWriter::new(writer);
 
     header.to_writer(&mut counting_writer)?;
-    padding::write_zeros(&mut counting_writer, block_size)?;
+    padding::write_zeros(&mut counting_writer, block_size)
+        .map_err(|e| Error::DataWrite("Root::header_padding", e))?;
 
-    Ok(counting_writer.stream_position()?)
+    let image_size = counting_writer
+        .stream_position()
+        .map_err(|e| Error::DataWrite("Root::image_size", e))?;
+
+    Ok(image_size)
 }
 
 /// Write a vbmeta header and footer to the specified writer. This is meant for
@@ -1985,29 +2146,35 @@ pub fn write_appended_image(
             .image_size
             .checked_add(d.tree_size)
             .and_then(|s| s.checked_add(d.fec_size))
-            .ok_or_else(|| Error::IntOverflow("Appended::logical_image_size"))?,
+            .ok_or(Error::IntOverflow("Appended::logical_image_size"))?,
         AppendedDescriptorRef::Hash(d) => d.image_size,
     };
 
-    writer.seek(SeekFrom::Start(logical_image_size))?;
+    writer
+        .seek(SeekFrom::Start(logical_image_size))
+        .map_err(|e| Error::DataWrite("Appended::logical_image_size", e))?;
 
     // The header start offset must be block aligned.
     let header_offset = {
-        let padding_size = padding::write_zeros(&mut writer, BLOCK_SIZE)?;
+        let padding_size = padding::write_zeros(&mut writer, BLOCK_SIZE)
+            .map_err(|e| Error::DataWrite("Appended::pre_header_padding", e))?;
         logical_image_size
             .checked_add(padding_size)
-            .ok_or_else(|| Error::IntOverflow("Appended::header_offset"))?
+            .ok_or(Error::IntOverflow("Appended::header_offset"))?
     };
 
     // The header lives at the beginning of the empty space.
     let mut header_buf = Cursor::new(Vec::new());
     header.to_writer(&mut header_buf)?;
-    let header_size = header_buf.stream_position()?;
-    let header_padding = padding::write_zeros(&mut header_buf, BLOCK_SIZE)?;
+    let header_size = header_buf
+        .stream_position()
+        .map_err(|e| Error::DataWrite("Appended::header_size", e))?;
+    let header_padding = padding::write_zeros(&mut header_buf, BLOCK_SIZE)
+        .map_err(|e| Error::DataWrite("Appended::header_padding", e))?;
     let header_end_padded = header_offset
         .checked_add(header_size)
         .and_then(|s| s.checked_add(header_padding))
-        .ok_or_else(|| Error::IntOverflow("Appended::header_end_padded"))?;
+        .ok_or(Error::IntOverflow("Appended::header_end_padded"))?;
 
     if let Some(s) = image_size {
         if header_end_padded > s {
@@ -2015,7 +2182,9 @@ pub fn write_appended_image(
         }
     }
 
-    writer.write_all(&header_buf.into_inner())?;
+    writer
+        .write_all(&header_buf.into_inner())
+        .map_err(|e| Error::DataWrite("Appended::header", e))?;
 
     // The footer lives in its own separate block at the end of the empty space.
     let footer_end = if let Some(s) = image_size {
@@ -2027,11 +2196,13 @@ pub fn write_appended_image(
     } else {
         header_end_padded
             .checked_add(BLOCK_SIZE)
-            .ok_or_else(|| Error::IntOverflow("Appended::footer_end"))?
+            .ok_or(Error::IntOverflow("Appended::footer_end"))?
     };
 
     let footer_offset = footer_end - Footer::SIZE as u64;
-    writer.seek(SeekFrom::Start(footer_offset))?;
+    writer
+        .seek(SeekFrom::Start(footer_offset))
+        .map_err(|e| Error::DataWrite("Appended::footer_offset", e))?;
 
     footer.original_image_size = match header.appended_descriptor()? {
         AppendedDescriptorRef::HashTree(d) => d.image_size,

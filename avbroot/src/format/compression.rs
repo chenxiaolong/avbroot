@@ -13,6 +13,8 @@ use lz4_flex::frame::FrameDecoder;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::stream::ReadFixedSizeExt;
+
 static GZIP_MAGIC: &[u8; 2] = b"\x1f\x8b";
 static LZ4_LEGACY_MAGIC: &[u8; 4] = b"\x02\x21\x4c\x18";
 static XZ_MAGIC: &[u8; 6] = b"\xfd\x37\x7a\x58\x5a\x00";
@@ -21,10 +23,12 @@ static XZ_MAGIC: &[u8; 6] = b"\xfd\x37\x7a\x58\x5a\x00";
 pub enum Error {
     #[error("Unknown compression format")]
     UnknownFormat,
-    #[error("XZ stream error")]
-    XzStream(#[from] liblzma::stream::Error),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("I/O error when autodetecting compression format")]
+    AutoDetect(#[source] io::Error),
+    #[error("Failed to initialize legacy LZ4 encoder")]
+    Lz4Init(#[source] io::Error),
+    #[error("Failed to initialize XZ encoder")]
+    XzInit(#[source] liblzma::stream::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -119,10 +123,9 @@ pub enum CompressedReader<R: Read> {
 
 impl<R: Read + Seek> CompressedReader<R> {
     pub fn new(mut reader: R, raw_if_unknown: bool) -> Result<Self> {
-        let mut magic = [0u8; 6];
-        reader.read_exact(&mut magic)?;
+        let magic = reader.read_array_exact::<6>().map_err(Error::AutoDetect)?;
 
-        reader.rewind()?;
+        reader.rewind().map_err(Error::AutoDetect)?;
 
         if &magic[0..2] == GZIP_MAGIC {
             Ok(Self::Gzip(GzDecoder::new(reader)))
@@ -181,10 +184,13 @@ impl<W: Write> CompressedWriter<W> {
             CompressedFormat::Gzip => {
                 Ok(Self::Gzip(GzEncoder::new(writer, Compression::default())))
             }
-            CompressedFormat::Lz4Legacy => Ok(Self::Lz4Legacy(Lz4LegacyEncoder::new(writer)?)),
+            CompressedFormat::Lz4Legacy => {
+                let encoder = Lz4LegacyEncoder::new(writer).map_err(Error::Lz4Init)?;
+                Ok(Self::Lz4Legacy(encoder))
+            }
             CompressedFormat::Xz => {
                 // Some kernels are compiled without support for the default CRC64.
-                let stream = Stream::new_easy_encoder(6, Check::Crc32)?;
+                let stream = Stream::new_easy_encoder(6, Check::Crc32).map_err(Error::XzInit)?;
                 Ok(Self::Xz(XzEncoder::new_stream(writer, stream)))
             }
         }

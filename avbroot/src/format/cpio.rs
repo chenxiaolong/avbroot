@@ -19,7 +19,8 @@ use crate::{
     format::padding,
     octal,
     stream::{
-        self, CountingReader, CountingWriter, FromReader, ReadDiscardExt, ToWriter, WriteZerosExt,
+        self, CountingReader, CountingWriter, FromReader, ReadDiscardExt, ReadFixedSizeExt,
+        ToWriter, WriteZerosExt,
     },
     util::NumBytes,
 };
@@ -48,24 +49,27 @@ const VEC_CAP_THRESHOLD: usize = 16384;
 pub enum Error {
     #[error("Unknown magic: {0:?}")]
     UnknownMagic([u8; 6]),
+    #[error("Path is not NULL-terminated: {:?}", .0.as_bstr())]
+    PathNotNullTerminated(Vec<u8>),
     #[error("Hard links are not supported: {:?}", .0.as_bstr())]
     HardLinksNotSupported(Vec<u8>),
     #[error("Entry of type {0} should not have data: {path:?}", path = .1.as_bstr())]
     EntryHasData(CpioEntryType, Vec<u8>),
-    #[error("No inodes available for device {0:x},{1:x}")]
-    DeviceFull(u32, u32),
+    #[error("No inodes available for device {major:x},{minor:x}")]
+    DeviceFull { major: u32, minor: u32 },
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("Failed to read cpio data: {0}")]
+    DataRead(&'static str, #[source] io::Error),
+    #[error("Failed to write cpio data: {0}")]
+    DataWrite(&'static str, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
 
 /// Read u32 formatted as an ASCII 8-char wide hex string.
 fn read_int(mut reader: impl Read) -> io::Result<u32> {
-    let mut buf = [0u8; 8];
-    reader.read_exact(&mut buf)?;
+    let buf = reader.read_array_exact::<8>()?;
 
     let mut value = 0;
 
@@ -386,41 +390,39 @@ impl<R: Read> FromReader<R> for CpioEntry {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let mut magic = [0u8; 6];
-        reader.read_exact(&mut magic)?;
+        let magic = reader
+            .read_array_exact::<6>()
+            .map_err(|e| Error::DataRead("magic", e))?;
 
         if magic != *MAGIC_NEW && magic != *MAGIC_NEW_CRC {
             return Err(Error::UnknownMagic(magic));
         }
 
-        let inode = read_int(&mut reader)?;
-        let mode = read_int(&mut reader)?;
-        let uid = read_int(&mut reader)?;
-        let gid = read_int(&mut reader)?;
-        let nlink = read_int(&mut reader)?;
-        let mtime = read_int(&mut reader)?;
-        let file_size = read_int(&mut reader)?;
-        let dev_maj = read_int(&mut reader)?;
-        let dev_min = read_int(&mut reader)?;
-        let rdev_maj = read_int(&mut reader)?;
-        let rdev_min = read_int(&mut reader)?;
-        let path_size = read_int(&mut reader)?;
-        let crc32 = read_int(&mut reader)?;
+        let inode = read_int(&mut reader).map_err(|e| Error::DataRead("inode", e))?;
+        let mode = read_int(&mut reader).map_err(|e| Error::DataRead("mode", e))?;
+        let uid = read_int(&mut reader).map_err(|e| Error::DataRead("uid", e))?;
+        let gid = read_int(&mut reader).map_err(|e| Error::DataRead("gid", e))?;
+        let nlink = read_int(&mut reader).map_err(|e| Error::DataRead("nlink", e))?;
+        let mtime = read_int(&mut reader).map_err(|e| Error::DataRead("mtime", e))?;
+        let file_size = read_int(&mut reader).map_err(|e| Error::DataRead("file_size", e))?;
+        let dev_maj = read_int(&mut reader).map_err(|e| Error::DataRead("dev_maj", e))?;
+        let dev_min = read_int(&mut reader).map_err(|e| Error::DataRead("dev_min", e))?;
+        let rdev_maj = read_int(&mut reader).map_err(|e| Error::DataRead("rdev_maj", e))?;
+        let rdev_min = read_int(&mut reader).map_err(|e| Error::DataRead("rdev_min", e))?;
+        let path_size = read_int(&mut reader).map_err(|e| Error::DataRead("path_size", e))?;
+        let crc32 = read_int(&mut reader).map_err(|e| Error::DataRead("crc32", e))?;
 
         let mut path = read_data(
             &mut reader,
             path_size.to_usize().unwrap(),
             &AtomicBool::new(false),
-        )?;
+        )
+        .map_err(|e| Error::DataRead("path", e))?;
         if path.last() != Some(&b'\0') {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Filename is not NULL-terminated",
-            )
-            .into());
+            return Err(Error::PathNotNullTerminated(path));
         }
         path.pop();
-        padding::read_discard(&mut reader, 4)?;
+        padding::read_discard(&mut reader, 4).map_err(|e| Error::DataRead("path_padding", e))?;
 
         let file_type = CpioEntryType::from_mode(mode);
         let data = match file_type {
@@ -432,8 +434,10 @@ impl<R: Read> FromReader<R> for CpioEntry {
                     &mut reader,
                     file_size.to_usize().unwrap(),
                     &AtomicBool::new(false),
-                )?;
-                padding::read_discard(&mut reader, 4)?;
+                )
+                .map_err(|e| Error::DataRead("content", e))?;
+                padding::read_discard(&mut reader, 4)
+                    .map_err(|e| Error::DataRead("content_padding", e))?;
 
                 CpioEntryData::Data(content)
             }
@@ -482,35 +486,44 @@ impl<W: Write> ToWriter<W> for CpioEntry {
             return Err(Error::EntryHasData(self.file_type, self.path.clone()));
         }
 
-        if self.crc32 == 0 {
-            writer.write_all(MAGIC_NEW)?;
-        } else {
-            writer.write_all(MAGIC_NEW_CRC)?;
-        }
+        writer
+            .write_all(if self.crc32 == 0 {
+                MAGIC_NEW
+            } else {
+                MAGIC_NEW_CRC
+            })
+            .map_err(|e| Error::DataWrite("magic", e))?;
 
         let mode = self.file_type.to_mode() | u32::from(self.file_mode & 0o7777);
 
-        write_int(&mut writer, self.inode)?;
-        write_int(&mut writer, mode)?;
-        write_int(&mut writer, self.uid)?;
-        write_int(&mut writer, self.gid)?;
-        write_int(&mut writer, self.nlink)?;
-        write_int(&mut writer, self.mtime)?;
-        write_int(&mut writer, file_size)?;
-        write_int(&mut writer, self.dev_maj)?;
-        write_int(&mut writer, self.dev_min)?;
-        write_int(&mut writer, self.rdev_maj)?;
-        write_int(&mut writer, self.rdev_min)?;
-        write_int(&mut writer, path_size)?;
-        write_int(&mut writer, self.crc32)?;
+        write_int(&mut writer, self.inode).map_err(|e| Error::DataWrite("inode", e))?;
+        write_int(&mut writer, mode).map_err(|e| Error::DataWrite("mode", e))?;
+        write_int(&mut writer, self.uid).map_err(|e| Error::DataWrite("uid", e))?;
+        write_int(&mut writer, self.gid).map_err(|e| Error::DataWrite("gid", e))?;
+        write_int(&mut writer, self.nlink).map_err(|e| Error::DataWrite("nlink", e))?;
+        write_int(&mut writer, self.mtime).map_err(|e| Error::DataWrite("mtime", e))?;
+        write_int(&mut writer, file_size).map_err(|e| Error::DataWrite("file_size", e))?;
+        write_int(&mut writer, self.dev_maj).map_err(|e| Error::DataWrite("dev_maj", e))?;
+        write_int(&mut writer, self.dev_min).map_err(|e| Error::DataWrite("dev_min", e))?;
+        write_int(&mut writer, self.rdev_maj).map_err(|e| Error::DataWrite("rdev_maj", e))?;
+        write_int(&mut writer, self.rdev_min).map_err(|e| Error::DataWrite("rdev_min", e))?;
+        write_int(&mut writer, path_size).map_err(|e| Error::DataWrite("path_size", e))?;
+        write_int(&mut writer, self.crc32).map_err(|e| Error::DataWrite("crc32", e))?;
 
-        writer.write_all(&self.path)?;
-        writer.write_zeros_exact(1)?;
-        padding::write_zeros(&mut writer, 4)?;
+        writer
+            .write_all(&self.path)
+            .map_err(|e| Error::DataWrite("path", e))?;
+        writer
+            .write_zeros_exact(1)
+            .map_err(|e| Error::DataWrite("path", e))?;
+        padding::write_zeros(&mut writer, 4).map_err(|e| Error::DataWrite("path_padding", e))?;
 
         if let CpioEntryData::Data(d) = &self.data {
-            writer.write_all(d)?;
-            padding::write_zeros(&mut writer, 4)?;
+            writer
+                .write_all(d)
+                .map_err(|e| Error::DataWrite("content", e))?;
+            padding::write_zeros(&mut writer, 4)
+                .map_err(|e| Error::DataWrite("content_padding", e))?;
         }
 
         Ok(())
@@ -554,7 +567,8 @@ impl<R: Read> CpioReader<R> {
             return Ok(None);
         }
 
-        self.skip_data()?;
+        self.skip_data()
+            .map_err(|e| Error::DataRead("content", e))?;
 
         let entry = CpioEntry::from_reader(&mut self.reader)?;
 
@@ -619,7 +633,8 @@ impl<W: Write> CpioWriter<W> {
     }
 
     pub fn start_entry(&mut self, entry: &CpioEntry) -> Result<()> {
-        self.finish_entry()?;
+        self.finish_entry()
+            .map_err(|e| Error::DataWrite("content", e))?;
 
         entry.to_writer(&mut self.writer)?;
 
@@ -633,13 +648,15 @@ impl<W: Write> CpioWriter<W> {
     }
 
     pub fn finish(mut self) -> Result<W> {
-        self.finish_entry()?;
+        self.finish_entry()
+            .map_err(|e| Error::DataWrite("content", e))?;
 
         self.start_entry(&CpioEntry::new_trailer())?;
 
         // Pad until the end of the block.
         if self.pad_to_block_size {
-            padding::write_zeros(&mut self.writer, IO_BLOCK_SIZE)?;
+            padding::write_zeros(&mut self.writer, IO_BLOCK_SIZE)
+                .map_err(|e| Error::DataWrite("block_padding", e))?;
         }
 
         Ok(self.writer.finish().0)
@@ -677,14 +694,15 @@ pub fn load(
     let mut entries = vec![];
 
     while let Some(mut entry) = cpio_reader.next_entry()? {
-        stream::check_cancel(cancel_signal)?;
+        stream::check_cancel(cancel_signal).map_err(|e| Error::DataRead("entry", e))?;
 
         if entry.file_type != CpioEntryType::Directory && entry.nlink > 1 {
             return Err(Error::HardLinksNotSupported(entry.path));
         }
 
         if let CpioEntryData::Size(s) = entry.data {
-            let data = read_data(&mut cpio_reader, s.to_usize().unwrap(), cancel_signal)?;
+            let data = read_data(&mut cpio_reader, s.to_usize().unwrap(), cancel_signal)
+                .map_err(|e| Error::DataWrite("data", e))?;
             entry.data = CpioEntryData::Data(data);
         }
 
@@ -740,7 +758,10 @@ pub fn assign_inodes(entries: &mut [CpioEntry], missing_only: bool) -> Result<()
 
             while set.contains(&unused) {
                 if unused == *last {
-                    return Err(Error::DeviceFull(entry.dev_maj, entry.dev_min));
+                    return Err(Error::DeviceFull {
+                        major: entry.dev_maj,
+                        minor: entry.dev_min,
+                    });
                 }
 
                 unused = next_non_zero(unused);
@@ -764,7 +785,7 @@ pub fn save(
     let mut cpio_writer = CpioWriter::new(writer, pad_to_block_size);
 
     for entry in entries {
-        stream::check_cancel(cancel_signal)?;
+        stream::check_cancel(cancel_signal).map_err(|e| Error::DataWrite("entry", e))?;
 
         cpio_writer.start_entry(entry)?;
         // CpioEntryData::Data will have already been written.

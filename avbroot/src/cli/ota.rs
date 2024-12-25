@@ -1013,7 +1013,7 @@ fn patch_ota_zip(
                 // Use the user's certificate
                 info!("Replacing zip entry: {path}");
 
-                crypto::write_pem_cert(&mut writer, cert_ota)
+                crypto::write_pem_cert(Path::new(path), &mut writer, cert_ota)
                     .with_context(|| format!("Failed to write entry: {path}"))?;
             }
             ota::PATH_PAYLOAD => {

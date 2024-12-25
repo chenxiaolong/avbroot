@@ -5,9 +5,8 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Cursor, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    str,
     sync::atomic::AtomicBool,
 };
 
@@ -28,7 +27,7 @@ use crate::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
         HashTreeDescriptor, Header, KernelCmdlineDescriptor,
     },
-    stream::{self, check_cancel, PSeekFile, Reopen, ToWriter},
+    stream::{self, check_cancel, PSeekFile, ReadFixedSizeExt, Reopen, ToWriter},
     util,
 };
 
@@ -526,7 +525,7 @@ fn verify_and_repair(
             info!("Verifying hash tree descriptor{suffix}");
 
             match d.verify(&file, cancel_signal) {
-                Err(e @ avb::Error::HashTree(_)) if repair => {
+                Err(e @ avb::Error::HashTreeVerify(_)) if repair => {
                     warn!("Failed to verify hash tree descriptor{suffix}: {e}");
                     warn!("Attempting to repair using FEC data{suffix}");
 
@@ -639,9 +638,8 @@ fn compute_digest_recursive(
         .seek(SeekFrom::Start(header_offset))
         .with_context(|| format!("Failed to seek file: {path:?}"))?;
 
-    let mut raw_header_orig = vec![0u8; raw_header.len()];
-    raw_reader
-        .read_exact(&mut raw_header_orig)
+    let raw_header_orig = raw_reader
+        .read_vec_exact(raw_header.len())
         .with_context(|| format!("Failed to reread AVB header: {path:?}"))?;
 
     if raw_header != raw_header_orig {

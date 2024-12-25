@@ -6,6 +6,7 @@ use std::{
     fmt,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     iter,
+    path::Path,
     sync::atomic::AtomicBool,
 };
 
@@ -23,7 +24,7 @@ use crate::{
     crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
     format::payload::{self, PayloadHeader},
     protobuf::build::tools::releasetools::{ota_metadata::OtaType, OtaMetadata},
-    stream::{self, FromReader, HashingReader, HashingWriter},
+    stream::{self, FromReader, HashingReader, HashingWriter, ReadFixedSizeExt},
 };
 
 pub const PATH_METADATA: &str = "META-INF/com/android/metadata";
@@ -49,10 +50,12 @@ pub enum Error {
     OtaMagicNotFound,
     #[error("Cannot find EOCD magic")]
     EocdMagicNotFound,
-    #[error("EOCD magic found in archive comment")]
-    EocdMagicInComment,
+    #[error("EOCD magic found in archive comment at offset {0}")]
+    EocdMagicInComment(usize),
     #[error("Zip is too small to contain EOCD")]
     ZipTooSmall,
+    #[error("Zip archive comment is not empty: {0}")]
+    ZipNonEmptyComment(u16),
     #[error("Signature offset exceeds archive comment size")]
     SignatureOffsetTooLarge,
     #[error("Expected exactly one CMS embedded certificate, but found {0}")]
@@ -69,32 +72,50 @@ pub enum Error {
     UnsupportedLegacyMetadataField { key: String, value: String },
     #[error("Expected entry offsets {expected:?}, but have {actual:?}")]
     MismatchedPropertyFiles { expected: String, actual: String },
-    #[error("Property files {0:?} exceed {1} byte reserved space")]
-    InsufficientReservedSpace(String, usize),
+    #[error("Property files {value:?} exceed {reserved} byte reserved space")]
+    InsufficientReservedSpace { value: String, reserved: usize },
     #[error("Invalid property file entry: {0:?}")]
     InvalidPropertyFileEntry(String),
-    #[error("Missing entry in OTA zip: {0}")]
+    #[error("Missing entry in OTA zip: {0:?}")]
     MissingZipEntry(&'static str),
-    #[error("CMS signing error")]
-    CmsSign(#[from] crypto::Error),
-    #[error("Payload error")]
-    Payload(#[from] payload::Error),
-    #[error("Failed to decode protobuf message")]
-    ProtobufDecode(#[from] prost::DecodeError),
-    #[error("SPKI error")]
-    Spki(#[from] pkcs8::spki::Error),
-    #[error("x509 DER error")]
-    Der(#[from] x509_cert::der::Error),
-    #[error("Zip error")]
-    Zip(#[from] ZipError),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("Failed to decode OTA metadata protobuf message")]
+    MetadataDecode(#[source] prost::DecodeError),
+    #[error("Failed to open zip file")]
+    ZipOpen(#[source] ZipError),
+    #[error("Failed to open zip entry: {0:?}")]
+    ZipEntryOpen(&'static str, #[source] ZipError),
+    #[error("Failed to start new zip entry: {0:?}")]
+    ZipEntryStart(&'static str, #[source] ZipError),
+    #[error("Failed to read zip entry: {0:?}")]
+    ZipEntryRead(&'static str, #[source] io::Error),
+    #[error("Failed to write zip entry: {0:?}")]
+    ZipEntryWrite(&'static str, #[source] io::Error),
+    #[error("Failed to open zip entry #{0}")]
+    ZipIndexOpen(usize, #[source] ZipError),
+    #[error("Failed to load OTA certificate")]
+    OtaCertLoad(#[source] crypto::Error),
+    #[error("Failed to extract public key from OTA certificate")]
+    OtaCertExtractPubKey(#[source] crypto::Error),
+    #[error("Failed to load payload binary")]
+    PayloadLoad(#[source] payload::Error),
+    #[error("Failed to load CMS signature")]
+    CmsLoad(#[source] crypto::Error),
+    #[error("Failed to save CMS signature")]
+    CmsSave(#[source] x509_cert::der::Error),
+    #[error("Failed to generate CMS signature")]
+    CmsSign(#[source] crypto::Error),
+    #[error("Failed to verify CMS signature")]
+    CmsVerify(#[source] crypto::Error),
+    #[error("Failed to read OTA data: {0}")]
+    DataRead(&'static str, #[source] io::Error),
+    #[error("Failed to write OTA data: {0}")]
+    DataWrite(&'static str, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
 
 pub fn parse_protobuf_metadata(data: &[u8]) -> Result<OtaMetadata> {
-    Ok(OtaMetadata::decode(data)?)
+    OtaMetadata::decode(data).map_err(Error::MetadataDecode)
 }
 
 /// Synthesize protobuf structure from legacy plain-text metadata.
@@ -306,7 +327,7 @@ fn compute_property_files(
         let entry = entries
             .iter()
             .find(|e| e.name == path)
-            .ok_or_else(|| Error::MissingZipEntry(path))?;
+            .ok_or(Error::MissingZipEntry(path))?;
         let name = path.rsplit_once('/').map_or(path, |p| p.1);
 
         Ok(format!("{name}:{}:{}", entry.offset, entry.size))
@@ -349,7 +370,10 @@ fn compute_property_files(
 
     if let Some(l) = max_length {
         if joined.len() > l {
-            return Err(Error::InsufficientReservedSpace(joined, l));
+            return Err(Error::InsufficientReservedSpace {
+                value: joined,
+                reserved: l,
+            });
         }
 
         let remain = l - joined.len();
@@ -368,7 +392,7 @@ fn add_payload_metadata_entry(
     let payload_offset = entries
         .iter()
         .find(|e| e.name == PATH_PAYLOAD)
-        .ok_or_else(|| Error::MissingZipEntry(PATH_PAYLOAD))?
+        .ok_or(Error::MissingZipEntry(PATH_PAYLOAD))?
         .offset;
     entries.push(ZipEntry {
         name: NAME_PAYLOAD_METADATA.to_owned(),
@@ -433,13 +457,25 @@ pub fn add_metadata(
             ZipMode::Seekable => ZipWriter::new(raw_writer),
         };
 
-        writer.start_file_with_extra_data(PATH_METADATA, options)?;
-        let legacy_offset = writer.end_extra_data()?;
-        writer.write_all(legacy_raw.as_bytes())?;
+        writer
+            .start_file_with_extra_data(PATH_METADATA, options)
+            .map_err(|e| Error::ZipEntryStart(PATH_METADATA, e))?;
+        let legacy_offset = writer
+            .end_extra_data()
+            .map_err(|e| Error::ZipEntryStart(PATH_METADATA, e))?;
+        writer
+            .write_all(legacy_raw.as_bytes())
+            .map_err(|e| Error::ZipEntryWrite(PATH_METADATA, e))?;
 
-        writer.start_file_with_extra_data(PATH_METADATA_PB, options)?;
-        let modern_offset = writer.end_extra_data()?;
-        writer.write_all(&modern_raw)?;
+        writer
+            .start_file_with_extra_data(PATH_METADATA_PB, options)
+            .map_err(|e| Error::ZipEntryStart(PATH_METADATA_PB, e))?;
+        let modern_offset = writer
+            .end_extra_data()
+            .map_err(|e| Error::ZipEntryStart(PATH_METADATA_PB, e))?;
+        writer
+            .write_all(&modern_raw)
+            .map_err(|e| Error::ZipEntryWrite(PATH_METADATA_PB, e))?;
 
         zip_entries.push(ZipEntry {
             name: PATH_METADATA.to_owned(),
@@ -464,13 +500,25 @@ pub fn add_metadata(
     {
         let (legacy_raw, modern_raw) = serialize_metadata(&metadata);
 
-        zip_writer.start_file_with_extra_data(PATH_METADATA, options)?;
-        let legacy_offset = zip_writer.end_extra_data()?;
-        zip_writer.write_all(legacy_raw.as_bytes())?;
+        zip_writer
+            .start_file_with_extra_data(PATH_METADATA, options)
+            .map_err(|e| Error::ZipEntryStart(PATH_METADATA, e))?;
+        let legacy_offset = zip_writer
+            .end_extra_data()
+            .map_err(|e| Error::ZipEntryStart(PATH_METADATA, e))?;
+        zip_writer
+            .write_all(legacy_raw.as_bytes())
+            .map_err(|e| Error::ZipEntryWrite(PATH_METADATA, e))?;
 
-        zip_writer.start_file_with_extra_data(PATH_METADATA_PB, options)?;
-        let modern_offset = zip_writer.end_extra_data()?;
-        zip_writer.write_all(&modern_raw)?;
+        zip_writer
+            .start_file_with_extra_data(PATH_METADATA_PB, options)
+            .map_err(|e| Error::ZipEntryStart(PATH_METADATA_PB, e))?;
+        let modern_offset = zip_writer
+            .end_extra_data()
+            .map_err(|e| Error::ZipEntryStart(PATH_METADATA_PB, e))?;
+        zip_writer
+            .write_all(&modern_raw)
+            .map_err(|e| Error::ZipEntryWrite(PATH_METADATA_PB, e))?;
 
         assert_eq!(legacy_offset, temp_legacy_offset);
         assert_eq!(modern_offset, temp_modern_offset);
@@ -485,11 +533,13 @@ pub fn verify_metadata(
     metadata: &OtaMetadata,
     payload_metadata_size: u64,
 ) -> Result<()> {
-    let mut zip_reader = ZipArchive::new(reader)?;
+    let mut zip_reader = ZipArchive::new(reader).map_err(Error::ZipOpen)?;
     let mut zip_entries = vec![];
 
     for i in 0..zip_reader.len() {
-        let entry = zip_reader.by_index(i)?;
+        let entry = zip_reader
+            .by_index(i)
+            .map_err(|e| Error::ZipIndexOpen(i, e))?;
         zip_entries.push(ZipEntry {
             name: entry.name().to_owned(),
             offset: entry.data_start(),
@@ -520,11 +570,16 @@ pub fn verify_metadata(
 /// that's covered by the signature. This does not perform any parsing of zip
 /// data structures.
 fn parse_ota_sig(mut reader: impl Read + Seek) -> Result<(SignedData, u64)> {
-    let file_size = reader.seek(SeekFrom::End(0))?;
+    let file_size = reader
+        .seek(SeekFrom::End(0))
+        .map_err(|e| Error::DataRead("file_size", e))?;
 
-    reader.seek(SeekFrom::Current(-6))?;
-    let mut footer = [0u8; 6];
-    reader.read_exact(&mut footer)?;
+    reader
+        .seek(SeekFrom::Current(-6))
+        .map_err(|e| Error::DataRead("footer", e))?;
+    let footer = reader
+        .read_array_exact::<6>()
+        .map_err(|e| Error::DataRead("footer", e))?;
 
     let abs_eoc_offset = u16::from_le_bytes(footer[0..2].try_into().unwrap());
     let sig_magic = u16::from_le_bytes(footer[2..4].try_into().unwrap());
@@ -543,20 +598,24 @@ fn parse_ota_sig(mut reader: impl Read + Seek) -> Result<(SignedData, u64)> {
         return Err(Error::SignatureOffsetTooLarge);
     }
 
-    reader.seek(SeekFrom::Start(file_size - eocd_size))?;
-    let mut eocd = vec![0u8; eocd_size as usize];
-    reader.read_exact(&mut eocd)?;
+    reader
+        .seek(SeekFrom::Start(file_size - eocd_size))
+        .map_err(|e| Error::DataRead("eocd", e))?;
+    let eocd = reader
+        .read_vec_exact(eocd_size as usize)
+        .map_err(|e| Error::DataRead("eocd", e))?;
 
     let mut eocd_magic_iter = memmem::find_iter(&eocd, ZIP_EOCD_MAGIC);
     if eocd_magic_iter.next() != Some(0) {
         return Err(Error::EocdMagicNotFound);
     }
-    if eocd_magic_iter.next().is_some() {
-        return Err(Error::EocdMagicInComment);
+    if let Some(offset) = eocd_magic_iter.next() {
+        return Err(Error::EocdMagicInComment(offset));
     }
 
     let sig_offset = eocd_size as usize - usize::from(abs_eoc_offset);
-    let sd = crypto::parse_cms(&eocd[sig_offset..eocd_size as usize - 6])?;
+    let sd =
+        crypto::parse_cms(&eocd[sig_offset..eocd_size as usize - 6]).map_err(Error::CmsLoad)?;
     // The signature covers everything aside from the archive comment and its
     // length field.
     let hashed_size = file_size - 2 - u64::from(comment_size);
@@ -582,7 +641,7 @@ pub fn verify_ota(mut reader: impl Read + Seek, cancel_signal: &AtomicBool) -> R
     }
 
     let cert = &certs[0];
-    let public_key = crypto::get_public_key(cert)?;
+    let public_key = crypto::get_public_key(cert).map_err(Error::OtaCertExtractPubKey)?;
 
     // Make sure this is a signature scheme we can handle. There's currently no
     // Rust library to verify arbitrary CMS signatures for large files without
@@ -603,7 +662,9 @@ pub fn verify_ota(mut reader: impl Read + Seek, cancel_signal: &AtomicBool) -> R
     }
 
     // Manually hash the parts of the file covered by the signature.
-    reader.seek(SeekFrom::Start(0))?;
+    reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|e| Error::DataRead("raw_data", e))?;
 
     // We support SHA1 for verification only.
     let (algorithm, algo) = if signer.digest_alg.oid == rfc5912::ID_SHA_256 {
@@ -617,13 +678,16 @@ pub fn verify_ota(mut reader: impl Read + Seek, cancel_signal: &AtomicBool) -> R
 
     let mut hashing_reader = HashingReader::new(reader, Context::new(algorithm));
 
-    stream::copy_n(&mut hashing_reader, io::sink(), hashed_size, cancel_signal)?;
+    stream::copy_n(&mut hashing_reader, io::sink(), hashed_size, cancel_signal)
+        .map_err(|e| Error::DataRead("raw_data", e))?;
 
     let (_, context) = hashing_reader.finish();
     let digest = context.finish();
 
     // Verify the signature against the public key.
-    public_key.verify_sig(algo, digest.as_ref(), signer.signature.as_bytes())?;
+    public_key
+        .verify_sig(algo, digest.as_ref(), signer.signature.as_bytes())
+        .map_err(Error::CmsVerify)?;
 
     Ok(cert.clone())
 }
@@ -633,38 +697,52 @@ pub fn verify_ota(mut reader: impl Read + Seek, cancel_signal: &AtomicBool) -> R
 pub fn parse_zip_ota_info(
     reader: impl Read + Seek,
 ) -> Result<(OtaMetadata, Certificate, PayloadHeader, String)> {
-    let mut zip = ZipArchive::new(reader)?;
+    let mut zip = ZipArchive::new(reader).map_err(Error::ZipOpen)?;
 
     let metadata = match zip.by_name(PATH_METADATA_PB) {
         Ok(mut entry) => {
             let mut buf = Vec::new();
-            entry.read_to_end(&mut buf)?;
+            entry
+                .read_to_end(&mut buf)
+                .map_err(|e| Error::ZipEntryRead(PATH_METADATA_PB, e))?;
             parse_protobuf_metadata(&buf)?
         }
         e @ Err(ZipError::FileNotFound) => {
             drop(e);
-            let mut entry = zip.by_name(PATH_METADATA)?;
+            let mut entry = zip
+                .by_name(PATH_METADATA)
+                .map_err(|e| Error::ZipEntryOpen(PATH_METADATA, e))?;
             let mut buf = String::new();
-            entry.read_to_string(&mut buf)?;
+            entry
+                .read_to_string(&mut buf)
+                .map_err(|e| Error::ZipEntryRead(PATH_METADATA, e))?;
             parse_legacy_metadata(&buf)?
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(Error::ZipEntryOpen(PATH_METADATA_PB, e)),
     };
 
     let certificate = {
-        let entry = zip.by_name(PATH_OTACERT)?;
-        crypto::read_pem_cert(entry)?
+        let entry = zip
+            .by_name(PATH_OTACERT)
+            .map_err(|e| Error::ZipEntryOpen(PATH_OTACERT, e))?;
+        crypto::read_pem_cert(Path::new(PATH_OTACERT), entry).map_err(Error::OtaCertLoad)?
     };
 
     let header = {
-        let entry = zip.by_name(PATH_PAYLOAD)?;
-        PayloadHeader::from_reader(entry)?
+        let entry = zip
+            .by_name(PATH_PAYLOAD)
+            .map_err(|e| Error::ZipEntryOpen(PATH_PAYLOAD, e))?;
+        PayloadHeader::from_reader(entry).map_err(Error::PayloadLoad)?
     };
 
     let properties = {
-        let mut entry = zip.by_name(PATH_PROPERTIES)?;
+        let mut entry = zip
+            .by_name(PATH_PROPERTIES)
+            .map_err(|e| Error::ZipEntryOpen(PATH_PROPERTIES, e))?;
         let mut buf = String::new();
-        entry.read_to_string(&mut buf)?;
+        entry
+            .read_to_string(&mut buf)
+            .map_err(|e| Error::ZipEntryRead(PATH_PROPERTIES, e))?;
         buf
     };
 
@@ -672,17 +750,12 @@ pub fn parse_zip_ota_info(
 }
 
 /// Ensure that we're using a non-zip64 EOCD and there's no archive comment.
-fn validate_eocd(eocd: &[u8]) -> io::Result<()> {
+fn validate_eocd(eocd: &[u8]) -> Result<()> {
     if &eocd[..4] != b"PK\x05\x06" {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "EOCD magic not found",
-        ));
+        return Err(Error::EocdMagicNotFound);
     } else if &eocd[20..22] != b"\0\0" {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Archive comment is not 0 bytes",
-        ));
+        let size = u16::from_le_bytes(eocd[20..22].try_into().unwrap());
+        return Err(Error::ZipNonEmptyComment(size));
     }
 
     Ok(())
@@ -697,8 +770,9 @@ fn compute_signature_comment(
     cert: &Certificate,
     digest: ring::digest::Digest,
 ) -> Result<Vec<u8>> {
-    let cms_signature = crypto::cms_sign_external(key, cert, digest.as_ref())?;
-    let cms_signature_der = cms_signature.to_der()?;
+    let cms_signature =
+        crypto::cms_sign_external(key, cert, digest.as_ref()).map_err(Error::CmsSign)?;
+    let cms_signature_der = cms_signature.to_der().map_err(Error::CmsSave)?;
 
     // Includes placeholder for the EOCD comment size field.
     let mut buf = vec![0; 2];
@@ -720,12 +794,8 @@ fn compute_signature_comment(
     // Archive comment size (for use by the OTA signature verifier).
     buf.extend(((comment_size) as u16).to_le_bytes());
 
-    if let Some(o) = memmem::find(&buf[2..], ZIP_EOCD_MAGIC) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Archive comment contains EOCD magic at offset {o}"),
-        )
-        .into());
+    if let Some(offset) = memmem::find(&buf[2..], ZIP_EOCD_MAGIC) {
+        return Err(Error::EocdMagicInComment(offset));
     }
 
     // Archive comment size (for the EOCD comment size field).
@@ -758,21 +828,23 @@ impl<W: Write> StreamingSigningWriter<W> {
 
     pub fn finish(mut self, key: &RsaSigningKey, cert: &Certificate) -> Result<W> {
         if self.used < self.queue.len() {
-            return Err(
-                io::Error::new(io::ErrorKind::InvalidData, "Too small to contain EOCD").into(),
-            );
+            return Err(Error::ZipTooSmall);
         }
 
         validate_eocd(&self.queue)?;
 
         // Chop off the archive comment size field and write the remaining data.
-        self.inner.write_all(&self.queue[..20])?;
+        self.inner
+            .write_all(&self.queue[..20])
+            .map_err(|e| Error::DataWrite("eocd_minus_comment", e))?;
 
         let (mut raw_writer, context) = self.inner.finish();
         let digest = context.finish();
 
         let size_and_comment = compute_signature_comment(key, cert, digest)?;
-        raw_writer.write_all(&size_and_comment)?;
+        raw_writer
+            .write_all(&size_and_comment)
+            .map_err(|e| Error::DataWrite("size_and_comment", e))?;
 
         Ok(raw_writer)
     }
@@ -832,18 +904,20 @@ impl<W: Read + Write + Seek> SeekableSigningWriter<W> {
         cert: &Certificate,
         cancel_signal: &AtomicBool,
     ) -> Result<W> {
-        let file_size = self.seek(SeekFrom::End(0))?;
+        let file_size = self
+            .seek(SeekFrom::End(0))
+            .map_err(|e| Error::DataRead("file_size", e))?;
 
         // Android only supports non-zip64 EOCD.
         if file_size < 22 {
-            return Err(
-                io::Error::new(io::ErrorKind::InvalidData, "Too small to contain EOCD").into(),
-            );
+            return Err(Error::ZipTooSmall);
         }
 
-        self.seek_relative(-22)?;
-        let mut eocd = [0u8; 22];
-        self.read_exact(&mut eocd)?;
+        self.seek_relative(-22)
+            .map_err(|e| Error::DataRead("eocd", e))?;
+        let eocd = self
+            .read_array_exact::<22>()
+            .map_err(|e| Error::DataRead("eocd", e))?;
 
         validate_eocd(&eocd)?;
 
@@ -853,13 +927,16 @@ impl<W: Read + Write + Seek> SeekableSigningWriter<W> {
             ring::digest::Context::new(&ring::digest::SHA256),
         );
 
-        self.rewind()?;
-        stream::copy_n(&mut self, &mut hashing_writer, file_size - 2, cancel_signal)?;
+        self.rewind().map_err(|e| Error::DataRead("raw_data", e))?;
+        stream::copy_n(&mut self, &mut hashing_writer, file_size - 2, cancel_signal)
+            .map_err(|e| Error::DataRead("raw_data", e))?;
 
         let digest = hashing_writer.finish().1.finish();
 
         let size_and_comment = compute_signature_comment(key, cert, digest)?;
-        self.inner.write_all(&size_and_comment)?;
+        self.inner
+            .write_all(&size_and_comment)
+            .map_err(|e| Error::DataWrite("size_and_comment", e))?;
 
         Ok(self.inner)
     }

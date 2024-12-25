@@ -96,8 +96,10 @@ pub enum Error {
     #[error("Gap between end of last chunk {prev_end} and start of new chunk {cur_start}")]
     GapBetweenChunks { prev_end: u32, cur_start: u32 },
     // Wrapped errors.
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("Failed to read sparse data: {0}")]
+    DataRead(&'static str, #[source] io::Error),
+    #[error("Failed to write sparse data: {0}")]
+    DataWrite(&'static str, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -694,11 +696,14 @@ impl<R: Read> SparseReader<R> {
     /// data chunks if they are not needed. If the underlying file is seekable
     /// and skipping chunks is needed, use [`Self::new_seekable`] instead.
     pub fn new(mut inner: R, crc_mode: CrcMode) -> Result<Self> {
-        let header = RawHeader::read_from_io(&mut inner)?;
+        let header =
+            RawHeader::read_from_io(&mut inner).map_err(|e| Error::DataRead("header", e))?;
 
         header.validate()?;
 
-        inner.read_discard(header.excess_raw_header_bytes().into())?;
+        inner
+            .read_discard(header.excess_raw_header_bytes().into())
+            .map_err(|e| Error::DataRead("header_excess", e))?;
 
         Ok(Self {
             inner,
@@ -741,7 +746,8 @@ impl<R: Read> SparseReader<R> {
                     return Err(Error::Crc32RandomRead);
                 }
 
-                seek(&mut self.inner, SeekFrom::Current(self.data_remain.into()))?;
+                seek(&mut self.inner, SeekFrom::Current(self.data_remain.into()))
+                    .map_err(|e| Error::DataRead("data_remain", e))?;
                 self.data_remain = 0;
             } else {
                 return Err(Error::UnreadChunkData(self.data_remain));
@@ -752,12 +758,14 @@ impl<R: Read> SparseReader<R> {
             return Ok(None);
         }
 
-        let raw_chunk = RawChunk::read_from_io(&mut self.inner)?;
+        let raw_chunk =
+            RawChunk::read_from_io(&mut self.inner).map_err(|e| Error::DataRead("chunk", e))?;
 
         raw_chunk.validate(self.chunk, &self.header, self.block)?;
 
         self.inner
-            .read_discard(self.header.excess_raw_chunk_bytes().into())?;
+            .read_discard(self.header.excess_raw_chunk_bytes().into())
+            .map_err(|e| Error::DataRead("chunk_excess", e))?;
 
         let data: ChunkData;
 
@@ -769,7 +777,8 @@ impl<R: Read> SparseReader<R> {
                 data = ChunkData::Data;
             }
             CHUNK_TYPE_FILL => {
-                let fill_value = little_endian::U32::read_from_io(&mut self.inner)?;
+                let fill_value = little_endian::U32::read_from_io(&mut self.inner)
+                    .map_err(|e| Error::DataRead("chunk_fill_value", e))?;
 
                 if let Some(hasher) = &mut self.hasher {
                     hash_fill_chunk(&raw_chunk, fill_value, &self.header, hasher);
@@ -785,7 +794,8 @@ impl<R: Read> SparseReader<R> {
                 data = ChunkData::Hole;
             }
             CHUNK_TYPE_CRC32 => {
-                let expected = little_endian::U32::read_from_io(&mut self.inner)?;
+                let expected = little_endian::U32::read_from_io(&mut self.inner)
+                    .map_err(|e| Error::DataRead("chunk_crc32", e))?;
 
                 if let Some(hasher) = &mut self.hasher {
                     let actual = hasher.clone().finalize();
@@ -886,7 +896,9 @@ impl<W: Write> SparseWriter<W> {
 
         header.validate()?;
 
-        header.write_to_io(&mut inner)?;
+        header
+            .write_to_io(&mut inner)
+            .map_err(|e| Error::DataWrite("header", e))?;
 
         Ok(Self {
             inner,
@@ -937,7 +949,9 @@ impl<W: Write> SparseWriter<W> {
         self.chunk += 1;
         self.block = chunk.bounds.end;
 
-        raw_chunk.write_to_io(&mut self.inner)?;
+        raw_chunk
+            .write_to_io(&mut self.inner)
+            .map_err(|e| Error::DataWrite("chunk", e))?;
 
         match chunk.data {
             ChunkData::Data => {
@@ -945,7 +959,9 @@ impl<W: Write> SparseWriter<W> {
                     raw_chunk.total_sz.get() - u32::from(self.header.chunk_hdr_sz.get());
             }
             ChunkData::Fill(fill_value) => {
-                self.inner.write_all(&fill_value.to_le_bytes())?;
+                self.inner
+                    .write_all(&fill_value.to_le_bytes())
+                    .map_err(|e| Error::DataWrite("chunk_fill_value", e))?;
 
                 hash_fill_chunk(
                     &raw_chunk,
@@ -958,7 +974,9 @@ impl<W: Write> SparseWriter<W> {
                 hash_fill_chunk(&raw_chunk, 0.into(), &self.header, &mut self.hasher);
             }
             ChunkData::Crc32(expected) => {
-                self.inner.write_all(&expected.to_le_bytes())?;
+                self.inner
+                    .write_all(&expected.to_le_bytes())
+                    .map_err(|e| Error::DataWrite("chunk_crc32", e))?;
 
                 let actual = self.hasher.clone().finalize();
                 if actual != expected {

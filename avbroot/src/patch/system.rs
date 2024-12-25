@@ -21,7 +21,7 @@ use crate::{
         ota,
     },
     patch::otacert,
-    stream::{self, ReadSeekReopen, SectionReader, WriteSeekReopen},
+    stream::{self, ReadFixedSizeExt, ReadSeekReopen, SectionReader, WriteSeekReopen},
     util,
 };
 
@@ -35,12 +35,14 @@ pub enum Error {
     NoHashTreeDescriptor,
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
-    #[error("AVB error")]
-    Avb(#[from] avb::Error),
-    #[error("OTA certificate error")]
-    OtaCert(#[from] otacert::Error),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("Failed to update AVB header")]
+    AvbUpdate(#[source] avb::Error),
+    #[error("Failed to generate replacement otacerts zip")]
+    OtaCertZip(#[source] otacert::Error),
+    #[error("Failed to read image data")]
+    ReadData(#[source] io::Error),
+    #[error("Failed to write image data")]
+    WriteData(#[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -119,11 +121,15 @@ pub fn patch_system_image(
 
     let parent_span = Span::current();
 
-    let (mut header, footer, image_size) = avb::load_image(input.reopen_boxed()?)?;
+    let (mut header, footer, image_size) =
+        avb::load_image(input.reopen_boxed().map_err(Error::ReadData)?)
+            .map_err(Error::AvbUpdate)?;
     let Some(mut footer) = footer else {
         return Err(Error::NoFooter);
     };
-    let AppendedDescriptorMut::HashTree(descriptor) = header.appended_descriptor_mut()? else {
+    let AppendedDescriptorMut::HashTree(descriptor) =
+        header.appended_descriptor_mut().map_err(Error::AvbUpdate)?
+    else {
         return Err(Error::NoHashTreeDescriptor);
     };
 
@@ -133,17 +139,20 @@ pub fn patch_system_image(
     let modified_ranges = (0..num_chunks)
         .into_par_iter()
         .map(|chunk| -> Result<Vec<Range<u64>>> {
-            stream::check_cancel(cancel_signal)?;
+            stream::check_cancel(cancel_signal).map_err(Error::ReadData)?;
 
             let offset = chunk * CHUNK_SIZE;
             let size = CHUNK_SIZE.min(footer.original_image_size - offset);
-            let mut buf = vec![0u8; size as usize];
 
-            let mut reader = input.reopen_boxed()?;
-            reader.seek(SeekFrom::Start(offset))?;
-            reader.read_exact(&mut buf)?;
+            let mut reader = input.reopen_boxed().map_err(Error::ReadData)?;
+            reader
+                .seek(SeekFrom::Start(offset))
+                .map_err(Error::ReadData)?;
+            let buf = reader
+                .read_vec_exact(size as usize)
+                .map_err(Error::ReadData)?;
 
-            let mut writer = output.reopen_boxed()?;
+            let mut writer = output.reopen_boxed().map_err(Error::WriteData)?;
             let mut ranges = Vec::<Range<u64>>::new();
 
             for eocd_offset_rel in memmem::find_iter(&buf, ota::ZIP_EOCD_MAGIC) {
@@ -155,14 +164,17 @@ pub fn patch_system_image(
                 };
 
                 let zip_size = bounds_rel.end - bounds_rel.start;
-                let new_zip = otacert::create_zip_with_size(certificate, zip_size)?;
+                let new_zip = otacert::create_zip_with_size(certificate, zip_size)
+                    .map_err(Error::OtaCertZip)?;
 
                 let bounds = offset + bounds_rel.start as u64..offset + bounds_rel.end as u64;
 
-                stream::check_cancel(cancel_signal)?;
+                stream::check_cancel(cancel_signal).map_err(Error::WriteData)?;
 
-                writer.seek(SeekFrom::Start(bounds.start))?;
-                writer.write_all(&new_zip)?;
+                writer
+                    .seek(SeekFrom::Start(bounds.start))
+                    .map_err(Error::WriteData)?;
+                writer.write_all(&new_zip).map_err(Error::WriteData)?;
 
                 ranges.push(bounds);
             }
@@ -196,18 +208,23 @@ pub fn patch_system_image(
         Some(modified_ranges.as_slice())
     };
 
-    descriptor.update(input, output, update_ranges, cancel_signal)?;
+    descriptor
+        .update(input, output, update_ranges, cancel_signal)
+        .map_err(Error::AvbUpdate)?;
 
     if !header.public_key.is_empty() {
         debug!("Signing system image");
-        header.set_algo_for_key(key)?;
-        header.sign(key)?;
+        header.set_algo_for_key(key).map_err(Error::AvbUpdate)?;
+        header.sign(key).map_err(Error::AvbUpdate)?;
     }
 
-    let writer = output.reopen_boxed()?;
-    avb::write_appended_image(writer, &header, &mut footer, Some(image_size))?;
+    let writer = output.reopen_boxed().map_err(Error::WriteData)?;
+    avb::write_appended_image(writer, &header, &mut footer, Some(image_size))
+        .map_err(Error::AvbUpdate)?;
 
-    let AppendedDescriptorMut::HashTree(descriptor) = header.appended_descriptor_mut()? else {
+    let AppendedDescriptorMut::HashTree(descriptor) =
+        header.appended_descriptor_mut().map_err(Error::AvbUpdate)?
+    else {
         return Err(Error::NoHashTreeDescriptor);
     };
 
@@ -215,15 +232,15 @@ pub fn patch_system_image(
     let hash_tree_end = descriptor
         .tree_offset
         .checked_add(descriptor.tree_size)
-        .ok_or_else(|| Error::IntOverflow("hash_tree_end"))?;
+        .ok_or(Error::IntOverflow("hash_tree_end"))?;
     let fec_data_end = descriptor
         .fec_offset
         .checked_add(descriptor.fec_size)
-        .ok_or_else(|| Error::IntOverflow("fec_data_end"))?;
+        .ok_or(Error::IntOverflow("fec_data_end"))?;
     let header_end = footer
         .vbmeta_offset
         .checked_add(footer.vbmeta_size)
-        .ok_or_else(|| Error::IntOverflow("avb_end"))?;
+        .ok_or(Error::IntOverflow("avb_end"))?;
     let footer_start = image_size - Footer::SIZE as u64;
 
     let other_ranges = util::merge_overlapping(&[

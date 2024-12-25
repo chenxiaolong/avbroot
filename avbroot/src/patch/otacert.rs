@@ -1,7 +1,7 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::{borrow::Cow, cmp::Ordering, io::Cursor};
+use std::{borrow::Cow, cmp::Ordering, io::Cursor, path::Path};
 
 use bitflags::bitflags;
 use thiserror::Error;
@@ -17,12 +17,10 @@ pub enum Error {
     ZipTooSmall(usize),
     #[error("New otacerts.zip is too large to fit in {0} bytes")]
     ZipTooLarge(usize),
-    #[error("Crypto error")]
-    Crypto(#[from] crypto::Error),
-    #[error("x509 DER error")]
-    Der(#[from] x509_cert::der::Error),
-    #[error("Zip error")]
-    Zip(#[from] ZipError),
+    #[error("Failed to write otacerts zip")]
+    ZipWrite(#[source] ZipError),
+    #[error("Failed to write certificate to otacerts zip")]
+    CertWrite(#[source] crypto::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -82,7 +80,8 @@ pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8
     };
 
     let options = FileOptions::default().compression_method(compression_method);
-    writer.start_file("ota.x509.pem", options)?;
+    let name = "ota.x509.pem";
+    writer.start_file(name, options).map_err(Error::ZipWrite)?;
 
     let cert = if flags.is_empty() {
         Cow::Borrowed(cert)
@@ -90,7 +89,9 @@ pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8
         let mut modified = cert.clone();
 
         if flags.contains(OtaCertBuildFlags::REMOVE_SIGNATURE) {
-            modified.signature = BitString::from_bytes(&[])?;
+            // An empty ASN.1 bit string is always valid.
+            modified.signature =
+                BitString::from_bytes(&[]).expect("Empty ASN.1 bit string was invalid");
         }
         if flags.contains(OtaCertBuildFlags::REMOVE_EXTENSIONS) {
             if let Some(extensions) = &mut modified.tbs_certificate.extensions {
@@ -109,9 +110,9 @@ pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8
         Cow::Owned(modified)
     };
 
-    crypto::write_pem_cert(&mut writer, &cert)?;
+    crypto::write_pem_cert(Path::new(name), &mut writer, &cert).map_err(Error::CertWrite)?;
 
-    let raw_writer = writer.finish()?;
+    let raw_writer = writer.finish().map_err(Error::ZipWrite)?;
 
     Ok(raw_writer.into_inner())
 }

@@ -6,11 +6,11 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Write,
     fs::File,
-    io::{self, BufRead, BufReader, Cursor, Read, Seek},
+    io::{self, BufRead, BufReader, Cursor, Read},
     num::ParseIntError,
     ops::{Range, RangeFrom},
     path::{Path, PathBuf},
-    slice,
+    slice, str,
     sync::atomic::AtomicBool,
 };
 
@@ -42,8 +42,6 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("No compatible boot image found for {0}")]
-    NoTargets(&'static str),
     #[error("Boot image has no vbmeta footer")]
     NoFooter,
     #[error("No hash descriptor found in vbmeta header")]
@@ -54,41 +52,80 @@ pub enum Error {
     ParseMagiskVersion(String, #[source] ParseIntError),
     #[error("Failed to determine Magisk version from: {0:?}")]
     FindMagiskVersion(PathBuf),
-    #[error("AVB error")]
-    Avb(#[from] avb::Error),
-    #[error("Boot image error")]
-    BootImage(#[from] bootimage::Error),
-    #[error("Compression error")]
-    Compression(#[from] compression::Error),
-    #[error("Crypto error")]
-    Crypto(#[from] crypto::Error),
-    #[error("CPIO error")]
-    Cpio(#[from] cpio::Error),
-    #[error("OTA certificate error")]
-    OtaCert(#[from] otacert::Error),
-    #[error("XZ stream error")]
-    XzStream(#[from] liblzma::stream::Error),
-    #[error("Zip error")]
-    Zip(#[source] ZipError),
-    #[error("Zip error for entry name: {0:?}")]
-    ZipEntryName(String, #[source] ZipError),
-    #[error("Zip error for entry index #{0}")]
-    ZipEntryIndex(usize, #[source] ZipError),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
-    #[error("File I/O error")]
-    File(PathBuf, #[source] io::Error),
+    #[error("Failed to load potentially compressed ramdisk")]
+    RamdiskLoadCompression(#[source] compression::Error),
+    #[error("Failed to save potentially compressed ramdisk")]
+    RamdiskSaveCompression(#[source] compression::Error),
+    #[error("Failed to finalize compressed ramdisk")]
+    RamdiskSaveCompressionFinalize(#[source] io::Error),
+    #[error("Failed to load ramdisk cpio entries")]
+    RamdiskLoadCpio(#[source] cpio::Error),
+    #[error("Failed to save ramdisk cpio entries")]
+    RamdiskSaveCpio(#[source] cpio::Error),
+    #[error("Failed to load potentially compressed kernel")]
+    KernelLoadCompression(#[source] compression::Error),
+    #[error("Failed to read kernel image")]
+    KernelRead(#[source] io::Error),
+    #[error("Failed to load boot image")]
+    BootImageLoad(#[source] bootimage::Error),
+    #[error("Failed to save boot image")]
+    BootImageSave(#[source] bootimage::Error),
+    #[error("Failed to seek boot image")]
+    BootImageSeek(#[source] io::Error),
+    #[error("Failed to encode public key in AVB binary format")]
+    AvbEncodeKey(#[source] avb::Error),
+    #[error("Failed to load AVB header from boot image")]
+    AvbLoad(#[source] avb::Error),
+    #[error("Failed to update AVB header for boot image")]
+    AvbUpdate(#[source] avb::Error),
+    #[error("Failed to load OTA certificate")]
+    OtaCertLoad(#[source] crypto::Error),
+    #[error("Failed to generate replacement otacerts zip")]
+    OtaCertZip(#[source] otacert::Error),
+    #[error("Failed to initialize XZ encoder")]
+    XzInit(#[source] liblzma::stream::Error),
+    #[error("Failed to XZ compress entry: {:?}", .0.as_bstr())]
+    XzCompress(Vec<u8>, #[source] io::Error),
+    #[error("Failed to open zip file: {0:?}")]
+    ZipOpen(PathBuf, #[source] ZipError),
+    #[error("Failed to open zip entry: {0:?}")]
+    ZipEntryOpen(&'static str, #[source] ZipError),
+    #[error("Failed to read zip entry: {0:?}")]
+    ZipEntryRead(&'static str, #[source] io::Error),
+    #[error("Failed to open zip entry #{0}")]
+    ZipIndexOpen(usize, #[source] ZipError),
+    #[error("Failed to open file: {0:?}")]
+    FileOpen(PathBuf, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Error)]
+pub enum TargetsError {
+    #[error("No compatible boot image found for {0}")]
+    NoTargets(&'static str),
+    #[error("Targets validation error: {0}")]
+    TargetValidation(String),
+    #[error("Failed to open boot image: {0}")]
+    Open(String, #[source] io::Error),
+    #[error("Failed to load boot image: {0}")]
+    Load(String, #[source] Error),
+    #[error("Failed to save boot image: {0}")]
+    Save(String, #[source] Error),
+    #[error("Failed to patch boot image: {0}")]
+    Patch(String, #[source] Error),
+}
+
+type TargetsResult<T> = std::result::Result<T, TargetsError>;
 
 fn load_ramdisk(
     data: &[u8],
     cancel_signal: &AtomicBool,
 ) -> Result<(Vec<CpioEntry>, CompressedFormat)> {
     let raw_reader = Cursor::new(data);
-    let mut reader = CompressedReader::new(raw_reader, false)?;
-    let entries = cpio::load(&mut reader, false, cancel_signal)?;
+    let mut reader =
+        CompressedReader::new(raw_reader, false).map_err(Error::RamdiskLoadCompression)?;
+    let entries = cpio::load(&mut reader, false, cancel_signal).map_err(Error::RamdiskLoadCpio)?;
 
     trace!(
         "Loaded {:?} ramdisk with {} entries",
@@ -105,12 +142,15 @@ fn save_ramdisk(
     cancel_signal: &AtomicBool,
 ) -> Result<Vec<u8>> {
     let raw_writer = Cursor::new(vec![]);
-    let mut writer = CompressedWriter::new(raw_writer, format)?;
-    cpio::save(&mut writer, entries, false, cancel_signal)?;
+    let mut writer =
+        CompressedWriter::new(raw_writer, format).map_err(Error::RamdiskSaveCompression)?;
+    cpio::save(&mut writer, entries, false, cancel_signal).map_err(Error::RamdiskSaveCpio)?;
 
     trace!("Wrote {format:?} ramdisk with {} entries", entries.len());
 
-    let raw_writer = writer.finish()?;
+    let raw_writer = writer
+        .finish()
+        .map_err(Error::RamdiskSaveCompressionFinalize)?;
     Ok(raw_writer.into_inner())
 }
 
@@ -131,7 +171,7 @@ pub trait BootImagePatch {
         &self,
         boot_images: &HashMap<&'a str, BootImageInfo>,
         cancel_signal: &AtomicBool,
-    ) -> Result<Vec<&'a str>>;
+    ) -> TargetsResult<Vec<&'a str>>;
 
     fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()>;
 }
@@ -217,18 +257,21 @@ impl MagiskRootPatcher {
     }
 
     fn get_version(path: &Path) -> Result<u32> {
-        let reader = File::open(path).map_err(|e| Error::File(path.to_owned(), e))?;
-        let reader = BufReader::new(reader);
-        let mut zip = ZipArchive::new(reader).map_err(Error::Zip)?;
+        let reader = File::open(path)
+            .map(BufReader::new)
+            .map_err(|e| Error::FileOpen(path.to_owned(), e))?;
+        let mut zip = ZipArchive::new(reader).map_err(|e| Error::ZipOpen(path.to_owned(), e))?;
         let entry = zip
             .by_name(Self::ZIP_UTIL_FUNCTIONS)
-            .map_err(|e| Error::ZipEntryName(Self::ZIP_UTIL_FUNCTIONS.to_owned(), e))?;
+            .map_err(|e| Error::ZipEntryOpen(Self::ZIP_UTIL_FUNCTIONS, e))?;
         let mut entry = BufReader::new(entry);
         let mut line = String::new();
 
         loop {
             line.clear();
-            let n = entry.read_line(&mut line)?;
+            let n = entry
+                .read_line(&mut line)
+                .map_err(|e| Error::ZipEntryRead(Self::ZIP_UTIL_FUNCTIONS, e))?;
             if n == 0 {
                 return Err(Error::FindMagiskVersion(path.to_owned()));
             }
@@ -244,14 +287,14 @@ impl MagiskRootPatcher {
         }
     }
 
-    fn xz_compress(reader: impl Read, cancel_signal: &AtomicBool) -> Result<Vec<u8>> {
-        let stream = Stream::new_easy_encoder(9, Check::Crc32)?;
+    fn xz_compress(name: &[u8], reader: impl Read, cancel_signal: &AtomicBool) -> Result<Vec<u8>> {
+        let stream = Stream::new_easy_encoder(9, Check::Crc32).map_err(Error::XzInit)?;
         let raw_writer = Cursor::new(Vec::new());
         let mut writer = XzEncoder::new_stream(raw_writer, stream);
 
-        stream::copy(reader, &mut writer, cancel_signal)?;
-
-        let raw_writer = writer.finish()?;
+        let raw_writer = stream::copy(reader, &mut writer, cancel_signal)
+            .and_then(|_| writer.finish())
+            .map_err(|e| Error::XzCompress(name.to_owned(), e))?;
 
         Ok(raw_writer.into_inner())
     }
@@ -340,7 +383,7 @@ impl MagiskRootPatcher {
                     new_path.extend(b".xz");
 
                     let reader = Cursor::new(data);
-                    let buf = Self::xz_compress(reader, cancel_signal)?;
+                    let buf = Self::xz_compress(&new_path, reader, cancel_signal)?;
                     new_data = Some(CpioEntryData::Data(buf));
                 }
             }
@@ -382,7 +425,7 @@ impl BootImagePatch for MagiskRootPatcher {
         &self,
         boot_images: &HashMap<&'a str, BootImageInfo>,
         _cancel_signal: &AtomicBool,
-    ) -> Result<Vec<&'a str>> {
+    ) -> TargetsResult<Vec<&'a str>> {
         let mut targets = vec![];
 
         if boot_images.contains_key("init_boot") {
@@ -395,9 +438,11 @@ impl BootImagePatch for MagiskRootPatcher {
     }
 
     fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
-        let zip_reader =
-            File::open(&self.apk_path).map_err(|e| Error::File(self.apk_path.clone(), e))?;
-        let mut zip = ZipArchive::new(BufReader::new(zip_reader)).map_err(Error::Zip)?;
+        let zip_reader = File::open(&self.apk_path)
+            .map(BufReader::new)
+            .map_err(|e| Error::FileOpen(self.apk_path.clone(), e))?;
+        let mut zip =
+            ZipArchive::new(zip_reader).map_err(|e| Error::ZipOpen(self.apk_path.clone(), e))?;
 
         // Load the first ramdisk. If it doesn't exist, we have to generate one
         // from scratch.
@@ -428,9 +473,11 @@ impl BootImagePatch for MagiskRootPatcher {
         {
             let mut zip_entry = zip
                 .by_name(Self::ZIP_MAGISKINIT)
-                .map_err(|e| Error::ZipEntryName(Self::ZIP_MAGISKINIT.to_owned(), e))?;
+                .map_err(|e| Error::ZipEntryOpen(Self::ZIP_MAGISKINIT, e))?;
             let mut data = vec![];
-            zip_entry.read_to_end(&mut data)?;
+            zip_entry
+                .read_to_end(&mut data)
+                .map_err(|e| Error::ZipEntryRead(Self::ZIP_MAGISKINIT, e))?;
 
             entries.push(CpioEntry::new_file(
                 b"init",
@@ -472,8 +519,8 @@ impl BootImagePatch for MagiskRootPatcher {
         for (source, target) in xz_files {
             let reader = zip
                 .by_name(source)
-                .map_err(|e| Error::ZipEntryName(source.to_owned(), e))?;
-            let buf = Self::xz_compress(reader, cancel_signal)?;
+                .map_err(|e| Error::ZipEntryOpen(source, e))?;
+            let buf = Self::xz_compress(source.as_bytes(), reader, cancel_signal)?;
 
             entries.push(CpioEntry::new_file(target, 0o644, CpioEntryData::Data(buf)));
         }
@@ -523,7 +570,7 @@ impl BootImagePatch for MagiskRootPatcher {
 
         // Repack ramdisk.
         cpio::sort(&mut entries);
-        cpio::assign_inodes(&mut entries, false)?;
+        cpio::assign_inodes(&mut entries, false).map_err(Error::RamdiskSaveCpio)?;
         let new_ramdisk = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
 
         match boot_image {
@@ -590,18 +637,22 @@ impl OtaCertPatcher {
                 continue;
             };
 
-            let mut zip = ZipArchive::new(Cursor::new(&data)).map_err(Error::Zip)?;
+            let mut zip = ZipArchive::new(Cursor::new(&data)).map_err(|e| {
+                Error::ZipOpen(str::from_utf8(Self::OTACERTS_PATH).unwrap().into(), e)
+            })?;
 
             for index in 0..zip.len() {
                 let zip_entry = zip
                     .by_index(index)
-                    .map_err(|e| Error::ZipEntryIndex(index, e))?;
+                    .map_err(|e| Error::ZipIndexOpen(index, e))?;
                 if !zip_entry.name().ends_with(".x509.pem") {
                     debug!("Skipping invalid entry path: {}", zip_entry.name());
                     continue;
                 }
 
-                let certificate = crypto::read_pem_cert(zip_entry)?;
+                let path = PathBuf::from(zip_entry.name());
+                let certificate =
+                    crypto::read_pem_cert(&path, zip_entry).map_err(Error::OtaCertLoad)?;
                 certificates.push(certificate);
             }
         }
@@ -639,10 +690,10 @@ impl BootImagePatch for OtaCertPatcher {
         &self,
         boot_images: &HashMap<&'a str, BootImageInfo>,
         cancel_signal: &AtomicBool,
-    ) -> Result<Vec<&'a str>> {
+    ) -> TargetsResult<Vec<&'a str>> {
         let mut targets = vec![];
 
-        'outer: for (name, info) in boot_images {
+        'outer: for (&name, info) in boot_images {
             let ramdisks = match &info.boot_image {
                 BootImage::V0Through2(b) => slice::from_ref(&b.ramdisk),
                 BootImage::V3Through4(b) => slice::from_ref(&b.ramdisk),
@@ -654,9 +705,10 @@ impl BootImagePatch for OtaCertPatcher {
                     continue;
                 }
 
-                let (entries, _) = load_ramdisk(ramdisk, cancel_signal)?;
+                let (entries, _) = load_ramdisk(ramdisk, cancel_signal)
+                    .map_err(|e| TargetsError::Load(name.to_owned(), e))?;
                 if entries.iter().any(|e| e.path == Self::OTACERTS_PATH) {
-                    targets.push(*name);
+                    targets.push(name);
                     continue 'outer;
                 }
             }
@@ -672,7 +724,8 @@ impl BootImagePatch for OtaCertPatcher {
             BootImage::VendorV3Through4(b) => &mut b.ramdisks,
         };
 
-        let new_zip = otacert::create_zip(&self.cert, OtaCertBuildFlags::empty())?;
+        let new_zip = otacert::create_zip(&self.cert, OtaCertBuildFlags::empty())
+            .map_err(Error::OtaCertZip)?;
         trace!("Generated new {} byte otacerts.zip", new_zip.len());
 
         for ramdisk in ramdisks {
@@ -718,7 +771,8 @@ impl DsuPubKeyPatcher {
             entries.push(CpioEntry::new_directory(Self::DSU_KEYS_PATH, 0o755));
         }
 
-        let data = CpioEntryData::Data(avb::encode_public_key(&self.key)?);
+        let binary_key = avb::encode_public_key(&self.key).map_err(Error::AvbEncodeKey)?;
+        let data = CpioEntryData::Data(binary_key);
 
         if let Some(e) = entries
             .iter_mut()
@@ -744,11 +798,11 @@ impl BootImagePatch for DsuPubKeyPatcher {
         &self,
         boot_images: &HashMap<&'a str, BootImageInfo>,
         cancel_signal: &AtomicBool,
-    ) -> Result<Vec<&'a str>> {
+    ) -> TargetsResult<Vec<&'a str>> {
         let mut dsu_keys_targets = vec![];
         let mut first_stage_targets = vec![];
 
-        'outer: for (name, info) in boot_images {
+        'outer: for (&name, info) in boot_images {
             let ramdisks = match &info.boot_image {
                 BootImage::V0Through2(b) => slice::from_ref(&b.ramdisk),
                 BootImage::V3Through4(b) => slice::from_ref(&b.ramdisk),
@@ -760,15 +814,16 @@ impl BootImagePatch for DsuPubKeyPatcher {
                     continue;
                 }
 
-                let (entries, _) = load_ramdisk(ramdisk, cancel_signal)?;
+                let (entries, _) = load_ramdisk(ramdisk, cancel_signal)
+                    .map_err(|e| TargetsError::Load(name.to_owned(), e))?;
                 let mut found = false;
 
                 for entry in entries {
                     if entry.path == Self::DSU_KEYS_PATH {
-                        dsu_keys_targets.push(*name);
+                        dsu_keys_targets.push(name);
                         found = true;
                     } else if entry.path == Self::FIRST_STAGE_PATH {
-                        first_stage_targets.push(*name);
+                        first_stage_targets.push(name);
                         found = true;
                     }
                 }
@@ -783,7 +838,7 @@ impl BootImagePatch for DsuPubKeyPatcher {
             // Most builds trust as least one DSU key. For these builds, add the
             // user's key to the same directory.
             if dsu_keys_targets.len() > 1 {
-                return Err(Error::Validation(format!(
+                return Err(TargetsError::TargetValidation(format!(
                     "DSU keys found in more than one boot image: {dsu_keys_targets:?}",
                 )));
             }
@@ -852,19 +907,22 @@ impl PrepatchedImagePatcher {
     }
 
     fn load_prepatched_image(&self) -> Result<BootImage> {
-        let raw_reader =
-            File::open(&self.prepatched).map_err(|e| Error::File(self.prepatched.clone(), e))?;
-        let boot_image = BootImage::from_reader(BufReader::new(raw_reader))?;
+        let reader = File::open(&self.prepatched)
+            .map(BufReader::new)
+            .map_err(|e| Error::FileOpen(self.prepatched.clone(), e))?;
 
-        Ok(boot_image)
+        BootImage::from_reader(reader).map_err(Error::BootImageLoad)
     }
 
     fn get_kmi_version(kernel: &[u8]) -> Result<Option<String>> {
         let mut decompressed = vec![];
         {
             let raw_reader = Cursor::new(kernel);
-            let mut reader = CompressedReader::new(raw_reader, true)?;
-            reader.read_to_end(&mut decompressed)?;
+            let mut reader =
+                CompressedReader::new(raw_reader, true).map_err(Error::KernelLoadCompression)?;
+            reader
+                .read_to_end(&mut decompressed)
+                .map_err(Error::KernelRead)?;
         }
 
         let regex = Regex::new(Self::VERSION_REGEX).unwrap();
@@ -896,8 +954,10 @@ impl BootImagePatch for PrepatchedImagePatcher {
         &self,
         boot_images: &HashMap<&'a str, BootImageInfo>,
         _cancel_signal: &AtomicBool,
-    ) -> Result<Vec<&'a str>> {
-        let prepatched_image = self.load_prepatched_image()?;
+    ) -> TargetsResult<Vec<&'a str>> {
+        let prepatched_image = self
+            .load_prepatched_image()
+            .map_err(|e| TargetsError::Load("prepatched".to_owned(), e))?;
 
         let has_kernel = match prepatched_image {
             BootImage::V0Through2(b) => !b.kernel.is_empty(),
@@ -1084,36 +1144,90 @@ impl BootImagePatch for PrepatchedImagePatcher {
     }
 }
 
+fn load_boot_image(reader: &mut dyn ReadSeek) -> Result<BootImageInfo> {
+    let (header, footer, image_size) = avb::load_image(&mut *reader).map_err(Error::AvbLoad)?;
+    let Some(footer) = footer else {
+        return Err(Error::NoFooter);
+    };
+
+    let section_reader =
+        SectionReader::new(reader, 0, footer.original_image_size).map_err(Error::BootImageSeek)?;
+    let boot_image = BootImage::from_reader(section_reader).map_err(Error::BootImageLoad)?;
+
+    let info = BootImageInfo {
+        header,
+        footer,
+        image_size,
+        boot_image,
+    };
+
+    trace!("Loaded {image_size} byte boot image");
+
+    Ok(info)
+}
+
+fn save_boot_image(
+    writer: &mut dyn WriteSeek,
+    info: &mut BootImageInfo,
+    key: &RsaSigningKey,
+) -> Result<()> {
+    let AppendedDescriptorMut::Hash(descriptor) = info
+        .header
+        .appended_descriptor_mut()
+        .map_err(Error::AvbUpdate)?
+    else {
+        return Err(Error::NoHashDescriptor);
+    };
+
+    // Write new boot image. We reuse the existing salt for the digest.
+    let mut context = Context::new(&ring::digest::SHA256);
+    context.update(&descriptor.salt);
+    let mut hashing_writer = HashingWriter::new(writer, context);
+    info.boot_image
+        .to_writer(&mut hashing_writer)
+        .map_err(Error::BootImageSave)?;
+    let (writer, context) = hashing_writer.finish();
+
+    descriptor.image_size = writer.stream_position().map_err(Error::BootImageSeek)?;
+    "sha256".clone_into(&mut descriptor.hash_algorithm);
+    descriptor.root_digest = context.finish().as_ref().to_vec();
+
+    if !info.header.public_key.is_empty() {
+        debug!("Signing boot image");
+        info.header
+            .set_algo_for_key(key)
+            .map_err(Error::AvbUpdate)?;
+        info.header.sign(key).map_err(Error::AvbUpdate)?;
+    }
+
+    avb::write_appended_image(
+        writer,
+        &info.header,
+        &mut info.footer,
+        Some(info.image_size),
+    )
+    .map_err(Error::AvbUpdate)?;
+
+    Ok(())
+}
+
 pub fn load_boot_images<'a>(
     names: &[&'a str],
     open_input: impl Fn(&str) -> io::Result<Box<dyn ReadSeek>> + Sync,
-) -> Result<HashMap<&'a str, BootImageInfo>> {
+) -> TargetsResult<HashMap<&'a str, BootImageInfo>> {
     let parent_span = Span::current();
 
     names
         .par_iter()
-        .map(|name| {
+        .map(|&name| {
             let _span = debug_span!(parent: &parent_span, "image", name).entered();
-            let mut reader = open_input(name)?;
+            let mut reader =
+                open_input(name).map_err(|e| TargetsError::Open(name.to_owned(), e))?;
 
-            let (header, footer, image_size) = avb::load_image(&mut reader)?;
-            let Some(footer) = footer else {
-                return Err(Error::NoFooter);
-            };
+            let info =
+                load_boot_image(&mut reader).map_err(|e| TargetsError::Load(name.to_owned(), e))?;
 
-            let section_reader = SectionReader::new(reader, 0, footer.original_image_size)?;
-            let boot_image = BootImage::from_reader(section_reader)?;
-
-            let info = BootImageInfo {
-                header,
-                footer,
-                image_size,
-                boot_image,
-            };
-
-            trace!("Loaded {image_size} byte boot image: {name}");
-
-            Ok((*name, info))
+            Ok((name, info))
         })
         .collect()
 }
@@ -1130,7 +1244,7 @@ pub fn patch_boot_images<'a>(
     key: &RsaSigningKey,
     patchers: &[Box<dyn BootImagePatch + Sync>],
     cancel_signal: &AtomicBool,
-) -> Result<HashSet<&'a str>> {
+) -> TargetsResult<HashSet<&'a str>> {
     let parent_span = Span::current();
 
     if patchers.is_empty() {
@@ -1149,14 +1263,14 @@ pub fn patch_boot_images<'a>(
                 debug_span!(parent: &parent_span, "patcher", name = p.patcher_name()).entered();
             p.find_targets(&images, cancel_signal).and_then(|targets| {
                 if targets.is_empty() {
-                    Err(Error::NoTargets(p.patcher_name()))
+                    Err(TargetsError::NoTargets(p.patcher_name()))
                 } else {
                     debug!("Found patcher targets: {targets:?}");
                     Ok(targets)
                 }
             })
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<TargetsResult<Vec<_>>>()?;
 
     debug!("All patcher targets: {all_targets:?}");
 
@@ -1178,54 +1292,22 @@ pub fn patch_boot_images<'a>(
     // Apply all patches.
     groups
         .par_iter_mut()
-        .try_for_each(|(_, (info, patchers))| -> Result<()> {
+        .try_for_each(|(&name, (info, patchers))| -> TargetsResult<()> {
             patchers.iter().try_for_each(|p| {
                 let _span =
                     debug_span!(parent: &parent_span, "patcher", name = p.patcher_name()).entered();
                 p.patch(&mut info.boot_image, cancel_signal)
+                    .map_err(|e| TargetsError::Patch(name.to_owned(), e))
             })
         })?;
 
     // Resign and write new images.
-    groups
-        .par_iter_mut()
-        .map(|(name, (info, _))| {
-            let _span = debug_span!(parent: &parent_span, "image", name).entered();
+    groups.par_iter_mut().try_for_each(|(&name, (info, _))| {
+        let _span = debug_span!(parent: &parent_span, "image", name).entered();
+        let mut writer = open_output(name).map_err(|e| TargetsError::Open(name.to_owned(), e))?;
 
-            let AppendedDescriptorMut::Hash(descriptor) = info.header.appended_descriptor_mut()?
-            else {
-                return Err(Error::NoHashDescriptor);
-            };
-
-            let writer = open_output(name)?;
-
-            // Write new boot image. We reuse the existing salt for the digest.
-            let mut context = Context::new(&ring::digest::SHA256);
-            context.update(&descriptor.salt);
-            let mut hashing_writer = HashingWriter::new(writer, context);
-            info.boot_image.to_writer(&mut hashing_writer)?;
-            let (mut writer, context) = hashing_writer.finish();
-
-            descriptor.image_size = writer.stream_position()?;
-            "sha256".clone_into(&mut descriptor.hash_algorithm);
-            descriptor.root_digest = context.finish().as_ref().to_vec();
-
-            if !info.header.public_key.is_empty() {
-                debug!("Signing boot image");
-                info.header.set_algo_for_key(key)?;
-                info.header.sign(key)?;
-            }
-
-            avb::write_appended_image(
-                writer,
-                &info.header,
-                &mut info.footer,
-                Some(info.image_size),
-            )?;
-
-            Ok(())
-        })
-        .collect::<Result<()>>()?;
+        save_boot_image(&mut writer, info, key).map_err(|e| TargetsError::Save(name.to_owned(), e))
+    })?;
 
     Ok(groups.keys().copied().collect())
 }

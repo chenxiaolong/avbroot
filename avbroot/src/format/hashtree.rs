@@ -24,7 +24,7 @@ use crate::{
         avb,
         padding::{self, ZeroPadding},
     },
-    stream::{self, FromReader, ReadSeekReopen, ToWriter},
+    stream::{self, FromReader, ReadFixedSizeExt, ReadSeekReopen, ToWriter},
     util::{self, NumBytes, OutOfBoundsError},
 };
 
@@ -50,8 +50,14 @@ pub enum Error {
     IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("Failed to reopen input file")]
+    InputReopen(#[source] io::Error),
+    #[error("Failed to compute hash tree of input file")]
+    InputDigest(#[source] io::Error),
+    #[error("Failed to read hash tree data: {0}")]
+    DataRead(&'static str, #[source] io::Error),
+    #[error("Failed to write hash tree data: {0}")]
+    DataWrite(&'static str, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -264,9 +270,10 @@ impl HashTree {
     ) -> Result<Vec<u8>> {
         // Small files are hashed directly.
         if image_size <= u64::from(self.block_size) {
-            let mut reader = input.reopen_boxed()?;
-            let mut buf = vec![0u8; image_size as usize];
-            reader.read_exact(&mut buf)?;
+            let mut reader = input.reopen_boxed().map_err(Error::InputReopen)?;
+            let buf = reader
+                .read_vec_exact(image_size as usize)
+                .map_err(Error::InputDigest)?;
 
             let mut context = self.salted_context.clone();
             context.update(&buf);
@@ -291,7 +298,8 @@ impl HashTree {
                     prev_size as u64,
                     level_data,
                     cancel_signal,
-                )?;
+                )
+                .map_err(Error::InputDigest)?;
             } else if let Some(r) = ranges {
                 // Read partial blocks from file.
                 let block_ranges = self.blocks_for_ranges(image_size, r)?;
@@ -302,10 +310,12 @@ impl HashTree {
                     &block_ranges,
                     level_data,
                     cancel_signal,
-                )?;
+                )
+                .map_err(Error::InputDigest)?;
             } else {
                 // Read entire file.
-                self.hash_one_level_parallel(input, image_size, level_data, cancel_signal)?;
+                self.hash_one_level_parallel(input, image_size, level_data, cancel_signal)
+                    .map_err(Error::InputDigest)?;
             }
 
             // No need to explicitly ensure the level is padded to the block
@@ -482,7 +492,7 @@ impl HashTreeImage {
     const MAGIC: &'static [u8; 16] = b"avbroot!hashtree";
     const VERSION: u16 = 1;
 
-    pub fn ring_algorithm(name: &str) -> Result<&'static Algorithm> {
+    fn ring_algorithm(name: &str) -> Result<&'static Algorithm> {
         avb::ring_algorithm(name, false)
             .map_err(|_| Error::UnsupportedHashAlgorithm(name.to_owned().into_bytes()))
     }
@@ -495,10 +505,10 @@ impl HashTreeImage {
         salt: &[u8],
         cancel_signal: &AtomicBool,
     ) -> Result<Self> {
-        let image_size = {
-            let mut file = input.reopen_boxed()?;
-            file.seek(SeekFrom::End(0))?
-        };
+        let image_size = input
+            .reopen_boxed()
+            .and_then(|mut f| f.seek(SeekFrom::End(0)))
+            .map_err(Error::InputReopen)?;
         let ring_algorithm = Self::ring_algorithm(algorithm)?;
         let hash_tree = HashTree::new(block_size, ring_algorithm, salt);
         let (root_digest, hash_tree_data) = hash_tree.generate(input, image_size, cancel_signal)?;
@@ -557,7 +567,8 @@ impl<R: Read> FromReader<R> for HashTreeImage {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        let header = RawHeader::read_from_io(&mut reader)?;
+        let header =
+            RawHeader::read_from_io(&mut reader).map_err(|e| Error::DataRead("header", e))?;
 
         if header.magic != *Self::MAGIC {
             return Err(Error::InvalidHeaderMagic(header.magic));
@@ -571,14 +582,17 @@ impl<R: Read> FromReader<R> for HashTreeImage {
         let algorithm = str::from_utf8(algorithm)
             .map_err(|_| Error::UnsupportedHashAlgorithm(algorithm.to_vec()))?;
 
-        let mut salt = vec![0u8; usize::from(header.salt_size)];
-        reader.read_exact(&mut salt)?;
+        let salt = reader
+            .read_vec_exact(usize::from(header.salt_size))
+            .map_err(|e| Error::DataRead("header", e))?;
 
-        let mut root_digest = vec![0u8; usize::from(header.root_digest_size)];
-        reader.read_exact(&mut root_digest)?;
+        let root_digest = reader
+            .read_vec_exact(usize::from(header.root_digest_size))
+            .map_err(|e| Error::DataRead("root_digest", e))?;
 
-        let mut hash_tree = vec![0u8; header.hash_tree_size.get() as usize];
-        reader.read_exact(&mut hash_tree)?;
+        let hash_tree = reader
+            .read_vec_exact(header.hash_tree_size.get() as usize)
+            .map_err(|e| Error::DataRead("hash_tree", e))?;
 
         Ok(Self {
             image_size: header.image_size.get(),
@@ -619,10 +633,18 @@ impl<W: Write> ToWriter<W> for HashTreeImage {
             hash_tree_size: hash_tree_size.into(),
         };
 
-        header.write_to_io(&mut writer)?;
-        writer.write_all(&self.salt)?;
-        writer.write_all(&self.root_digest)?;
-        writer.write_all(&self.hash_tree)?;
+        header
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("header", e))?;
+        writer
+            .write_all(&self.salt)
+            .map_err(|e| Error::DataWrite("salt", e))?;
+        writer
+            .write_all(&self.root_digest)
+            .map_err(|e| Error::DataWrite("root_digest", e))?;
+        writer
+            .write_all(&self.hash_tree)
+            .map_err(|e| Error::DataWrite("hash_tree", e))?;
 
         Ok(())
     }

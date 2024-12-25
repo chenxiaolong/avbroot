@@ -36,8 +36,8 @@ use crate::{
         InstallOperation, PartitionInfo, PartitionUpdate, Signatures,
     },
     stream::{
-        self, CountingReader, FromReader, HashingWriter, ReadDiscardExt, ReadSeekReopen, WriteSeek,
-        WriteSeekReopen,
+        self, CountingReader, FromReader, HashingWriter, ReadDiscardExt, ReadFixedSizeExt,
+        ReadSeekReopen, WriteSeek, WriteSeekReopen,
     },
     util::{self, OutOfBoundsError},
 };
@@ -94,14 +94,41 @@ pub enum Error {
     IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
-    #[error("Crypto error")]
-    Crypto(#[from] crypto::Error),
-    #[error("Failed to decode protobuf message")]
-    ProtobufDecode(#[from] prost::DecodeError),
-    #[error("XZ stream error")]
-    XzStream(#[from] liblzma::stream::Error),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("Failed to decode payload manifest protobuf message")]
+    ManifestDecode(#[source] prost::DecodeError),
+    #[error("Failed to decode payload signatures protobuf message")]
+    SignaturesDecode(#[source] prost::DecodeError),
+    #[error("Failed to generate payload signature")]
+    SignatureGenerate(#[source] crypto::Error),
+    #[error("Failed to verify payload signature")]
+    SignatureVerify(#[source] crypto::Error),
+    #[error("Failed to read payload data: {0}")]
+    DataRead(&'static str, #[source] io::Error),
+    #[error("Failed to write payload data: {0}")]
+    DataWrite(&'static str, #[source] io::Error),
+    #[error("Expected {expected} bytes, but only wrote {actual} bytes")]
+    UnwrittenData { actual: u64, expected: u64 },
+    #[error("I/O error when applying {op_type:?} operation for {num_blocks} blocks starting at {start_block}")]
+    OperationApply {
+        op_type: Type,
+        start_block: u64,
+        num_blocks: u64,
+        source: io::Error,
+    },
+    #[error("Failed to reopen payload")]
+    PayloadReopen(#[source] io::Error),
+    #[error("Failed to open input file for partition: {0}")]
+    InputOpen(String, #[source] io::Error),
+    #[error("Failed to open output file for partition: {0}")]
+    OutputOpen(String, #[source] io::Error),
+    #[error("Failed to initialize XZ encoder")]
+    XzInit(#[source] liblzma::stream::Error),
+    #[error("Failed to XZ compress partition image chunk")]
+    XzCompress(#[source] io::Error),
+    #[error("Failed to read uncompressed input partition image chunk")]
+    ChunkRead(#[source] io::Error),
+    #[error("Failed to write XZ-compressed output partition image chunk")]
+    ChunkWrite(#[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -147,7 +174,8 @@ impl<R: Read> FromReader<R> for PayloadHeader {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let header = RawHeader::read_from_io(&mut reader)?;
+        let header =
+            RawHeader::read_from_io(&mut reader).map_err(|e| Error::DataRead("header", e))?;
 
         if header.magic != *PAYLOAD_MAGIC {
             return Err(Error::UnknownMagic(header.magic));
@@ -161,18 +189,24 @@ impl<R: Read> FromReader<R> for PayloadHeader {
             .and_then(|s| util::check_bounds(s, ..=MANIFEST_MAX_SIZE))
             .map_err(|e| Error::IntOutOfBounds("manifest_size", e))?;
 
-        let mut manifest_raw = vec![0u8; manifest_size];
-        reader.read_exact(&mut manifest_raw)?;
-        let manifest = DeltaArchiveManifest::decode(manifest_raw.as_slice())?;
+        let manifest_raw = reader
+            .read_vec_exact(manifest_size)
+            .map_err(|e| Error::DataRead("manifest", e))?;
+        let manifest =
+            DeltaArchiveManifest::decode(manifest_raw.as_slice()).map_err(Error::ManifestDecode)?;
 
         // Skip manifest signatures.
-        reader.read_discard_exact(header.metadata_signature_size.into())?;
+        reader
+            .read_discard_exact(header.metadata_signature_size.into())
+            .map_err(|e| Error::DataRead("metadata_signatures", e))?;
 
         Ok(Self {
             version: header.file_format_version.get(),
             manifest,
             metadata_signature_size: header.metadata_signature_size.get(),
-            blob_offset: reader.stream_position()?,
+            blob_offset: reader
+                .stream_position()
+                .map_err(|e| Error::DataRead("blob_offset", e))?,
         })
     }
 }
@@ -180,7 +214,9 @@ impl<R: Read> FromReader<R> for PayloadHeader {
 /// Sign `digest` with `key` and return a [`Signatures`] protobuf struct with
 /// the signature padded to the maximum size.
 fn sign_digest(digest: &[u8], key: &RsaSigningKey) -> Result<Signatures> {
-    let mut digest_signed = key.sign(SignatureAlgorithm::Sha256WithRsa, digest)?;
+    let mut digest_signed = key
+        .sign(SignatureAlgorithm::Sha256WithRsa, digest)
+        .map_err(Error::SignatureGenerate)?;
     assert!(
         digest_signed.len() <= key.size(),
         "Signature exceeds maximum size",
@@ -205,7 +241,7 @@ fn sign_digest(digest: &[u8], key: &RsaSigningKey) -> Result<Signatures> {
 
 /// Verify `digest` inside `signatures` using `cert`.
 fn verify_digest(digest: &[u8], signatures: &Signatures, cert: &Certificate) -> Result<()> {
-    let public_key = crypto::get_public_key(cert)?;
+    let public_key = crypto::get_public_key(cert).map_err(Error::SignatureVerify)?;
     let mut last_error = None;
 
     for signature in &signatures.signatures {
@@ -219,11 +255,11 @@ fn verify_digest(digest: &[u8], signatures: &Signatures, cert: &Certificate) -> 
 
         match public_key.verify_sig(SignatureAlgorithm::Sha256WithRsa, digest, without_padding) {
             Ok(()) => return Ok(()),
-            Err(e) => last_error = Some(e),
+            Err(e) => last_error = Some(Error::SignatureVerify(e)),
         }
     }
 
-    Err(last_error.map_or(Error::NoSignatures, |e| e.into()))
+    Err(last_error.unwrap_or(Error::NoSignatures))
 }
 
 fn parse_properties(data: &str) -> Result<HashMap<String, String>> {
@@ -359,17 +395,20 @@ impl<W: Write> PayloadWriter<W> {
             manifest_size: (manifest_raw_new.len() as u64).into(),
             metadata_signature_size: (dummy_sig_size as u32).into(),
         };
-        write_hash!(inner, [h_partial, h_full], raw_header.as_bytes())?;
+        write_hash!(inner, [h_partial, h_full], raw_header.as_bytes())
+            .map_err(|e| Error::DataWrite("header", e))?;
 
         // Write new manifest.
-        write_hash!(inner, [h_partial, h_full], &manifest_raw_new)?;
+        write_hash!(inner, [h_partial, h_full], &manifest_raw_new)
+            .map_err(|e| Error::DataWrite("manifest", e))?;
 
         // Sign metadata (header + manifest) hash. The signature is not included
         // in the payload hash.
         let metadata_hash = h_partial.clone().finish();
         let metadata_sig = sign_digest(metadata_hash.as_ref(), &key)?;
         let metadata_sig_raw = metadata_sig.encode_to_vec();
-        write_hash!(inner, [h_full], &metadata_sig_raw)?;
+        write_hash!(inner, [h_full], &metadata_sig_raw)
+            .map_err(|e| Error::DataWrite("metadata_signatures", e))?;
 
         Ok(Self {
             inner,
@@ -397,7 +436,8 @@ impl<W: Write> PayloadWriter<W> {
         let payload_partial_hash = self.h_partial.clone().finish();
         let payload_sig = sign_digest(payload_partial_hash.as_ref(), &self.key)?;
         let payload_sig_raw = payload_sig.encode_to_vec();
-        write_hash!(self.inner, [self.h_full], &payload_sig_raw)?;
+        write_hash!(self.inner, [self.h_full], &payload_sig_raw)
+            .map_err(|e| Error::DataWrite("payload_signatures", e))?;
 
         // Everything before the blob.
         let metadata_with_sig_size =
@@ -422,23 +462,20 @@ impl<W: Write> PayloadWriter<W> {
     /// Prepare for writing the next source data blob corresponding to an
     /// [`InstallOperation`]. To write all of the payload data, call this method
     /// followed by [`Self::write()`] repeatedly until `Ok(false)` is returned
-    /// or an error occurs. This function will fail if the amount of data
-    /// written for the previous operation does not match
+    /// or an error occurs. [`Error::UnwrittenData`] will be returned if the
+    /// amount of data written for the previous operation does not match
     /// [`InstallOperation::data_length`].
     pub fn begin_next_operation(&mut self) -> Result<bool> {
         if let Some(operation) = self.operation() {
             // Only operations that reference data in the blob will have a
             // length set.
-            if self.written < operation.data_length.unwrap_or(0) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!(
-                        "Expected {} bytes, but only wrote {} bytes",
-                        operation.data_length.unwrap(),
-                        self.written,
-                    ),
-                )
-                .into());
+            let expected = operation.data_length.unwrap_or(0);
+
+            if self.written < expected {
+                return Err(Error::UnwrittenData {
+                    actual: self.written,
+                    expected,
+                });
             }
         }
 
@@ -548,16 +585,16 @@ pub fn verify_payload(
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let header = PayloadHeader::from_reader(&mut reader)?;
-    reader.rewind()?;
+    reader.rewind().map_err(|e| Error::DataRead("header", e))?;
 
     let payload_signatures_offset = header
         .manifest
         .signatures_offset
-        .ok_or_else(|| Error::MissingField("signatures_offset"))?;
+        .ok_or(Error::MissingField("signatures_offset"))?;
     let payload_signatures_size = header
         .manifest
         .signatures_size
-        .ok_or_else(|| Error::MissingField("signatures_size"))?;
+        .ok_or(Error::MissingField("signatures_size"))?;
 
     // Excludes signatures (hashes are for signing).
     let mut h_partial = Context::new(&ring::digest::SHA256);
@@ -575,7 +612,8 @@ pub fn verify_payload(
             h_full.update(data);
         },
         cancel_signal,
-    )?;
+    )
+    .map_err(|e| Error::DataRead("metadata", e))?;
     let metadata_hash = h_partial.clone().finish();
 
     // Read the metadata signatures.
@@ -588,10 +626,11 @@ pub fn verify_payload(
             header.metadata_signature_size.into(),
             |data| h_full.update(data),
             cancel_signal,
-        )?;
+        )
+        .map_err(|e| Error::DataRead("metadata_signatures", e))?;
 
         let buf = writer.into_inner();
-        Signatures::decode(buf.as_slice())?
+        Signatures::decode(buf.as_slice()).map_err(Error::SignaturesDecode)?
     };
 
     // Check the metadata signatures.
@@ -599,7 +638,9 @@ pub fn verify_payload(
 
     // Check the blob offset.
     {
-        let actual = reader.stream_position()?;
+        let actual = reader
+            .stream_position()
+            .map_err(|e| Error::DataRead("blob_offset", e))?;
         if header.blob_offset != actual {
             return Err(Error::InvalidBlobOffset {
                 expected: header.blob_offset,
@@ -618,13 +659,16 @@ pub fn verify_payload(
             h_full.update(data);
         },
         cancel_signal,
-    )?;
+    )
+    .map_err(|e| Error::DataRead("blob", e))?;
     let payload_hash = h_partial.clone().finish();
 
     // Check the payload signatures offset.
     {
         let expected = header.blob_offset + payload_signatures_offset;
-        let actual = reader.stream_position()?;
+        let actual = reader
+            .stream_position()
+            .map_err(|e| Error::DataRead("payload_signatures_offset", e))?;
         if expected != actual {
             return Err(Error::InvalidPayloadSignaturesOffset { expected, actual });
         }
@@ -640,10 +684,11 @@ pub fn verify_payload(
             payload_signatures_size,
             |data| h_full.update(data),
             cancel_signal,
-        )?;
+        )
+        .map_err(|e| Error::DataRead("payload_signatures", e))?;
 
         let buf = writer.into_inner();
-        Signatures::decode(buf.as_slice())?
+        Signatures::decode(buf.as_slice()).map_err(Error::SignaturesDecode)?
     };
 
     // Check the payload signatures.
@@ -652,7 +697,9 @@ pub fn verify_payload(
     // Check properties file.
     let expected_properties_raw = generate_properties(
         h_full.finish().as_ref(),
-        reader.stream_position()?,
+        reader
+            .stream_position()
+            .map_err(|e| Error::DataRead("payload_size", e))?,
         metadata_hash.as_ref(),
         metadata_size,
     );
@@ -687,19 +734,24 @@ pub fn apply_operation(
     for extent in &op.dst_extents {
         let start_block = extent
             .start_block
-            .ok_or_else(|| Error::MissingField("start_block"))?;
-        let num_blocks = extent
-            .num_blocks
-            .ok_or_else(|| Error::MissingField("num_blocks"))?;
+            .ok_or(Error::MissingField("start_block"))?;
+        let num_blocks = extent.num_blocks.ok_or(Error::MissingField("num_blocks"))?;
 
         let out_offset = start_block
             .checked_mul(block_size.into())
-            .ok_or_else(|| Error::IntOverflow("out_offset"))?;
+            .ok_or(Error::IntOverflow("out_offset"))?;
         let out_data_length = num_blocks
             .checked_mul(block_size.into())
-            .ok_or_else(|| Error::IntOverflow("out_data_length"))?;
+            .ok_or(Error::IntOverflow("out_data_length"))?;
 
-        writer.seek(SeekFrom::Start(out_offset))?;
+        let error_fn = |e: io::Error| Error::OperationApply {
+            op_type: op.r#type(),
+            start_block,
+            num_blocks,
+            source: e,
+        };
+
+        writer.seek(SeekFrom::Start(out_offset)).map_err(error_fn)?;
 
         let mut hasher = Context::new(&ring::digest::SHA256);
 
@@ -713,20 +765,17 @@ pub fn apply_operation(
                     out_data_length,
                     |data| hasher.update(data),
                     cancel_signal,
-                )?;
+                )
+                .map_err(error_fn)?;
             }
             other => {
-                let data_offset = op
-                    .data_offset
-                    .ok_or_else(|| Error::MissingField("data_offset"))?;
-                let data_length = op
-                    .data_length
-                    .ok_or_else(|| Error::MissingField("data_length"))?;
+                let data_offset = op.data_offset.ok_or(Error::MissingField("data_offset"))?;
+                let data_length = op.data_length.ok_or(Error::MissingField("data_length"))?;
                 let in_offset = blob_offset
                     .checked_add(data_offset)
-                    .ok_or_else(|| Error::IntOverflow("in_offset"))?;
+                    .ok_or(Error::IntOverflow("in_offset"))?;
 
-                reader.seek(SeekFrom::Start(in_offset))?;
+                reader.seek(SeekFrom::Start(in_offset)).map_err(error_fn)?;
 
                 match other {
                     Type::Replace => {
@@ -736,7 +785,8 @@ pub fn apply_operation(
                             data_length,
                             |data| hasher.update(data),
                             cancel_signal,
-                        )?;
+                        )
+                        .map_err(error_fn)?;
                     }
                     Type::ReplaceBz => {
                         let mut decoder = BzDecoder::new(&mut writer);
@@ -746,8 +796,9 @@ pub fn apply_operation(
                             data_length,
                             |data| hasher.update(data),
                             cancel_signal,
-                        )?;
-                        decoder.finish()?;
+                        )
+                        .and_then(|()| decoder.finish())
+                        .map_err(error_fn)?;
                     }
                     Type::ReplaceXz => {
                         let mut decoder = XzDecoder::new(&mut writer);
@@ -757,8 +808,9 @@ pub fn apply_operation(
                             data_length,
                             |data| hasher.update(data),
                             cancel_signal,
-                        )?;
-                        decoder.finish()?;
+                        )
+                        .and_then(|()| decoder.finish())
+                        .map_err(error_fn)?;
                     }
                     _ => return Err(Error::UnsupportedOperation(op.r#type())),
                 }
@@ -800,8 +852,10 @@ pub fn extract_image(
         .operations
         .par_iter()
         .map(|op| -> Result<()> {
-            let reader = payload.reopen_boxed()?;
-            let writer = output.reopen_boxed()?;
+            let reader = payload.reopen_boxed().map_err(Error::PayloadReopen)?;
+            let writer = output
+                .reopen_boxed()
+                .map_err(|e| Error::OutputOpen(partition_name.to_owned(), e))?;
 
             apply_operation(
                 reader,
@@ -848,8 +902,8 @@ pub fn extract_images<'a>(
     operations
         .into_par_iter()
         .map(|(name, op)| -> Result<()> {
-            let reader = payload.reopen_boxed()?;
-            let writer = open_output(name)?;
+            let reader = payload.reopen_boxed().map_err(Error::PayloadReopen)?;
+            let writer = open_output(name).map_err(|e| Error::OutputOpen(name.to_owned(), e))?;
 
             apply_operation(
                 reader,
@@ -874,12 +928,13 @@ fn compress_chunk(raw_data: &[u8], cancel_signal: &AtomicBool) -> Result<(Vec<u8
     // decompression. Also, we intentionally pick the lowest compression level
     // since we primarily care about squishing zeros. The non-zero portions of
     // boot images are usually already-compressed kernels and ramdisks.
-    let stream = Stream::new_easy_encoder(0, Check::None)?;
+    let stream = Stream::new_easy_encoder(0, Check::None).map_err(Error::XzInit)?;
     let mut xz_writer = XzEncoder::new_stream(hashing_writer, stream);
 
-    stream::copy_n(reader, &mut xz_writer, raw_data.len() as u64, cancel_signal)?;
+    stream::copy_n(reader, &mut xz_writer, raw_data.len() as u64, cancel_signal)
+        .map_err(Error::XzCompress)?;
 
-    let hashing_writer = xz_writer.finish()?;
+    let hashing_writer = xz_writer.finish().map_err(Error::XzCompress)?;
     let (writer, context_compressed) = hashing_writer.finish();
     let digest_compressed = context_compressed.finish();
     let data = writer.into_inner();
@@ -958,7 +1013,10 @@ pub fn compress_image(
     const CHUNK_SIZE: u64 = 2 * 1024 * 1024;
     const CHUNK_GROUP: u64 = 32;
 
-    let file_size = input.reopen_boxed()?.seek(SeekFrom::End(0))?;
+    let file_size = input
+        .reopen_boxed()
+        .and_then(|mut r| r.seek(SeekFrom::End(0)))
+        .map_err(|e| Error::InputOpen(partition_name.to_owned(), e))?;
     let final_chunk_different = file_size % CHUNK_SIZE != 0;
 
     if file_size % u64::from(block_size) != 0 || CHUNK_SIZE % u64::from(block_size) != 0 {
@@ -984,7 +1042,7 @@ pub fn compress_image(
 
         let uncompressed_data_group = (chunks_done..chunks_done + chunks_group)
             .into_par_iter()
-            .map(|chunk| -> Result<(u64, Vec<u8>)> {
+            .map(|chunk| -> io::Result<(u64, Vec<u8>)> {
                 let mut reader = input.reopen_boxed()?;
                 let offset = reader.seek(SeekFrom::Start(chunk * CHUNK_SIZE))?;
 
@@ -993,14 +1051,14 @@ pub fn compress_image(
                 } else {
                     CHUNK_SIZE
                 };
-                let mut data = vec![0u8; chunk_size as usize];
 
                 stream::check_cancel(cancel_signal)?;
-                reader.read_exact(&mut data)?;
+                let data = reader.read_vec_exact(chunk_size as usize)?;
 
                 Ok((offset, data))
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<io::Result<Vec<_>>>()
+            .map_err(Error::ChunkRead)?;
 
         for (_, data) in &uncompressed_data_group {
             context_uncompressed.update(data);
@@ -1038,14 +1096,15 @@ pub fn compress_image(
 
         let group_operations = compressed_data_group
             .into_par_iter()
-            .map(|(data, operation, _)| -> Result<InstallOperation> {
+            .map(|(data, operation, _)| -> io::Result<InstallOperation> {
                 let mut writer = output.reopen_boxed()?;
                 writer.seek(SeekFrom::Start(operation.data_offset.unwrap()))?;
                 writer.write_all(&data)?;
 
                 Ok(operation)
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<io::Result<Vec<_>>>()
+            .map_err(Error::ChunkWrite)?;
 
         operations.extend(group_operations.into_iter());
     }
@@ -1156,27 +1215,29 @@ pub fn compress_modified_image(
                 let extents_start = operation.dst_extents[0]
                     .start_block()
                     .checked_mul(u64::from(block_size))
-                    .ok_or_else(|| Error::IntOverflow("extents_start"))?;
+                    .ok_or(Error::IntOverflow("extents_start"))?;
                 let extents_size = operation
                     .dst_extents
                     .iter()
                     .map(|e| e.num_blocks())
                     .try_fold(0u64, |acc, n| acc.checked_add(n))
                     .and_then(|n| n.checked_mul(u64::from(block_size)))
-                    .ok_or_else(|| Error::IntOverflow("extents_size"))?;
+                    .ok_or(Error::IntOverflow("extents_size"))?;
                 let extents_end = extents_start
                     .checked_add(extents_size)
-                    .ok_or_else(|| Error::IntOverflow("extents_end"))?;
+                    .ok_or(Error::IntOverflow("extents_end"))?;
                 let extents_size: usize = util::try_cast(extents_size)
                     .map_err(|e| Error::IntOutOfBounds("extents_size", e))?;
 
-                let mut reader = input.reopen_boxed()?;
-                reader.seek(SeekFrom::Start(extents_start))?;
+                let mut reader = input.reopen_boxed().map_err(Error::ChunkRead)?;
+                reader
+                    .seek(SeekFrom::Start(extents_start))
+                    .map_err(Error::ChunkRead)?;
 
-                let mut data = vec![0u8; extents_size];
-
-                stream::check_cancel(cancel_signal)?;
-                reader.read_exact(&mut data)?;
+                stream::check_cancel(cancel_signal).map_err(Error::ChunkRead)?;
+                let data = reader
+                    .read_vec_exact(extents_size)
+                    .map_err(Error::ChunkRead)?;
 
                 let was_modified = util::ranges_overlaps(ranges, &(extents_start..extents_end));
 
@@ -1221,7 +1282,8 @@ pub fn compress_modified_image(
 
                 Ok(i..i + 1)
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<io::Result<Vec<_>>>()
+            .map_err(Error::ChunkWrite)?;
 
         modified_operations.extend(modified_group_operations);
     }

@@ -68,8 +68,14 @@ pub enum Error {
     IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("Failed to reopen input file")]
+    InputReopen(#[source] io::Error),
+    #[error("Failed to reopen output file")]
+    OutputReopen(#[source] io::Error),
+    #[error("Failed to read FEC data: {0}")]
+    DataRead(&'static str, #[source] io::Error),
+    #[error("Failed to write FEC data: {0}")]
+    DataWrite(&'static str, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -364,7 +370,9 @@ impl Fec {
             "FEC buffer length does not match block size",
         );
 
-        let grid = self.read_round(reader, round)?;
+        let grid = self
+            .read_round(reader, round)
+            .map_err(|e| Error::DataRead("round", e))?;
         let encode = verityrs::FN_ENCODE[&self.rs_k];
         let parity = usize::from(self.parity());
 
@@ -385,7 +393,9 @@ impl Fec {
             "FEC buffer length does not match block size",
         );
 
-        let grid = self.read_round(reader, round)?;
+        let grid = self
+            .read_round(reader, round)
+            .map_err(|e| Error::DataRead("round", e))?;
         let is_correct = verityrs::FN_IS_CORRECT[&self.rs_k];
         let parity = usize::from(self.parity());
 
@@ -415,7 +425,9 @@ impl Fec {
             "FEC buffer length does not match block size",
         );
 
-        let mut grid = self.read_round(reader, round)?;
+        let mut grid = self
+            .read_round(reader, round)
+            .map_err(|e| Error::DataRead("round", e))?;
         let correct_errors = verityrs::FN_CORRECT_ERRORS[&self.rs_k];
         let parity = usize::from(self.parity());
         let mut num_corrected = 0;
@@ -433,7 +445,8 @@ impl Fec {
         }
 
         if num_corrected > 0 {
-            self.write_round(writer, round, &grid)?;
+            self.write_round(writer, round, &grid)
+                .map_err(|e| Error::DataWrite("round", e))?;
         }
 
         Ok(num_corrected)
@@ -454,9 +467,9 @@ impl Fec {
         fec.par_chunks_exact_mut(fec_size / self.rounds as usize)
             .enumerate()
             .map(|(round, buf)| -> Result<()> {
-                stream::check_cancel(cancel_signal)?;
+                stream::check_cancel(cancel_signal).map_err(Error::InputReopen)?;
 
-                let reader = input.reopen_boxed()?;
+                let reader = input.reopen_boxed().map_err(Error::InputReopen)?;
                 self.generate_one_round(reader, round as u64, buf)
             })
             .collect::<Result<()>>()?;
@@ -489,9 +502,9 @@ impl Fec {
             .enumerate()
             .filter(|(round, _)| rounds_to_update.contains(&(*round as u64)))
             .map(|(round, buf)| -> Result<()> {
-                stream::check_cancel(cancel_signal)?;
+                stream::check_cancel(cancel_signal).map_err(Error::InputReopen)?;
 
-                let reader = input.reopen_boxed()?;
+                let reader = input.reopen_boxed().map_err(Error::InputReopen)?;
                 self.generate_one_round(reader, round as u64, buf)
             })
             .collect::<Result<()>>()?;
@@ -522,9 +535,9 @@ impl Fec {
         fec.par_chunks_exact(fec_size / self.rounds as usize)
             .enumerate()
             .map(|(round, buf)| -> Result<()> {
-                stream::check_cancel(cancel_signal)?;
+                stream::check_cancel(cancel_signal).map_err(Error::InputReopen)?;
 
-                let reader = input.reopen_boxed()?;
+                let reader = input.reopen_boxed().map_err(Error::InputReopen)?;
                 self.verify_one_round(reader, round as u64, buf)
             })
             .collect::<Result<()>>()?;
@@ -563,10 +576,10 @@ impl Fec {
             .par_chunks_exact(fec_size / self.rounds as usize)
             .enumerate()
             .map(|(round, buf)| -> Result<u64> {
-                stream::check_cancel(cancel_signal)?;
+                stream::check_cancel(cancel_signal).map_err(Error::InputReopen)?;
 
-                let reader = input.reopen_boxed()?;
-                let writer = output.reopen_boxed()?;
+                let reader = input.reopen_boxed().map_err(Error::InputReopen)?;
+                let writer = output.reopen_boxed().map_err(Error::OutputReopen)?;
                 self.repair_one_round(reader, writer, round as u64, buf)
             })
             .collect::<Result<Vec<u64>>>()?
@@ -627,10 +640,10 @@ impl FecImage {
         parity: u8,
         cancel_signal: &AtomicBool,
     ) -> Result<Self> {
-        let data_size = {
-            let mut file = input.reopen_boxed()?;
-            file.seek(SeekFrom::End(0))?
-        };
+        let data_size = input
+            .reopen_boxed()
+            .and_then(|mut f| f.seek(SeekFrom::End(0)))
+            .map_err(Error::InputReopen)?;
         let fec = Fec::new(data_size, FEC_BLOCK_SIZE as u32, parity)?;
         let fec_data = fec.generate(input, cancel_signal)?;
 
@@ -717,7 +730,9 @@ impl<R: Read> FromReader<R> for FecImage {
         // Avoid requiring seekable readers since we need to read everything
         // into memory anyway.
         let mut fec = Vec::new();
-        reader.read_to_end(&mut fec)?;
+        reader
+            .read_to_end(&mut fec)
+            .map_err(|e| Error::DataRead("fec", e))?;
 
         if fec.len() < FEC_BLOCK_SIZE {
             return Err(Error::DataTooSmall);
@@ -791,10 +806,18 @@ impl<W: Write> ToWriter<W> for FecImage {
     fn to_writer(&self, mut writer: W) -> Result<()> {
         let header = self.build_header()?;
 
-        writer.write_all(&self.fec)?;
-        header.write_to_io(&mut writer)?;
-        writer.write_zeros_exact((FEC_BLOCK_SIZE - 2 * header.as_bytes().len()) as u64)?;
-        header.write_to_io(&mut writer)?;
+        writer
+            .write_all(&self.fec)
+            .map_err(|e| Error::DataWrite("fec_data", e))?;
+        header
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("fec_header_1", e))?;
+        writer
+            .write_zeros_exact((FEC_BLOCK_SIZE - 2 * header.as_bytes().len()) as u64)
+            .map_err(|e| Error::DataWrite("fec_header_padding", e))?;
+        header
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("fec_header_2", e))?;
 
         Ok(())
     }

@@ -755,7 +755,7 @@ fn create_ota(
 
         match path {
             ota::PATH_OTACERT => {
-                crypto::write_pem_cert(&mut writer, cert_ota)
+                crypto::write_pem_cert(Path::new(path), &mut writer, cert_ota)
                     .with_context(|| format!("Failed to write entry: {path}"))?;
             }
             ota::PATH_PAYLOAD => {

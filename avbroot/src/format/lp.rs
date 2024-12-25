@@ -19,7 +19,9 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     format::padding,
-    stream::{CountingReader, FromReader, ReadDiscardExt, ToWriter, WriteZerosExt},
+    stream::{
+        CountingReader, FromReader, ReadDiscardExt, ReadFixedSizeExt, ToWriter, WriteZerosExt,
+    },
     util::{self, is_zero, DebugString},
 };
 
@@ -58,8 +60,8 @@ const METADATA_MAX_SIZE: u32 = 128 * 1024;
 #[derive(Debug, Error)]
 pub enum Error {
     // Naming errors.
-    #[error("Invalid partition name: {0}")]
-    PartitionNameInvalid(String),
+    #[error("Invalid partition name: {0:?}")]
+    PartitionNameInvalid(DebugString),
     // Geometry errors.
     #[error("Invalid geometry magic: {0:#010x}")]
     GeometryInvalidMagic(u32),
@@ -185,8 +187,10 @@ pub enum Error {
     #[error("Insufficient space on block devices to allocate sectors")]
     AllocatorDeviceFull,
     // Wrapped errors.
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("Failed to read LP data: {0}")]
+    DataRead(&'static str, #[source] io::Error),
+    #[error("Failed to write LP data: {0}")]
+    DataWrite(&'static str, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -600,14 +604,14 @@ impl PartitionName {
             match b {
                 b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' => has_alnum = true,
                 b'_' => {}
-                _ => return Err(Error::PartitionNameInvalid(format!("{self:?}"))),
+                _ => return Err(Error::PartitionNameInvalid(DebugString::new(self))),
             }
         }
 
         if has_alnum && is_zero(suffix) {
             Ok(())
         } else {
-            Err(Error::PartitionNameInvalid(format!("{self:?}")))
+            Err(Error::PartitionNameInvalid(DebugString::new(self)))
         }
     }
 
@@ -626,7 +630,7 @@ impl FromStr for PartitionName {
         let mut name = Self([0u8; 36]);
 
         if s.len() > name.0.len() {
-            return Err(Error::PartitionNameInvalid(format!("{s:?}")));
+            return Err(Error::PartitionNameInvalid(DebugString::new(s)));
         }
 
         let to_copy = s.len().min(name.0.len());
@@ -1052,7 +1056,9 @@ impl RawMetadata {
     /// Read the [`RawGeometry`] at the current offset.
     fn read_geometry(mut reader: impl Read) -> Result<(ImageType, RawGeometry)> {
         let mut buf = [0u8; GEOMETRY_SIZE as usize];
-        reader.read_exact(&mut buf)?;
+        reader
+            .read_exact(&mut buf)
+            .map_err(|e| Error::DataRead("geometry", e))?;
 
         let image_type = if util::is_zero(&buf) {
             ImageType::Normal
@@ -1067,16 +1073,22 @@ impl RawMetadata {
                 // as a boot sector.
 
                 // Read the primary copy of the geometry.
-                reader.read_exact(&mut buf)?;
+                reader
+                    .read_exact(&mut buf)
+                    .map_err(|e| Error::DataRead("geometry_primary", e))?;
 
                 let mut geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
 
                 if geometry.validate().is_ok() {
                     // Skip the backup copy.
-                    reader.read_discard_exact(GEOMETRY_SIZE.into())?;
+                    reader
+                        .read_discard_exact(GEOMETRY_SIZE.into())
+                        .map_err(|e| Error::DataRead("geometry_secondary", e))?;
                 } else {
                     // Try to parse the backup copy.
-                    reader.read_exact(&mut buf)?;
+                    reader
+                        .read_exact(&mut buf)
+                        .map_err(|e| Error::DataRead("geometry_secondary", e))?;
 
                     geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
                     geometry.validate()?;
@@ -1108,9 +1120,13 @@ impl RawMetadata {
     ) -> Result<RawMetadataSlot> {
         let mut header = RawHeader::new_zeroed();
 
-        reader.read_exact(&mut header.as_mut_bytes()[..RawHeader::SIZE_V1_0])?;
+        reader
+            .read_exact(&mut header.as_mut_bytes()[..RawHeader::SIZE_V1_0])
+            .map_err(|e| Error::DataRead("header_v1.0", e))?;
         if header.size() > RawHeader::SIZE_V1_0 {
-            reader.read_exact(&mut header.as_mut_bytes()[RawHeader::SIZE_V1_0..])?;
+            reader
+                .read_exact(&mut header.as_mut_bytes()[RawHeader::SIZE_V1_0..])
+                .map_err(|e| Error::DataRead("header_v1.2", e))?;
         }
 
         // We'll end up validating this again at the end, but this initial
@@ -1118,8 +1134,9 @@ impl RawMetadata {
         // parsing the tables.
         header.validate(geometry)?;
 
-        let mut tables_buf = vec![0u8; header.tables_size.get() as usize];
-        reader.read_exact(&mut tables_buf)?;
+        let tables_buf = reader
+            .read_vec_exact(header.tables_size.get() as usize)
+            .map_err(|e| Error::DataRead("tables", e))?;
 
         let partitions = header
             .partitions
@@ -1210,20 +1227,26 @@ impl<R: Read> FromReader<R> for RawMetadata {
                 let mut to_skip = u64::from(geometry.metadata_max_size.get());
 
                 if slot.is_none() {
-                    let orig_offset = reader.stream_position()?;
+                    let orig_offset = reader
+                        .stream_position()
+                        .map_err(|e| Error::DataRead("orig_offset", e))?;
 
                     match Self::read_metadata(&mut reader, image_type, &geometry) {
                         Ok(m) => *slot = Some(m),
-                        Err(e @ Error::Io(_)) => return Err(e),
+                        Err(e @ Error::DataRead(_, _)) => return Err(e),
                         Err(e) => last_err = Some(e),
                     }
 
                     // Skip the remaining padding.
-                    let cur_offset = reader.stream_position()?;
+                    let cur_offset = reader
+                        .stream_position()
+                        .map_err(|e| Error::DataRead("cur_offset", e))?;
                     to_skip -= cur_offset - orig_offset;
                 }
 
-                reader.read_discard(to_skip)?;
+                reader
+                    .read_discard(to_skip)
+                    .map_err(|e| Error::DataRead("slot_padding", e))?;
             }
         }
 
@@ -1251,11 +1274,17 @@ impl<W: Write> ToWriter<W> for RawMetadata {
 
         match self.image_type {
             ImageType::Normal => {
-                writer.write_zeros_exact(PARTITION_RESERVED_BYTES.into())?;
+                writer
+                    .write_zeros_exact(PARTITION_RESERVED_BYTES.into())
+                    .map_err(|e| Error::DataWrite("reserved", e))?;
 
                 for _ in 0..2 {
-                    writer.write_all(geometry)?;
-                    writer.write_zeros_exact(geometry_padding as u64)?;
+                    writer
+                        .write_all(geometry)
+                        .map_err(|e| Error::DataWrite("geometry", e))?;
+                    writer
+                        .write_zeros_exact(geometry_padding as u64)
+                        .map_err(|e| Error::DataWrite("geometry_padding", e))?;
                 }
 
                 let metadata_max_size = self.geometry.metadata_max_size.get() as usize;
@@ -1270,24 +1299,50 @@ impl<W: Write> ToWriter<W> for RawMetadata {
                         let tables_size = slot.header.tables_size.get() as usize;
                         let metadata_padding = metadata_max_size - header.len() - tables_size;
 
-                        writer.write_all(header)?;
-                        writer.write_all(slot.partitions.as_bytes())?;
-                        writer.write_all(slot.extents.as_bytes())?;
-                        writer.write_all(slot.groups.as_bytes())?;
-                        writer.write_all(slot.block_devices.as_bytes())?;
-                        writer.write_zeros_exact(metadata_padding as u64)?;
+                        writer
+                            .write_all(header)
+                            .map_err(|e| Error::DataWrite("header", e))?;
+                        writer
+                            .write_all(slot.partitions.as_bytes())
+                            .map_err(|e| Error::DataWrite("partition_tables", e))?;
+                        writer
+                            .write_all(slot.extents.as_bytes())
+                            .map_err(|e| Error::DataWrite("extent_tables", e))?;
+                        writer
+                            .write_all(slot.groups.as_bytes())
+                            .map_err(|e| Error::DataWrite("group_tables", e))?;
+                        writer
+                            .write_all(slot.block_devices.as_bytes())
+                            .map_err(|e| Error::DataWrite("block_device_tables", e))?;
+                        writer
+                            .write_zeros_exact(metadata_padding as u64)
+                            .map_err(|e| Error::DataWrite("metadata_padding", e))?;
                     }
                 }
             }
             ImageType::Empty => {
-                writer.write_all(geometry)?;
-                writer.write_zeros_exact(geometry_padding as u64)?;
+                writer
+                    .write_all(geometry)
+                    .map_err(|e| Error::DataWrite("geometry", e))?;
+                writer
+                    .write_zeros_exact(geometry_padding as u64)
+                    .map_err(|e| Error::DataWrite("geometry_padding", e))?;
 
-                writer.write_all(self.slots[0].header.as_bytes())?;
-                writer.write_all(self.slots[0].partitions.as_bytes())?;
-                writer.write_all(self.slots[0].extents.as_bytes())?;
-                writer.write_all(self.slots[0].groups.as_bytes())?;
-                writer.write_all(self.slots[0].block_devices.as_bytes())?;
+                writer
+                    .write_all(self.slots[0].header.as_bytes())
+                    .map_err(|e| Error::DataWrite("header", e))?;
+                writer
+                    .write_all(self.slots[0].partitions.as_bytes())
+                    .map_err(|e| Error::DataWrite("partition_tables", e))?;
+                writer
+                    .write_all(self.slots[0].extents.as_bytes())
+                    .map_err(|e| Error::DataWrite("extent_tables", e))?;
+                writer
+                    .write_all(self.slots[0].groups.as_bytes())
+                    .map_err(|e| Error::DataWrite("group_tables", e))?;
+                writer
+                    .write_all(self.slots[0].block_devices.as_bytes())
+                    .map_err(|e| Error::DataWrite("block_device_tables", e))?;
             }
         }
 

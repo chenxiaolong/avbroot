@@ -95,10 +95,16 @@ pub enum Error {
     },
     #[error("VTS signature is missing hash descriptor")]
     MissingHashDescriptor,
-    #[error("AVB error")]
-    Avb(#[from] avb::Error),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    #[error("Failed to load VTS AVB signature")]
+    VtsAvbLoad(#[source] avb::Error),
+    #[error("Failed to save VTS AVB signature")]
+    VtsAvbSave(#[source] avb::Error),
+    #[error("Failed to generate VTS AVB signature")]
+    VtsAvbSign(#[source] avb::Error),
+    #[error("Failed to read boot image data: {0}")]
+    DataRead(&'static str, #[source] io::Error),
+    #[error("Failed to write boot image data: {0}")]
+    DataWrite(&'static str, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -293,7 +299,8 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let raw_v0 = RawV0::read_from_io(&mut reader)?;
+        let raw_v0 =
+            RawV0::read_from_io(&mut reader).map_err(|e| Error::DataRead("Boot::V0::header", e))?;
 
         if raw_v0.magic != BOOT_MAGIC {
             return Err(Error::UnknownMagic(raw_v0.magic));
@@ -336,7 +343,8 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
         }
 
         let mut v1_data = if header_version >= 1 {
-            let raw_v1 = RawV1Extra::read_from_io(&mut reader)?;
+            let raw_v1 = RawV1Extra::read_from_io(&mut reader)
+                .map_err(|e| Error::DataRead("Boot::V1::header", e))?;
 
             let recovery_dtbo_size =
                 util::check_bounds(raw_v1.recovery_dtbo_size.get(), ..=COMPONENT_MAX_SIZE)
@@ -362,7 +370,8 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
         }
 
         let mut v2_data = if header_version == 2 {
-            let raw_v2 = RawV2Extra::read_from_io(&mut reader)?;
+            let raw_v2 = RawV2Extra::read_from_io(&mut reader)
+                .map_err(|e| Error::DataRead("Boot::V2::header", e))?;
 
             let dtb_size = util::check_bounds(raw_v2.dtb_size.get(), ..=COMPONENT_MAX_SIZE)
                 .map_err(|e| Error::IntOutOfBounds("Boot::V2::dtb_size", e))?;
@@ -378,34 +387,50 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
         };
 
         if let Some(v1) = &v1_data {
-            if reader.stream_position()? != u64::from(v1.header_size) {
+            if reader
+                .stream_position()
+                .map_err(|e| Error::DataRead("Boot::V1::header_size", e))?
+                != u64::from(v1.header_size)
+            {
                 return Err(Error::InvalidHeaderSize(v1.header_size));
             }
         }
 
-        padding::read_discard(&mut reader, page_size.into())?;
+        padding::read_discard(&mut reader, page_size.into())
+            .map_err(|e| Error::DataRead("Boot::V0::header_padding", e))?;
 
-        let kernel = reader.read_vec_exact(kernel_size as usize)?;
-        padding::read_discard(&mut reader, page_size.into())?;
+        let kernel = reader
+            .read_vec_exact(kernel_size as usize)
+            .map_err(|e| Error::DataRead("Boot::V0::kernel", e))?;
+        padding::read_discard(&mut reader, page_size.into())
+            .map_err(|e| Error::DataRead("Boot::V0::kernel_padding", e))?;
 
-        let ramdisk = reader.read_vec_exact(ramdisk_size as usize)?;
-        padding::read_discard(&mut reader, page_size.into())?;
+        let ramdisk = reader
+            .read_vec_exact(ramdisk_size as usize)
+            .map_err(|e| Error::DataRead("Boot::V0::ramdisk", e))?;
+        padding::read_discard(&mut reader, page_size.into())
+            .map_err(|e| Error::DataRead("Boot::V0::ramdisk_padding", e))?;
 
-        let second = reader.read_vec_exact(second_size as usize)?;
-        padding::read_discard(&mut reader, page_size.into())?;
+        let second = reader
+            .read_vec_exact(second_size as usize)
+            .map_err(|e| Error::DataRead("Boot::V0::second", e))?;
+        padding::read_discard(&mut reader, page_size.into())
+            .map_err(|e| Error::DataRead("Boot::V0::second_padding", e))?;
 
         if let Some(v1) = &mut v1_data {
-            v1.v1_extra
-                .recovery_dtbo
-                .resize(v1.recovery_dtbo_size as usize, 0);
-            reader.read_exact(&mut v1.v1_extra.recovery_dtbo)?;
-            padding::read_discard(&mut reader, page_size.into())?;
+            v1.v1_extra.recovery_dtbo = reader
+                .read_vec_exact(v1.recovery_dtbo_size as usize)
+                .map_err(|e| Error::DataRead("Boot::V1::recovery_dtbo", e))?;
+            padding::read_discard(&mut reader, page_size.into())
+                .map_err(|e| Error::DataRead("Boot::V1::recovery_dtbo_padding", e))?;
         }
 
         if let Some(v2) = &mut v2_data {
-            v2.v2_extra.dtb.resize(v2.dtb_size as usize, 0);
-            reader.read_exact(&mut v2.v2_extra.dtb)?;
-            padding::read_discard(&mut reader, page_size.into())?;
+            v2.v2_extra.dtb = reader
+                .read_vec_exact(v2.dtb_size as usize)
+                .map_err(|e| Error::DataRead("Boot::V2::dtb", e))?;
+            padding::read_discard(&mut reader, page_size.into())
+                .map_err(|e| Error::DataRead("Boot::V2::dtb_padding", e))?;
         }
 
         let image = Self {
@@ -500,7 +525,9 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
             extra_cmdline,
         };
 
-        raw_v0.write_to_io(&mut writer)?;
+        raw_v0
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("Boot::V0::header", e))?;
 
         if let Some(v1) = &self.v1_extra {
             let raw_v1 = RawV1Extra {
@@ -509,7 +536,9 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
                 header_size: self.header_size().into(),
             };
 
-            raw_v1.write_to_io(&mut writer)?;
+            raw_v1
+                .write_to_io(&mut writer)
+                .map_err(|e| Error::DataWrite("Boot::V1::header", e))?;
         }
 
         if let Some(v2) = &self.v2_extra {
@@ -518,28 +547,46 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
                 dtb_addr: v2.dtb_addr.into(),
             };
 
-            raw_v2.write_to_io(&mut writer)?;
+            raw_v2
+                .write_to_io(&mut writer)
+                .map_err(|e| Error::DataWrite("Boot::V2::header", e))?;
         }
 
-        padding::write_zeros(&mut writer, self.page_size.into())?;
+        padding::write_zeros(&mut writer, self.page_size.into())
+            .map_err(|e| Error::DataWrite("Boot::V0::header_padding", e))?;
 
-        writer.write_all(&self.kernel)?;
-        padding::write_zeros(&mut writer, self.page_size.into())?;
+        writer
+            .write_all(&self.kernel)
+            .map_err(|e| Error::DataWrite("Boot::V0::kernel", e))?;
+        padding::write_zeros(&mut writer, self.page_size.into())
+            .map_err(|e| Error::DataWrite("Boot::V0::kernel_padding", e))?;
 
-        writer.write_all(&self.ramdisk)?;
-        padding::write_zeros(&mut writer, self.page_size.into())?;
+        writer
+            .write_all(&self.ramdisk)
+            .map_err(|e| Error::DataWrite("Boot::V0::ramdisk", e))?;
+        padding::write_zeros(&mut writer, self.page_size.into())
+            .map_err(|e| Error::DataWrite("Boot::V0::ramdisk_padding", e))?;
 
-        writer.write_all(&self.second)?;
-        padding::write_zeros(&mut writer, self.page_size.into())?;
+        writer
+            .write_all(&self.second)
+            .map_err(|e| Error::DataWrite("Boot::V0::second", e))?;
+        padding::write_zeros(&mut writer, self.page_size.into())
+            .map_err(|e| Error::DataWrite("Boot::V0::second_padding", e))?;
 
         if let Some(v1) = &self.v1_extra {
-            writer.write_all(&v1.recovery_dtbo)?;
-            padding::write_zeros(&mut writer, self.page_size.into())?;
+            writer
+                .write_all(&v1.recovery_dtbo)
+                .map_err(|e| Error::DataWrite("Boot::V1::recovery_dtbo", e))?;
+            padding::write_zeros(&mut writer, self.page_size.into())
+                .map_err(|e| Error::DataWrite("Boot::V1::recovery_dtbo_padding", e))?;
         }
 
         if let Some(v2) = &self.v2_extra {
-            writer.write_all(&v2.dtb)?;
-            padding::write_zeros(&mut writer, self.page_size.into())?;
+            writer
+                .write_all(&v2.dtb)
+                .map_err(|e| Error::DataWrite("Boot::V2::dtb", e))?;
+            padding::write_zeros(&mut writer, self.page_size.into())
+                .map_err(|e| Error::DataWrite("Boot::V2::dtb_padding", e))?;
         }
 
         Ok(())
@@ -646,7 +693,8 @@ impl<R: Read> FromReader<R> for BootImageV3Through4 {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let raw_v3 = RawV3::read_from_io(&mut reader)?;
+        let raw_v3 =
+            RawV3::read_from_io(&mut reader).map_err(|e| Error::DataRead("Boot::V3::header", e))?;
 
         if raw_v3.magic != BOOT_MAGIC {
             return Err(Error::UnknownMagic(raw_v3.magic));
@@ -668,7 +716,8 @@ impl<R: Read> FromReader<R> for BootImageV3Through4 {
             .map_err(|e| Error::StringNotUtf8("Boot::V3::cmdline", e, cmdline.to_vec()))?;
 
         let signature_size = if header_version == 4 {
-            let raw_v4 = RawV4Extra::read_from_io(&mut reader)?;
+            let raw_v4 = RawV4Extra::read_from_io(&mut reader)
+                .map_err(|e| Error::DataRead("Boot::V4::header", e))?;
 
             let size =
                 util::check_bounds(raw_v4.signature_size.get(), ..=HDR_V4_SIGNATURE_SIZE as u32)
@@ -679,31 +728,48 @@ impl<R: Read> FromReader<R> for BootImageV3Through4 {
             None
         };
 
-        if reader.stream_position()? != u64::from(header_size) {
+        if reader
+            .stream_position()
+            .map_err(|e| Error::DataRead("Boot::V3::header_size", e))?
+            != u64::from(header_size)
+        {
             return Err(Error::InvalidHeaderSize(header_size));
         }
 
-        padding::read_discard(&mut reader, PAGE_SIZE.into())?;
+        padding::read_discard(&mut reader, PAGE_SIZE.into())
+            .map_err(|e| Error::DataRead("Boot::V3::header_padding", e))?;
 
-        let kernel = reader.read_vec_exact(kernel_size as usize)?;
-        padding::read_discard(&mut reader, PAGE_SIZE.into())?;
+        let kernel = reader
+            .read_vec_exact(kernel_size as usize)
+            .map_err(|e| Error::DataRead("Boot::V3::kernel", e))?;
+        padding::read_discard(&mut reader, PAGE_SIZE.into())
+            .map_err(|e| Error::DataRead("Boot::V3::kernel_padding", e))?;
 
-        let ramdisk = reader.read_vec_exact(ramdisk_size as usize)?;
-        padding::read_discard(&mut reader, PAGE_SIZE.into())?;
+        let ramdisk = reader
+            .read_vec_exact(ramdisk_size as usize)
+            .map_err(|e| Error::DataRead("Boot::V3::ramdisk", e))?;
+        padding::read_discard(&mut reader, PAGE_SIZE.into())
+            .map_err(|e| Error::DataRead("Boot::V3::ramdisk_padding", e))?;
 
         // Don't preserve the signature. It is only used for VTS tests and is
         // not relevant for booting.
         let v4_extra = if let Some(s) = signature_size {
             // OnePlus images have an invalid signature consisting of all zeros.
-            let data = reader.read_vec_exact(s as usize)?;
+            let data = reader
+                .read_vec_exact(s as usize)
+                .map_err(|e| Error::DataRead("Boot::V4::signature", e))?;
 
             let signature = if s > 0 && !util::is_zero(&data) {
-                Some(Header::from_reader(Cursor::new(data))?)
+                let avb_header =
+                    Header::from_reader(Cursor::new(data)).map_err(Error::VtsAvbLoad)?;
+
+                Some(avb_header)
             } else {
                 None
             };
 
-            padding::read_discard(&mut reader, PAGE_SIZE.into())?;
+            padding::read_discard(&mut reader, PAGE_SIZE.into())
+                .map_err(|e| Error::DataRead("Boot::V4::signature_padding", e))?;
 
             Some(V4Extra { signature })
         } else {
@@ -755,21 +821,26 @@ impl BootImageV3Through4 {
             cmdline,
         };
 
-        raw_v3.write_to_io(&mut writer)?;
+        raw_v3
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("Boot::V3::header", e))?;
 
         let v4_signature = if let Some(v4) = &self.v4_extra {
             let mut sig_writer = Cursor::new(Vec::new());
 
             if let Some(s) = &v4.signature {
-                s.to_writer(&mut sig_writer)?;
+                s.to_writer(&mut sig_writer).map_err(Error::VtsAvbSave)?;
 
-                let size = sig_writer.stream_position()?;
+                let size = sig_writer
+                    .stream_position()
+                    .map_err(|e| Error::DataWrite("Boot::V4::signature_size", e))?;
 
                 // The VTS signature is always a fixed size.
                 util::check_bounds(size, ..=HDR_V4_SIGNATURE_SIZE)
                     .map_err(|e| Error::IntOutOfBounds("Boot::V4::signature_size", e))?;
 
-                padding::write_zeros(&mut sig_writer, HDR_V4_SIGNATURE_SIZE)?;
+                padding::write_zeros(&mut sig_writer, HDR_V4_SIGNATURE_SIZE)
+                    .map_err(|e| Error::DataWrite("Boot::V4::signature_inner_padding", e))?;
             }
 
             let sig = sig_writer.into_inner();
@@ -778,25 +849,37 @@ impl BootImageV3Through4 {
                 signature_size: (sig.len() as u32).into(),
             };
 
-            raw_v4.write_to_io(&mut writer)?;
+            raw_v4
+                .write_to_io(&mut writer)
+                .map_err(|e| Error::DataWrite("Boot::V4::header", e))?;
 
             Some(sig)
         } else {
             None
         };
 
-        padding::write_zeros(&mut writer, PAGE_SIZE.into())?;
+        padding::write_zeros(&mut writer, PAGE_SIZE.into())
+            .map_err(|e| Error::DataWrite("Boot::V3::header_padding", e))?;
 
-        writer.write_all(&self.kernel)?;
-        padding::write_zeros(&mut writer, PAGE_SIZE.into())?;
+        writer
+            .write_all(&self.kernel)
+            .map_err(|e| Error::DataWrite("Boot::V3::kernel", e))?;
+        padding::write_zeros(&mut writer, PAGE_SIZE.into())
+            .map_err(|e| Error::DataWrite("Boot::V3::kernel_padding", e))?;
 
-        writer.write_all(&self.ramdisk)?;
-        padding::write_zeros(&mut writer, PAGE_SIZE.into())?;
+        writer
+            .write_all(&self.ramdisk)
+            .map_err(|e| Error::DataWrite("Boot::V3::ramdisk", e))?;
+        padding::write_zeros(&mut writer, PAGE_SIZE.into())
+            .map_err(|e| Error::DataWrite("Boot::V3::ramdisk_padding", e))?;
 
         if !skip_v4_sig {
             if let Some(sig) = v4_signature {
-                writer.write_all(&sig)?;
-                padding::write_zeros(&mut writer, PAGE_SIZE.into())?;
+                writer
+                    .write_all(&sig)
+                    .map_err(|e| Error::DataWrite("Boot::V4::signature", e))?;
+                padding::write_zeros(&mut writer, PAGE_SIZE.into())
+                    .map_err(|e| Error::DataWrite("Boot::V4::signature_padding", e))?;
             }
         }
 
@@ -823,10 +906,9 @@ impl BootImageV3Through4 {
                     .ok_or(Error::MissingHashDescriptor)?;
 
                 if descriptor.hash_algorithm != "sha256" {
-                    return Err(avb::Error::UnsupportedHashAlgorithm(
+                    return Err(Error::VtsAvbSign(avb::Error::UnsupportedHashAlgorithm(
                         descriptor.hash_algorithm.clone(),
-                    )
-                    .into());
+                    )));
                 }
 
                 context.update(&descriptor.salt);
@@ -863,7 +945,7 @@ impl BootImageV3Through4 {
 
         descriptor.image_size = image_size;
         descriptor.root_digest = context.finish().as_ref().to_vec();
-        signature.sign(key)?;
+        signature.sign(key).map_err(Error::VtsAvbSign)?;
 
         Ok(true)
     }
@@ -1036,7 +1118,8 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let raw_v3 = RawVendorV3::read_from_io(&mut reader)?;
+        let raw_v3 = RawVendorV3::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("Vendor::V3::header", e))?;
 
         if raw_v3.magic != VENDOR_BOOT_MAGIC {
             return Err(Error::UnknownMagic(raw_v3.magic));
@@ -1076,7 +1159,8 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
         }
 
         let mut v4_data = if header_version == 4 {
-            let raw_v4 = RawVendorV4Extra::read_from_io(&mut reader)?;
+            let raw_v4 = RawVendorV4Extra::read_from_io(&mut reader)
+                .map_err(|e| Error::DataRead("Vendor::V4::header", e))?;
 
             let table_size = raw_v4.vendor_ramdisk_table_size.get();
             let table_entry_num = raw_v4.vendor_ramdisk_table_entry_num.get();
@@ -1092,7 +1176,7 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
 
             let actual_table_size = table_entry_num
                 .checked_mul(table_entry_size)
-                .ok_or_else(|| Error::IntOverflow("Vendor::V4::actual_table_size"))?;
+                .ok_or(Error::IntOverflow("Vendor::V4::actual_table_size"))?;
             if actual_table_size != table_size {
                 return Err(Error::VendorV4InvalidRamdiskTableSize {
                     actual: actual_table_size,
@@ -1112,16 +1196,24 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
             None
         };
 
-        if reader.stream_position()? != u64::from(header_size) {
+        if reader
+            .stream_position()
+            .map_err(|e| Error::DataRead("Vendor::V3::header_size", e))?
+            != u64::from(header_size)
+        {
             return Err(Error::InvalidHeaderSize(header_size));
         }
 
-        padding::read_discard(&mut reader, page_size.into())?;
+        padding::read_discard(&mut reader, page_size.into())
+            .map_err(|e| Error::DataRead("Vendor::V3::header_padding", e))?;
 
         let mut ramdisks = vec![];
 
-        let mut vendor_ramdisk_data = reader.read_vec_exact(vendor_ramdisk_size as usize)?;
-        padding::read_discard(&mut reader, page_size.into())?;
+        let mut vendor_ramdisk_data = reader
+            .read_vec_exact(vendor_ramdisk_size as usize)
+            .map_err(|e| Error::DataRead("Vendor::V3::ramdisk", e))?;
+        padding::read_discard(&mut reader, page_size.into())
+            .map_err(|e| Error::DataRead("Vendor::V3::ramdisk_padding", e))?;
 
         // For v3, this is just one big ramdisk. For v4, we have to wait until
         // later to parse the data because the table of entries shows up later
@@ -1131,28 +1223,34 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
             vendor_ramdisk_data = vec![];
         }
 
-        let dtb = reader.read_vec_exact(dtb_size as usize)?;
-        padding::read_discard(&mut reader, page_size.into())?;
+        let dtb = reader
+            .read_vec_exact(dtb_size as usize)
+            .map_err(|e| Error::DataRead("Vendor::V3::dtb", e))?;
+        padding::read_discard(&mut reader, page_size.into())
+            .map_err(|e| Error::DataRead("Vendor::V3::dtb_padding", e))?;
 
         if let Some(v4) = &mut v4_data {
             let mut ramdisk_reader = Cursor::new(vendor_ramdisk_data);
             let mut total_ramdisk_size = 0;
 
             for index in 0..v4.vendor_ramdisk_table_entry_num {
-                let raw_entry = RawVendorV4RamdiskTableEntry::read_from_io(&mut reader)?;
+                let raw_entry = RawVendorV4RamdiskTableEntry::read_from_io(&mut reader)
+                    .map_err(|e| Error::DataRead("Vendor::V4::table_entry", e))?;
 
                 let ramdisk_size =
                     util::check_bounds(raw_entry.ramdisk_size.get(), ..=vendor_ramdisk_size)
-                        .map_err(|e| Error::IntOutOfBounds("Vendor::V4::Meta::ramdisk_size", e))?;
+                        .map_err(|e| Error::IntOutOfBounds("Vendor::V4::ramdisk_size", e))?;
 
                 let ramdisk_offset = raw_entry.ramdisk_offset.get();
 
                 let ramdisk_name = raw_entry.ramdisk_name.trim_end_padding();
                 let ramdisk_name = str::from_utf8(ramdisk_name).map_err(|e| {
-                    Error::StringNotUtf8("Vendor::V4::Meta::ramdisk_name", e, ramdisk_name.to_vec())
+                    Error::StringNotUtf8("Vendor::V4::ramdisk_name", e, ramdisk_name.to_vec())
                 })?;
 
-                let table_offset = ramdisk_reader.stream_position()?;
+                let table_offset = ramdisk_reader
+                    .stream_position()
+                    .map_err(|e| Error::DataRead("Vendor::V4::table_offset", e))?;
 
                 if u64::from(ramdisk_offset) != table_offset {
                     return Err(Error::VendorV4InvalidRamdiskEntryOffset {
@@ -1162,7 +1260,9 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
                     });
                 }
 
-                let ramdisk = ramdisk_reader.read_vec_exact(ramdisk_size as usize)?;
+                let ramdisk = ramdisk_reader
+                    .read_vec_exact(ramdisk_size as usize)
+                    .map_err(|e| Error::DataRead("Vendor::V4::ramdisk", e))?;
                 ramdisks.push(ramdisk);
 
                 v4.v4_extra.ramdisk_metas.push(RamdiskMeta {
@@ -1181,9 +1281,15 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
                 });
             }
 
-            padding::read_discard(&mut reader, page_size.into())?;
+            padding::read_discard(&mut reader, page_size.into())
+                .map_err(|e| Error::DataRead("Vendor::V4::table_padding", e))?;
 
-            let bootconfig = reader.read_vec_exact(v4.bootconfig_size as usize)?;
+            let bootconfig = reader
+                .read_vec_exact(v4.bootconfig_size as usize)
+                .map_err(|e| Error::DataRead("Vendor::V4::bootconfig", e))?;
+            padding::read_discard(&mut reader, page_size.into())
+                .map_err(|e| Error::DataRead("Vendor::V4::bootconfig_padding", e))?;
+
             v4.v4_extra.bootconfig = String::from_utf8(bootconfig).map_err(|e| {
                 Error::StringNotUtf8("Vendor::V4::bootconfig", e.utf8_error(), e.into_bytes())
             })?;
@@ -1274,18 +1380,19 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
             dtb_addr: self.dtb_addr.into(),
         };
 
-        raw_v3.write_to_io(&mut writer)?;
+        raw_v3
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("Vendor::V3::header", e))?;
 
         if let Some(v4) = &self.v4_extra {
-            let table_entry_num =
-                self.ramdisks.len().to_u32().ok_or_else(|| {
-                    Error::IntOverflow("Vendor::V4::vendor_ramdisk_table_entry_num")
-                })?;
+            let table_entry_num = self.ramdisks.len().to_u32().ok_or(Error::IntOverflow(
+                "Vendor::V4::vendor_ramdisk_table_entry_num",
+            ))?;
             let table_entry_size = mem::size_of::<RawVendorV4RamdiskTableEntry>() as u32;
             let table_size = table_entry_num
                 .checked_mul(table_entry_size)
                 .and_then(|v| v.to_u32())
-                .ok_or_else(|| Error::IntOverflow("Vendor::V4::vendor_ramdisk_table_size"))?;
+                .ok_or(Error::IntOverflow("Vendor::V4::vendor_ramdisk_table_size"))?;
 
             let raw_v4 = RawVendorV4Extra {
                 vendor_ramdisk_table_size: table_size.into(),
@@ -1294,18 +1401,27 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
                 bootconfig_size: (v4.bootconfig.len() as u32).into(),
             };
 
-            raw_v4.write_to_io(&mut writer)?;
+            raw_v4
+                .write_to_io(&mut writer)
+                .map_err(|e| Error::DataWrite("Vendor::V4::header", e))?;
         }
 
-        padding::write_zeros(&mut writer, self.page_size.into())?;
+        padding::write_zeros(&mut writer, self.page_size.into())
+            .map_err(|e| Error::DataWrite("Vendor::V3::header_padding", e))?;
 
         for ramdisk in &self.ramdisks {
-            writer.write_all(ramdisk)?;
+            writer
+                .write_all(ramdisk)
+                .map_err(|e| Error::DataWrite("Vendor::V3::ramdisk", e))?;
         }
-        padding::write_zeros(&mut writer, self.page_size.into())?;
+        padding::write_zeros(&mut writer, self.page_size.into())
+            .map_err(|e| Error::DataWrite("Vendor::V3::ramdisk_padding", e))?;
 
-        writer.write_all(&self.dtb)?;
-        padding::write_zeros(&mut writer, self.page_size.into())?;
+        writer
+            .write_all(&self.dtb)
+            .map_err(|e| Error::DataWrite("Vendor::V3::dtb", e))?;
+        padding::write_zeros(&mut writer, self.page_size.into())
+            .map_err(|e| Error::DataWrite("Vendor::V3::dtb_padding", e))?;
 
         if let Some(v4) = &self.v4_extra {
             let mut ramdisk_offset = 0;
@@ -1319,7 +1435,7 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
                     .to_padded_array::<VENDOR_RAMDISK_NAME_SIZE>()
                     .ok_or_else(|| {
                         Error::StringTooLong(
-                            "Vendor::V4::Meta::ramdisk_name",
+                            "Vendor::V4::ramdisk_name",
                             VENDOR_RAMDISK_NAME_SIZE,
                             meta.ramdisk_name.clone(),
                         )
@@ -1333,14 +1449,20 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
                     board_id: meta.board_id.map(|id| id.into()),
                 };
 
-                raw_entry.write_to_io(&mut writer)?;
+                raw_entry
+                    .write_to_io(&mut writer)
+                    .map_err(|e| Error::DataWrite("Vendor::V4::table_entry", e))?;
 
                 ramdisk_offset += ramdisk_size;
             }
-            padding::write_zeros(&mut writer, self.page_size.into())?;
+            padding::write_zeros(&mut writer, self.page_size.into())
+                .map_err(|e| Error::DataWrite("Vendor::V4::table_padding", e))?;
 
-            writer.write_all(v4.bootconfig.as_bytes())?;
-            padding::write_zeros(&mut writer, self.page_size.into())?;
+            writer
+                .write_all(v4.bootconfig.as_bytes())
+                .map_err(|e| Error::DataWrite("Vendor::V4::bootconfig", e))?;
+            padding::write_zeros(&mut writer, self.page_size.into())
+                .map_err(|e| Error::DataWrite("Vendor::V4::bootconfig_padding", e))?;
         }
 
         Ok(())
@@ -1387,7 +1509,9 @@ impl<R: Read + Seek> FromReader<R> for BootImage {
     type Error = Error;
 
     fn from_reader(mut reader: R) -> Result<Self> {
-        reader.rewind()?;
+        reader
+            .rewind()
+            .map_err(|e| Error::DataRead("Boot::V0::autodetect", e))?;
 
         match BootImageV0Through2::from_reader(&mut reader) {
             Ok(b) => return Ok(Self::V0Through2(b)),
@@ -1395,7 +1519,9 @@ impl<R: Read + Seek> FromReader<R> for BootImage {
             Err(e) => return Err(e),
         }
 
-        reader.rewind()?;
+        reader
+            .rewind()
+            .map_err(|e| Error::DataRead("Boot::V3::autodetect", e))?;
 
         match BootImageV3Through4::from_reader(&mut reader) {
             Ok(b) => return Ok(Self::V3Through4(b)),
@@ -1403,7 +1529,9 @@ impl<R: Read + Seek> FromReader<R> for BootImage {
             Err(e) => return Err(e),
         }
 
-        reader.rewind()?;
+        reader
+            .rewind()
+            .map_err(|e| Error::DataRead("Vendor::V3::autodetect", e))?;
 
         match VendorBootImageV3Through4::from_reader(&mut reader) {
             Ok(b) => return Ok(Self::VendorV3Through4(b)),

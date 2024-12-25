@@ -5,7 +5,7 @@ use std::{
     env::{self, VarError},
     ffi::{OsStr, OsString},
     fs::{self, File, OpenOptions},
-    io::{self, BufReader, BufWriter, Read, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
     time::Duration,
@@ -42,20 +42,22 @@ use x509_cert::{
     Certificate,
 };
 
+use crate::util::DebugString;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Signature algorithm not supported: {0:?}")]
     UnsupportedAlgorithm(SignatureAlgorithm),
     #[error("RSA key size ({}) not supported", .0 * 8)]
-    UnsupportedKey(usize),
+    UnsupportedKeySize(usize),
     #[error("Invalid digest length ({0} bytes) for {1:?}")]
     InvalidDigestLength(usize, SignatureAlgorithm),
     #[error("Invalid signature length ({0} bytes) for {1:?}")]
     InvalidSignatureLength(usize, SignatureAlgorithm),
-    #[error("Failed to run command: {0}")]
-    CommandSpawnFailed(String, #[source] io::Error),
-    #[error("Command failed with status: {1}: {0}")]
-    CommandExecutionFailed(String, ExitStatus),
+    #[error("Failed to run command: {0:?}")]
+    CommandSpawn(DebugString, #[source] io::Error),
+    #[error("Command failed with status: {1}: {0:?}")]
+    CommandExecution(DebugString, ExitStatus),
     #[error("Signature from signing helper does not match public key: {0:?}")]
     SigningHelperBadSignature(PathBuf),
     #[error("Passphrase prompt requires an interactive terminal")]
@@ -68,28 +70,40 @@ pub enum Error {
     InvalidEnvVar(OsString, #[source] VarError),
     #[error("PEM has start tag, but no end tag")]
     PemNoEndTag,
-    #[error("Failed to load encrypted private key")]
+    #[error("Failed to load encrypted RSA private key")]
     LoadKeyEncrypted(#[source] pkcs8::Error),
-    #[error("Failed to load unencrypted private key")]
+    #[error("Failed to load unencrypted RSA private key")]
     LoadKeyUnencrypted(#[source] pkcs8::Error),
-    #[error("Failed to save encrypted private key")]
+    #[error("Failed to save encrypted RSA private key")]
     SaveKeyEncrypted(#[source] pkcs8::Error),
-    #[error("Failed to save unencrypted private key")]
+    #[error("Failed to save unencrypted RSA private key")]
     SaveKeyUnencrypted(#[source] pkcs8::Error),
+    #[error("Failed to load RSA public key")]
+    LoadPubKey(#[source] pkcs8::spki::Error),
+    #[error("Failed to save RSA public key")]
+    SavePubKey(#[source] pkcs8::spki::Error),
+    #[error("Failed to load X509 certificate")]
+    LoadCert(#[source] x509_cert::der::Error),
+    #[error("Failed to save X509 certificate")]
+    SaveCert(#[source] x509_cert::der::Error),
+    #[error("Failed to generate RSA key")]
+    RsaGenerate(#[source] Box<rsa::Error>),
     #[error("Failed to RSA sign digest")]
-    RsaSign(#[source] rsa::Error),
+    RsaSign(#[source] Box<rsa::Error>),
     #[error("Failed to RSA verify signature")]
-    RsaVerify(#[source] rsa::Error),
-    #[error("X509 error")]
-    X509(#[from] x509_cert::builder::Error),
-    #[error("SPKI error")]
-    Spki(#[from] pkcs8::spki::Error),
-    #[error("DER error")]
-    Der(#[from] x509_cert::der::Error),
-    #[error("RSA error")]
-    Rsa(#[from] rsa::Error),
-    #[error("I/O error")]
-    Io(#[from] io::Error),
+    RsaVerify(#[source] Box<rsa::Error>),
+    #[error("Failed to generate X509 certificate")]
+    CertGenerate(#[source] x509_cert::builder::Error),
+    #[error("Invalid parameters for X509 certificate generation")]
+    CertParams(#[source] x509_cert::der::Error),
+    #[error("Failed to CMS sign digest")]
+    CmsSign(#[source] x509_cert::der::Error),
+    #[error("Failed to parse CMS signature")]
+    CmsParse(#[source] x509_cert::der::Error),
+    #[error("Failed to read file: {0:?}")]
+    ReadFile(PathBuf, #[source] io::Error),
+    #[error("Failed to write file: {0:?}")]
+    WriteFile(PathBuf, #[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -175,7 +189,8 @@ impl PassphraseSource {
                 first
             }
             Self::EnvVar(v) => env::var(v).map_err(|e| Error::InvalidEnvVar(v.clone(), e))?,
-            Self::File(p) => fs::read_to_string(p)?
+            Self::File(p) => fs::read_to_string(p)
+                .map_err(|e| Error::ReadFile(p.clone(), e))?
                 .trim_end_matches(['\r', '\n'])
                 .to_owned(),
         };
@@ -187,7 +202,7 @@ impl PassphraseSource {
 fn check_key_size(size: usize) -> Result<()> {
     // RustCrypto does not support 8192-bit keys.
     if size > 4096 / 8 {
-        return Err(Error::UnsupportedKey(size));
+        return Err(Error::UnsupportedKeySize(size));
     }
 
     Ok(())
@@ -256,7 +271,9 @@ impl RsaSigningKey {
         };
 
         match self {
-            Self::Internal(key) => key.sign(scheme, digest).map_err(Error::RsaSign),
+            Self::Internal(key) => key
+                .sign(scheme, digest)
+                .map_err(|e| Error::RsaSign(Box::new(e))),
             Self::External {
                 program,
                 public_key,
@@ -292,7 +309,7 @@ impl RsaSigningKey {
 
                 let mut child = command
                     .spawn()
-                    .map_err(|e| Error::CommandSpawnFailed(format!("{command:?}"), e))?;
+                    .map_err(|e| Error::CommandSpawn(DebugString::new(&command), e))?;
 
                 // We don't bother with spawning a thread. The pipe capacity on
                 // all major OSs is significantly larger than the digest, so we
@@ -304,14 +321,22 @@ impl RsaSigningKey {
                 // * macOS: 4 KiB, 16 KiB (usually), or 64 KiB
                 // * Windows: 4 KiB
 
-                let padded_digest = pkcs1v15_sign_pad(&scheme.prefix, digest, public_key.size())?;
-                child.stdin.as_mut().unwrap().write_all(&padded_digest)?;
+                let padded_digest = pkcs1v15_sign_pad(&scheme.prefix, digest, public_key.size())
+                    .map_err(|e| Error::RsaSign(Box::new(e)))?;
+                child
+                    .stdin
+                    .as_mut()
+                    .unwrap()
+                    .write_all(&padded_digest)
+                    .map_err(|e| Error::WriteFile("<signing helper stdin>".into(), e))?;
 
-                let child = child.wait_with_output()?;
+                let child = child
+                    .wait_with_output()
+                    .map_err(|e| Error::CommandSpawn(DebugString::new(&command), e))?;
 
                 if !child.status.success() {
-                    return Err(Error::CommandExecutionFailed(
-                        format!("{command:?}"),
+                    return Err(Error::CommandExecution(
+                        DebugString::new(&command),
                         child.status,
                     ));
                 } else if child.stdout.len() != self.size() {
@@ -355,7 +380,7 @@ impl RsaPublicKeyExt for RsaPublicKey {
         };
 
         self.verify(scheme, digest, signature)
-            .map_err(Error::RsaVerify)
+            .map_err(|e| Error::RsaVerify(Box::new(e)))
     }
 }
 
@@ -364,7 +389,7 @@ pub fn generate_rsa_key_pair() -> Result<RsaPrivateKey> {
     let mut rng = rand::thread_rng();
 
     // avbroot supports 4096-bit keys only.
-    let key = RsaPrivateKey::new(&mut rng, 4096)?;
+    let key = RsaPrivateKey::new(&mut rng, 4096).map_err(|e| Error::RsaGenerate(Box::new(e)))?;
 
     Ok(key)
 }
@@ -376,20 +401,27 @@ pub fn generate_cert(
     validity: Duration,
     subject: &str,
 ) -> Result<Certificate> {
-    let public_key_der = key.to_public_key().to_public_key_der()?;
+    let public_key_der = key
+        .to_public_key()
+        .to_public_key_der()
+        .map_err(Error::SavePubKey)?;
     let signing_key = SigningKey::<Sha256>::new(key.clone());
 
     let builder = CertificateBuilder::new(
         Profile::Root,
         SerialNumber::from(serial),
-        Validity::from_now(validity)?,
-        subject.parse()?,
-        SubjectPublicKeyInfoOwned::from_der(public_key_der.as_bytes())?,
+        Validity::from_now(validity).map_err(Error::CertParams)?,
+        subject.parse().map_err(Error::CertParams)?,
+        SubjectPublicKeyInfoOwned::from_der(public_key_der.as_bytes())
+            .map_err(Error::CertParams)?,
         &signing_key,
-    )?;
+    )
+    .map_err(Error::CertGenerate)?;
 
     let mut rng = rand::thread_rng();
-    let cert = builder.build_with_rng(&mut rng)?;
+    let cert = builder
+        .build_with_rng(&mut rng)
+        .map_err(Error::CertGenerate)?;
 
     Ok(cert)
 }
@@ -442,80 +474,92 @@ fn reformat_pem(data: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Read PEM-encoded certificate from a reader.
-pub fn read_pem_cert(mut reader: impl Read) -> Result<Certificate> {
+pub fn read_pem_cert(path: &Path, mut reader: impl Read) -> Result<Certificate> {
     let mut data = vec![];
-    reader.read_to_end(&mut data)?;
+    reader
+        .read_to_end(&mut data)
+        .map_err(|e| Error::ReadFile(path.to_owned(), e))?;
 
     let data = reformat_pem(&data)?;
-    let certificate = Certificate::from_pem(data)?;
+    let certificate = Certificate::from_pem(data).map_err(Error::LoadCert)?;
 
     Ok(certificate)
 }
 
 /// Write PEM-encoded certificate to a writer.
-pub fn write_pem_cert(mut writer: impl Write, cert: &Certificate) -> Result<()> {
-    let data = cert.to_pem(LineEnding::LF)?;
+pub fn write_pem_cert(path: &Path, mut writer: impl Write, cert: &Certificate) -> Result<()> {
+    let data = cert.to_pem(LineEnding::LF).map_err(Error::SaveCert)?;
 
-    writer.write_all(data.as_bytes())?;
+    writer
+        .write_all(data.as_bytes())
+        .map_err(|e| Error::WriteFile(path.to_owned(), e))?;
 
     Ok(())
 }
 
 /// Read PEM-encoded certificate from a file.
 pub fn read_pem_cert_file(path: &Path) -> Result<Certificate> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
+    let reader = File::open(path).map_err(|e| Error::ReadFile(path.to_owned(), e))?;
 
-    read_pem_cert(reader)
+    read_pem_cert(path, reader)
 }
 
 /// Write PEM-encoded certificate to a file.
 pub fn write_pem_cert_file(path: &Path, cert: &Certificate) -> Result<()> {
-    let file = File::create(path)?;
-    let writer = BufWriter::new(file);
+    let writer = File::create(path).map_err(|e| Error::WriteFile(path.to_owned(), e))?;
 
-    write_pem_cert(writer, cert)
+    write_pem_cert(path, writer, cert)
 }
 
 /// Read PEM-encoded PKCS8 public key from a reader.
-pub fn read_pem_public_key(mut reader: impl Read) -> Result<RsaPublicKey> {
+pub fn read_pem_public_key(path: &Path, mut reader: impl Read) -> Result<RsaPublicKey> {
     let mut data = String::new();
-    reader.read_to_string(&mut data)?;
+    reader
+        .read_to_string(&mut data)
+        .map_err(|e| Error::ReadFile(path.to_owned(), e))?;
 
-    let key = RsaPublicKey::from_public_key_pem(&data)?;
+    let key = RsaPublicKey::from_public_key_pem(&data).map_err(Error::LoadPubKey)?;
 
     Ok(key)
 }
 
 /// Write PEM-encoded PKCS8 public key to a writer.
-pub fn write_pem_public_key(mut writer: impl Write, key: &RsaPublicKey) -> Result<()> {
-    let data = key.to_public_key_pem(LineEnding::LF)?;
+pub fn write_pem_public_key(path: &Path, mut writer: impl Write, key: &RsaPublicKey) -> Result<()> {
+    let data = key
+        .to_public_key_pem(LineEnding::LF)
+        .map_err(Error::SavePubKey)?;
 
-    writer.write_all(data.as_bytes())?;
+    writer
+        .write_all(data.as_bytes())
+        .map_err(|e| Error::WriteFile(path.to_owned(), e))?;
 
     Ok(())
 }
 
 /// Read PEM-encoded PKCS8 public key from a file.
 pub fn read_pem_public_key_file(path: &Path) -> Result<RsaPublicKey> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
+    let reader = File::open(path).map_err(|e| Error::ReadFile(path.to_owned(), e))?;
 
-    read_pem_public_key(reader)
+    read_pem_public_key(path, reader)
 }
 
 /// Write PEM-encoded PKCS8 public key to a file.
 pub fn write_pem_public_key_file(path: &Path, key: &RsaPublicKey) -> Result<()> {
-    let file = File::create(path)?;
-    let writer = BufWriter::new(file);
+    let writer = File::create(path).map_err(|e| Error::WriteFile(path.to_owned(), e))?;
 
-    write_pem_public_key(writer, key)
+    write_pem_public_key(path, writer, key)
 }
 
 /// Read PEM-encoded PKCS8 private key from a reader.
-pub fn read_pem_key(mut reader: impl Read, source: &PassphraseSource) -> Result<RsaPrivateKey> {
+pub fn read_pem_key(
+    path: &Path,
+    mut reader: impl Read,
+    source: &PassphraseSource,
+) -> Result<RsaPrivateKey> {
     let mut data = String::new();
-    reader.read_to_string(&mut data)?;
+    reader
+        .read_to_string(&mut data)
+        .map_err(|e| Error::ReadFile(path.to_owned(), e))?;
 
     if data.contains("ENCRYPTED") {
         let passphrase = source.acquire(false)?;
@@ -528,6 +572,7 @@ pub fn read_pem_key(mut reader: impl Read, source: &PassphraseSource) -> Result<
 
 /// Write PEM-encoded PKCS8 private key to a writer.
 pub fn write_pem_key(
+    path: &Path,
     mut writer: impl Write,
     key: &RsaPrivateKey,
     source: &PassphraseSource,
@@ -570,20 +615,24 @@ pub fn write_pem_key(
             .encrypt_with_params(pbes2_params, passphrase)
             .map_err(Error::SaveKeyEncrypted)?;
 
-        secret_doc.to_pem(EncryptedPrivateKeyInfo::PEM_LABEL, LineEnding::LF)?
+        secret_doc
+            .to_pem(EncryptedPrivateKeyInfo::PEM_LABEL, LineEnding::LF)
+            .map_err(pkcs8::Error::Asn1)
+            .map_err(Error::SaveKeyEncrypted)?
     };
 
-    writer.write_all(data.as_bytes())?;
+    writer
+        .write_all(data.as_bytes())
+        .map_err(|e| Error::WriteFile(path.to_owned(), e))?;
 
     Ok(())
 }
 
 /// Read PEM-encoded PKCS8 private key from a file.
 pub fn read_pem_key_file(path: &Path, source: &PassphraseSource) -> Result<RsaPrivateKey> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
+    let reader = File::open(path).map_err(|e| Error::ReadFile(path.to_owned(), e))?;
 
-    read_pem_key(reader, source)
+    read_pem_key(path, reader, source)
 }
 
 /// Save PEM-encoded PKCS8 private key to a file.
@@ -603,16 +652,18 @@ pub fn write_pem_key_file(
         options.mode(0o600);
     }
 
-    let file = options.open(path)?;
-    let writer = BufWriter::new(file);
+    let writer = options
+        .open(path)
+        .map_err(|e| Error::WriteFile(path.to_owned(), e))?;
 
-    write_pem_key(writer, key, source)
+    write_pem_key(path, writer, key, source)
 }
 
 /// Get the RSA public key from a certificate.
 pub fn get_public_key(cert: &Certificate) -> Result<RsaPublicKey> {
     let public_key =
-        RsaPublicKey::try_from(cert.tbs_certificate.subject_public_key_info.owned_to_ref())?;
+        RsaPublicKey::try_from(cert.tbs_certificate.subject_public_key_info.owned_to_ref())
+            .map_err(Error::LoadPubKey)?;
 
     Ok(public_key)
 }
@@ -626,8 +677,11 @@ pub fn cert_matches_key(cert: &Certificate, key: &RsaSigningKey) -> Result<bool>
 
 /// Parse a CMS [`SignedData`] structure from raw DER-encoded data.
 pub fn parse_cms(data: &[u8]) -> Result<SignedData> {
-    let ci = ContentInfo::from_der(data)?;
-    let sd = ci.content.decode_as::<SignedData>()?;
+    let ci = ContentInfo::from_der(data).map_err(Error::CmsParse)?;
+    let sd = ci
+        .content
+        .decode_as::<SignedData>()
+        .map_err(Error::CmsParse)?;
 
     Ok(sd)
 }
@@ -669,14 +723,16 @@ pub fn cms_sign_external(
 
     let signed_data = SignedData {
         version: CmsVersion::V1,
-        digest_algorithms: DigestAlgorithmIdentifiers::try_from(vec![digest_algorithm.clone()])?,
+        digest_algorithms: DigestAlgorithmIdentifiers::try_from(vec![digest_algorithm.clone()])
+            .map_err(Error::CmsSign)?,
         encap_content_info: EncapsulatedContentInfo {
             econtent_type: const_oid::db::rfc5911::ID_DATA,
             econtent: None,
         },
-        certificates: Some(CertificateSet::try_from(vec![
-            CertificateChoices::Certificate(cert.clone()),
-        ])?),
+        certificates: Some(
+            CertificateSet::try_from(vec![CertificateChoices::Certificate(cert.clone())])
+                .map_err(Error::CmsSign)?,
+        ),
         crls: None,
         signer_infos: SignerInfos::try_from(vec![SignerInfo {
             version: CmsVersion::V1,
@@ -690,14 +746,15 @@ pub fn cms_sign_external(
                 oid: const_oid::db::rfc5912::SHA_256_WITH_RSA_ENCRYPTION,
                 parameters: None,
             },
-            signature: SignatureValue::new(signature)?,
+            signature: SignatureValue::new(signature).map_err(Error::CmsSign)?,
             unsigned_attrs: None,
-        }])?,
+        }])
+        .map_err(Error::CmsSign)?,
     };
 
     let signed_data = ContentInfo {
         content_type: const_oid::db::rfc5911::ID_SIGNED_DATA,
-        content: Any::encode_from(&signed_data)?,
+        content: Any::encode_from(&signed_data).map_err(Error::CmsSign)?,
     };
 
     Ok(signed_data)
