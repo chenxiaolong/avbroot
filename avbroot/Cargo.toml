@@ -57,10 +57,10 @@ x509-cert = { version = "0.2.4", features = ["builder"] }
 zerocopy = { version = "0.8.10", features = ["std"] }
 zerocopy-derive = "0.8.5"
 
-# https://github.com/trifectatechfoundation/bzip2-rs/pull/118
+# Waiting for next stable release.
 [dependencies.bzip2]
-git = "https://github.com/chenxiaolong/bzip2-rs"
-rev = "554b916bf68d246fe20b4c7da509d8a3c4e66e5f"
+git = "https://github.com/trifectatechfoundation/bzip2-rs"
+rev = "15258feb0cdc1114d6fc6b936254c4f4e1d5730c"
 default-features = false
 features = ["libbz2-rs-sys"]
 
@@ -84,7 +84,7 @@ protox = "0.7.0"
 assert_matches = "1.5.0"
 
 [features]
-static = ["bzip2/static", "liblzma/static"]
+static = ["liblzma/static"]
 
 [lints]
 workspace = true

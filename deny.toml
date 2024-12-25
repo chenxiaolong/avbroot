@@ -69,6 +69,6 @@ bypass = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
-    "https://github.com/chenxiaolong/bzip2-rs",
     "https://github.com/chenxiaolong/zip",
+    "https://github.com/trifectatechfoundation/bzip2-rs",
 ]

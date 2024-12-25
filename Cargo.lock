@@ -235,21 +235,10 @@ checksum = "325918d6fe32f23b19878fe4b34794ae41fc19ddbe53b10571a4874d44ffd39b"
 [[package]]
 name = "bzip2"
 version = "0.5.0"
-source = "git+https://github.com/chenxiaolong/bzip2-rs?rev=554b916bf68d246fe20b4c7da509d8a3c4e66e5f#554b916bf68d246fe20b4c7da509d8a3c4e66e5f"
+source = "git+https://github.com/trifectatechfoundation/bzip2-rs?rev=15258feb0cdc1114d6fc6b936254c4f4e1d5730c#15258feb0cdc1114d6fc6b936254c4f4e1d5730c"
 dependencies = [
- "bzip2-sys",
  "libbz2-rs-sys",
  "libc",
-]
-
-[[package]]
-name = "bzip2-sys"
-version = "0.1.11+1.0.8"
-source = "git+https://github.com/chenxiaolong/bzip2-rs?rev=554b916bf68d246fe20b4c7da509d8a3c4e66e5f#554b916bf68d246fe20b4c7da509d8a3c4e66e5f"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
 ]
 
 [[package]]
