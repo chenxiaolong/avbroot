@@ -13,14 +13,15 @@ use bstr::ByteSlice;
 use num_traits::{ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use zerocopy::{FromBytes, IntoBytes};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     escape,
     format::padding,
     octal,
     stream::{
-        self, CountingReader, CountingWriter, FromReader, ReadDiscardExt, ReadFixedSizeExt,
-        ToWriter, WriteZerosExt,
+        self, CountingReader, CountingWriter, FromReader, ReadDiscardExt, ToWriter, WriteZerosExt,
     },
     util::NumBytes,
 };
@@ -59,6 +60,8 @@ pub enum Error {
     DeviceFull { major: u32, minor: u32 },
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
+    #[error("{0:?} contains invalid hex integer")]
+    InvalidHexInt(&'static str, #[source] InvalidHexCharError),
     #[error("Failed to read cpio data: {0}")]
     DataRead(&'static str, #[source] io::Error),
     #[error("Failed to write cpio data: {0}")]
@@ -67,40 +70,74 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-/// Read u32 formatted as an ASCII 8-char wide hex string.
-fn read_int(mut reader: impl Read) -> io::Result<u32> {
-    let buf = reader.read_array_exact::<8>()?;
+#[derive(Debug, Error)]
+#[error("{0:?}: Invalid hex char: {1:?}")]
+pub struct InvalidHexCharError(RawHexU32, char);
 
-    let mut value = 0;
+/// ASCII-encoded hex integer value used in cpio header fields.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawHexU32([u8; 8]);
 
-    for b in buf {
-        let c = b as char;
-        let digit = c.to_digit(16).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("{:?}: Invalid hex char: {c}", buf.as_bstr()),
-            )
-        })?;
-
-        value <<= 4;
-        value |= digit;
+impl fmt::Debug for RawHexU32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.0.as_bstr())
     }
-
-    Ok(value)
 }
 
-/// Write u32 formatted as an ASCII 8-char wide hex string.
-fn write_int(mut writer: impl Write, mut value: u32) -> io::Result<()> {
-    let mut buf = [b'0'; 8];
-    let mut index = 7;
+#[allow(clippy::fallible_impl_from)]
+impl From<u32> for RawHexU32 {
+    fn from(mut value: u32) -> Self {
+        let mut buf = [b'0'; 8];
+        let mut index = 7;
 
-    while value != 0 {
-        buf[index] = char::from_digit(value & 0xf, 16).unwrap() as u8;
-        value >>= 4;
-        index -= 1;
+        while value != 0 {
+            buf[index] = char::from_digit(value & 0xf, 16).unwrap() as u8;
+            value >>= 4;
+            index -= 1;
+        }
+
+        Self(buf)
     }
+}
 
-    writer.write_all(&buf)
+impl TryFrom<RawHexU32> for u32 {
+    type Error = InvalidHexCharError;
+
+    fn try_from(raw_value: RawHexU32) -> std::result::Result<Self, Self::Error> {
+        let mut value = 0;
+
+        for b in raw_value.0 {
+            let c = b as char;
+            let digit = c.to_digit(16).ok_or(InvalidHexCharError(raw_value, c))?;
+
+            value <<= 4;
+            value |= digit;
+        }
+
+        Ok(value)
+    }
+}
+
+/// Raw on-disk layout for the cpio header.
+#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
+#[repr(packed)]
+struct RawHeader {
+    /// Magic value. This should be equal to [`MAGIC_NEW`] or [`MAGIC_NEW_CRC`].
+    magic: [u8; 6],
+    inode: RawHexU32,
+    mode: RawHexU32,
+    uid: RawHexU32,
+    gid: RawHexU32,
+    nlink: RawHexU32,
+    mtime: RawHexU32,
+    file_size: RawHexU32,
+    dev_maj: RawHexU32,
+    dev_min: RawHexU32,
+    rdev_maj: RawHexU32,
+    rdev_min: RawHexU32,
+    path_size: RawHexU32,
+    crc32: RawHexU32,
 }
 
 /// Read a chunk of bytes from the reader. If `size` is less than
@@ -390,27 +427,33 @@ impl<R: Read> FromReader<R> for CpioEntry {
     fn from_reader(reader: R) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
-        let magic = reader
-            .read_array_exact::<6>()
-            .map_err(|e| Error::DataRead("magic", e))?;
+        let header =
+            RawHeader::read_from_io(&mut reader).map_err(|e| Error::DataRead("header", e))?;
 
-        if magic != *MAGIC_NEW && magic != *MAGIC_NEW_CRC {
-            return Err(Error::UnknownMagic(magic));
+        if header.magic != *MAGIC_NEW && header.magic != *MAGIC_NEW_CRC {
+            return Err(Error::UnknownMagic(header.magic));
         }
 
-        let inode = read_int(&mut reader).map_err(|e| Error::DataRead("inode", e))?;
-        let mode = read_int(&mut reader).map_err(|e| Error::DataRead("mode", e))?;
-        let uid = read_int(&mut reader).map_err(|e| Error::DataRead("uid", e))?;
-        let gid = read_int(&mut reader).map_err(|e| Error::DataRead("gid", e))?;
-        let nlink = read_int(&mut reader).map_err(|e| Error::DataRead("nlink", e))?;
-        let mtime = read_int(&mut reader).map_err(|e| Error::DataRead("mtime", e))?;
-        let file_size = read_int(&mut reader).map_err(|e| Error::DataRead("file_size", e))?;
-        let dev_maj = read_int(&mut reader).map_err(|e| Error::DataRead("dev_maj", e))?;
-        let dev_min = read_int(&mut reader).map_err(|e| Error::DataRead("dev_min", e))?;
-        let rdev_maj = read_int(&mut reader).map_err(|e| Error::DataRead("rdev_maj", e))?;
-        let rdev_min = read_int(&mut reader).map_err(|e| Error::DataRead("rdev_min", e))?;
-        let path_size = read_int(&mut reader).map_err(|e| Error::DataRead("path_size", e))?;
-        let crc32 = read_int(&mut reader).map_err(|e| Error::DataRead("crc32", e))?;
+        macro_rules! get_field {
+            ($name:ident) => {
+                let $name = u32::try_from(header.$name)
+                    .map_err(|e| Error::InvalidHexInt(stringify!($name), e))?;
+            };
+        }
+
+        get_field!(inode);
+        get_field!(mode);
+        get_field!(uid);
+        get_field!(gid);
+        get_field!(nlink);
+        get_field!(mtime);
+        get_field!(file_size);
+        get_field!(dev_maj);
+        get_field!(dev_min);
+        get_field!(rdev_maj);
+        get_field!(rdev_min);
+        get_field!(path_size);
+        get_field!(crc32);
 
         let mut path = read_data(
             &mut reader,
@@ -486,29 +529,32 @@ impl<W: Write> ToWriter<W> for CpioEntry {
             return Err(Error::EntryHasData(self.file_type, self.path.clone()));
         }
 
-        writer
-            .write_all(if self.crc32 == 0 {
-                MAGIC_NEW
-            } else {
-                MAGIC_NEW_CRC
-            })
-            .map_err(|e| Error::DataWrite("magic", e))?;
-
         let mode = self.file_type.to_mode() | u32::from(self.file_mode & 0o7777);
 
-        write_int(&mut writer, self.inode).map_err(|e| Error::DataWrite("inode", e))?;
-        write_int(&mut writer, mode).map_err(|e| Error::DataWrite("mode", e))?;
-        write_int(&mut writer, self.uid).map_err(|e| Error::DataWrite("uid", e))?;
-        write_int(&mut writer, self.gid).map_err(|e| Error::DataWrite("gid", e))?;
-        write_int(&mut writer, self.nlink).map_err(|e| Error::DataWrite("nlink", e))?;
-        write_int(&mut writer, self.mtime).map_err(|e| Error::DataWrite("mtime", e))?;
-        write_int(&mut writer, file_size).map_err(|e| Error::DataWrite("file_size", e))?;
-        write_int(&mut writer, self.dev_maj).map_err(|e| Error::DataWrite("dev_maj", e))?;
-        write_int(&mut writer, self.dev_min).map_err(|e| Error::DataWrite("dev_min", e))?;
-        write_int(&mut writer, self.rdev_maj).map_err(|e| Error::DataWrite("rdev_maj", e))?;
-        write_int(&mut writer, self.rdev_min).map_err(|e| Error::DataWrite("rdev_min", e))?;
-        write_int(&mut writer, path_size).map_err(|e| Error::DataWrite("path_size", e))?;
-        write_int(&mut writer, self.crc32).map_err(|e| Error::DataWrite("crc32", e))?;
+        let raw_header = RawHeader {
+            magic: if self.crc32 == 0 {
+                *MAGIC_NEW
+            } else {
+                *MAGIC_NEW_CRC
+            },
+            inode: self.inode.into(),
+            mode: mode.into(),
+            uid: self.uid.into(),
+            gid: self.gid.into(),
+            nlink: self.nlink.into(),
+            mtime: self.mtime.into(),
+            file_size: file_size.into(),
+            dev_maj: self.dev_maj.into(),
+            dev_min: self.dev_min.into(),
+            rdev_maj: self.rdev_maj.into(),
+            rdev_min: self.rdev_min.into(),
+            path_size: path_size.into(),
+            crc32: self.crc32.into(),
+        };
+
+        raw_header
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("header", e))?;
 
         writer
             .write_all(&self.path)
