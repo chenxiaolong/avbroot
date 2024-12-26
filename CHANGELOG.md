@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.11.0
 
 * Fix crash when ignoring warning about `--magisk-preinit-device` not being specified ([PR #394])
 * When using `--ignore-magisk-warnings`, assume that unsupported Magisk versions newer than the latest supported version are capable of all features ([Issue #393], [PR #395])
