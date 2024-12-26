@@ -16,6 +16,7 @@
 * Improve errors to make them less ambiguous about what went wrong ([PR #401])
 * Fix bug where a vendor v4 boot image that was truncated in the bootconfig padding section would be accepted as valid ([PR #401])
 * Avoid performing many small I/O operations when reading and writing cpio archives ([PR #403])
+* Update dependencies ([PR #404])
 
 ### Version 3.10.0
 
@@ -428,3 +429,4 @@ Behind-the-scenes changes:
 [PR #401]: https://github.com/chenxiaolong/avbroot/pull/401
 [PR #402]: https://github.com/chenxiaolong/avbroot/pull/402
 [PR #403]: https://github.com/chenxiaolong/avbroot/pull/403
+[PR #404]: https://github.com/chenxiaolong/avbroot/pull/404
