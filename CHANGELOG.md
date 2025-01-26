@@ -12,6 +12,7 @@
 * Add new `-p <name>` option to `avbroot ota extract` for extracting specific partitions ([PR #408])
 * Deprecate the `--boot-only` option in `avbroot ota extract` ([PR #408])
     * The functionality will remain indefinitely for backwards compatibility, but the option is hidden from `--help`
+* Add support for extracting the embedded OTA certificate and AVB public key in `avbroot ota extract` ([PR #409])
 
 ### Version 3.11.0
 
@@ -437,3 +438,4 @@ Behind-the-scenes changes:
 [PR #403]: https://github.com/chenxiaolong/avbroot/pull/403
 [PR #404]: https://github.com/chenxiaolong/avbroot/pull/404
 [PR #408]: https://github.com/chenxiaolong/avbroot/pull/408
+[PR #409]: https://github.com/chenxiaolong/avbroot/pull/409
