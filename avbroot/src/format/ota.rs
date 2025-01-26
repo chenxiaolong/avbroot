@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2022-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2022-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -565,11 +565,33 @@ pub fn verify_metadata(
     Ok(())
 }
 
-/// Parse the CMS signature from the OTA zip comment. Returns the decoded CMS
-/// [`SignedData`] structure and the length of the file (from the beginning)
-/// that's covered by the signature. This does not perform any parsing of zip
-/// data structures.
-fn parse_ota_sig(mut reader: impl Read + Seek) -> Result<(SignedData, u64)> {
+#[derive(Clone, Debug)]
+pub struct OtaSignature {
+    /// Decoded CMS structure.
+    pub signed_data: SignedData,
+    /// Length of the file (from the beginning) that's covered by the signature.
+    pub hashed_size: u64,
+}
+
+impl OtaSignature {
+    pub fn embedded_cert(&self) -> Result<&Certificate> {
+        let mut iter = crypto::iter_cms_certs(&self.signed_data);
+
+        let Some(cert) = iter.next() else {
+            return Err(Error::NotOneCmsCertificate(0));
+        };
+
+        let None = iter.next() else {
+            return Err(Error::NotOneCmsCertificate(2 + iter.count()));
+        };
+
+        Ok(cert)
+    }
+}
+
+/// Parse the CMS signature from the OTA zip comment. This does not perform any
+/// parsing of zip data structures.
+pub fn parse_ota_sig(mut reader: impl Read + Seek) -> Result<OtaSignature> {
     let file_size = reader
         .seek(SeekFrom::End(0))
         .map_err(|e| Error::DataRead("file_size", e))?;
@@ -614,13 +636,16 @@ fn parse_ota_sig(mut reader: impl Read + Seek) -> Result<(SignedData, u64)> {
     }
 
     let sig_offset = eocd_size as usize - usize::from(abs_eoc_offset);
-    let sd =
+    let signed_data =
         crypto::parse_cms(&eocd[sig_offset..eocd_size as usize - 6]).map_err(Error::CmsLoad)?;
     // The signature covers everything aside from the archive comment and its
     // length field.
     let hashed_size = file_size - 2 - u64::from(comment_size);
 
-    Ok((sd, hashed_size))
+    Ok(OtaSignature {
+        signed_data,
+        hashed_size,
+    })
 }
 
 /// Verify an OTA zip against its embedded certificates. This function makes no
@@ -631,26 +656,19 @@ fn parse_ota_sig(mut reader: impl Read + Seek) -> Result<(SignedData, u64)> {
 /// does not support them either. It expects the CMS [`SignedData`] structure to
 /// be used for nothing more than a raw signature transport mechanism.
 pub fn verify_ota(mut reader: impl Read + Seek, cancel_signal: &AtomicBool) -> Result<Certificate> {
-    let (sd, hashed_size) = parse_ota_sig(&mut reader)?;
-
-    // Make sure the certificate in the CMS structure matches the otacert zip
-    // entry.
-    let certs = crypto::get_cms_certs(&sd);
-    if certs.len() != 1 {
-        return Err(Error::NotOneCmsCertificate(certs.len()));
-    }
-
-    let cert = &certs[0];
+    let ota_sig = parse_ota_sig(&mut reader)?;
+    let cert = ota_sig.embedded_cert()?;
     let public_key = crypto::get_public_key(cert).map_err(Error::OtaCertExtractPubKey)?;
 
     // Make sure this is a signature scheme we can handle. There's currently no
     // Rust library to verify arbitrary CMS signatures for large files without
     // fully reading them into memory.
-    if sd.signer_infos.0.len() != 1 {
-        return Err(Error::NotOneCmsSignerInfo(sd.signer_infos.0.len()));
+    let signers_len = ota_sig.signed_data.signer_infos.0.len();
+    if signers_len != 1 {
+        return Err(Error::NotOneCmsSignerInfo(signers_len));
     }
 
-    let signer = sd.signer_infos.0.get(0).unwrap();
+    let signer = ota_sig.signed_data.signer_infos.0.get(0).unwrap();
     if signer.digest_alg.oid != rfc5912::ID_SHA_256 && signer.digest_alg.oid != rfc5912::ID_SHA_1 {
         return Err(Error::UnsupportedDigestAlgorithm(signer.digest_alg.oid));
     } else if signer.signature_algorithm.oid != rfc5912::RSA_ENCRYPTION
@@ -678,8 +696,13 @@ pub fn verify_ota(mut reader: impl Read + Seek, cancel_signal: &AtomicBool) -> R
 
     let mut hashing_reader = HashingReader::new(reader, Context::new(algorithm));
 
-    stream::copy_n(&mut hashing_reader, io::sink(), hashed_size, cancel_signal)
-        .map_err(|e| Error::DataRead("raw_data", e))?;
+    stream::copy_n(
+        &mut hashing_reader,
+        io::sink(),
+        ota_sig.hashed_size,
+        cancel_signal,
+    )
+    .map_err(|e| Error::DataRead("raw_data", e))?;
 
     let (_, context) = hashing_reader.finish();
     let digest = context.finish();

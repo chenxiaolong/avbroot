@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -686,21 +686,17 @@ pub fn parse_cms(data: &[u8]) -> Result<SignedData> {
     Ok(sd)
 }
 
-/// Get a list of all standard X509 certificates contained within a
+/// Get an iterator to all standard X509 certificates contained within a
 /// [`SignedData`] structure.
-pub fn get_cms_certs(sd: &SignedData) -> Vec<Certificate> {
-    sd.certificates.as_ref().map_or_else(Vec::new, |certs| {
-        certs
-            .0
-            .iter()
-            .filter_map(|cc| {
-                if let CertificateChoices::Certificate(c) = cc {
-                    Some(c.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
+pub fn iter_cms_certs(sd: &SignedData) -> impl Iterator<Item = &Certificate> {
+    sd.certificates.iter().flat_map(|certs| {
+        certs.0.iter().filter_map(|cc| {
+            if let CertificateChoices::Certificate(c) = cc {
+                Some(c)
+            } else {
+                None
+            }
+        })
     })
 }
 

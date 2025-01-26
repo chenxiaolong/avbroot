@@ -450,16 +450,19 @@ avbroot prompts for the private key passphrases interactively by default. To run
 
 * Use unencrypted private keys. This is strongly discouraged.
 
-### Extracting the entire OTA
+### Extracting an OTA
 
-To extract all images contained within the OTA's `payload.bin`, run:
+To extract the partition images contained within an OTA's `payload.bin`, run:
 
 ```bash
 avbroot ota extract \
     --input /path/to/ota.zip \
-    --directory extracted \
-    --all
+    --directory extracted
 ```
+
+By default, this only extracts the images that could potentially be patched by avbroot. To extract all images, use the `--all` option. To extract specific images, use the `--partition <name>` option, which can be specified multiple times.
+
+This command also supports extracting the embedded OTA certificate and AVB public key using the `--cert-ota` and `--public-key-avb` options. To extract only these components, pass in `--none` to skip extracting partition images.
 
 ### Zip write mode
 

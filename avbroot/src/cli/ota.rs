@@ -45,7 +45,7 @@ use crate::{
     },
     stream::{
         self, CountingWriter, FromReader, HashingWriter, PSeekFile, ReadSeekReopen, Reopen,
-        SectionReader, ToWriter, WriteSeekReopen,
+        SectionReader, SharedCursor, ToWriter, WriteSeekReopen,
     },
     util,
 };
@@ -1150,7 +1150,7 @@ pub fn extract_payload(
     )
     .context("Failed to extract images from payload")?;
 
-    info!("Successfully extracted OTA");
+    info!("Successfully extracted images from payload");
 
     Ok(())
 }
@@ -1410,7 +1410,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         warn!("Ignoring --boot-partition: deprecated and no longer needed");
     }
 
-    let raw_reader = File::open(&cli.input)
+    let mut raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
     let mut zip = ZipArchive::new(BufReader::new(raw_reader.reopen()?))
@@ -1468,7 +1468,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         }
 
         unique_images.extend(cli.extract.partition.iter().cloned());
-    } else {
+    } else if !cli.extract.none {
         let images = RequiredImages::new(&header.manifest);
 
         if cli.extract.boot_only {
@@ -1476,6 +1476,37 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         } else {
             unique_images.extend(images.iter().map(|n| n.to_owned()));
         }
+    }
+
+    if let Some(path) = &cli.cert_ota {
+        info!("Extracting embedded OTA certificate from zip signature");
+
+        let ota_sig = ota::parse_ota_sig(&mut raw_reader)?;
+        let embedded_cert = ota_sig.embedded_cert()?;
+
+        crypto::write_pem_cert_file(path, embedded_cert)
+            .with_context(|| format!("Failed to write OTA certificate: {path:?}"))?;
+    }
+
+    if let Some(path) = &cli.public_key_avb {
+        info!("Extracting AVB public key from vbmeta image");
+
+        let mut data = SharedCursor::new();
+
+        payload::extract_image(&payload_reader, &data, &header, "vbmeta", cancel_signal)
+            .context("Failed to extract vbmeta image")?;
+
+        data.rewind()?;
+
+        let (header, _, _) = avb::load_image(data).context("Failed to parse vbmeta image")?;
+
+        fs::write(path, header.public_key)
+            .with_context(|| format!("Failed to write AVB public key: {path:?}"))?;
+    }
+
+    if unique_images.is_empty() {
+        info!("No partition images to extract");
+        return Ok(());
     }
 
     let authority = ambient_authority();
@@ -1808,7 +1839,7 @@ pub struct RootGroup {
     pub rootless: bool,
 }
 
-/// Patch a full OTA zip.
+/// Patch a full OTA.
 #[derive(Debug, Parser)]
 pub struct PatchCli {
     /// Patch to original OTA zip.
@@ -2007,6 +2038,13 @@ pub struct ExtractGroup {
     #[arg(short, long)]
     pub all: bool,
 
+    /// Don't extract anything from the payload.
+    ///
+    /// This is useful for using --cert-ota and --public-key-avb without
+    /// extracting any partition images.
+    #[arg(short, long)]
+    pub none: bool,
+
     /// (Deprecated: Specify an exact partition name instead.)
     #[arg(long, hide = true)]
     pub boot_only: bool,
@@ -2016,7 +2054,7 @@ pub struct ExtractGroup {
     pub partition: Vec<String>,
 }
 
-/// Extract partition images from an OTA zip's payload.
+/// Extract a full OTA.
 #[derive(Debug, Parser)]
 pub struct ExtractCli {
     /// Path to OTA zip.
@@ -2037,6 +2075,18 @@ pub struct ExtractCli {
     /// Generate fastboot info files.
     #[arg(long)]
     pub fastboot: bool,
+
+    /// Extract OTA certificate to file.
+    ///
+    /// This is not extracted by default.
+    #[arg(long, value_name = "FILE", value_parser)]
+    pub cert_ota: Option<PathBuf>,
+
+    /// Extract AVB public key to file.
+    ///
+    /// This is not extracted by default.
+    #[arg(long, value_name = "FILE", value_parser)]
+    pub public_key_avb: Option<PathBuf>,
 }
 
 /// Verify signatures of an OTA.
