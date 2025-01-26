@@ -60,7 +60,7 @@ zerocopy-derive = "0.8.5"
 # Waiting for next stable release.
 [dependencies.bzip2]
 git = "https://github.com/trifectatechfoundation/bzip2-rs"
-rev = "15258feb0cdc1114d6fc6b936254c4f4e1d5730c"
+rev = "09a87db73c0517a9715ab3fd96fbe4961d545aee"
 default-features = false
 features = ["libbz2-rs-sys"]
 
