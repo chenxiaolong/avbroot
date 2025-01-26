@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.12.0
 
 * Add new `-p <name>` option to `avbroot ota extract` for extracting specific partitions ([PR #408])
 * Deprecate the `--boot-only` option in `avbroot ota extract` ([PR #408])
