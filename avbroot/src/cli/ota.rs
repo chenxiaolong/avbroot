@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2022-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2022-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -79,8 +79,9 @@ impl RequiredImages {
         let partitions = manifest
             .partitions
             .iter()
-            .map(|p| p.partition_name.clone())
+            .map(|p| &p.partition_name)
             .filter(|n| Self::is_boot(n) || Self::is_system(n) || Self::is_vbmeta(n))
+            .cloned()
             .collect();
 
         Self(partitions)
@@ -1437,7 +1438,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
 
     let mut unique_images = BTreeSet::new();
 
-    if cli.all {
+    if cli.extract.all {
         unique_images.extend(
             header
                 .manifest
@@ -1446,10 +1447,31 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
                 .map(|p| &p.partition_name)
                 .cloned(),
         );
+    } else if !cli.extract.partition.is_empty() {
+        // We check this later too, but also do it here so we don't create a
+        // bunch of empty files before failing.
+        let valid_images = header
+            .manifest
+            .partitions
+            .iter()
+            .map(|p| &p.partition_name)
+            .collect::<BTreeSet<_>>();
+        let missing_images = cli
+            .extract
+            .partition
+            .iter()
+            .filter(|p| !valid_images.contains(p))
+            .collect::<Vec<_>>();
+
+        if !missing_images.is_empty() {
+            bail!("Invalid partitions: {}", joined(missing_images));
+        }
+
+        unique_images.extend(cli.extract.partition.iter().cloned());
     } else {
         let images = RequiredImages::new(&header.manifest);
 
-        if cli.boot_only {
+        if cli.extract.boot_only {
             unique_images.extend(images.iter_boot().map(|n| n.to_owned()));
         } else {
             unique_images.extend(images.iter().map(|n| n.to_owned()));
@@ -1975,6 +1997,25 @@ pub struct PatchCli {
     pub boot_partition: Option<String>,
 }
 
+#[derive(Debug, Args)]
+#[group(multiple = false)]
+pub struct ExtractGroup {
+    /// Extract all images from the payload.
+    ///
+    /// By default, only images that could potentially be patched by avbroot are
+    /// extracted.
+    #[arg(short, long)]
+    pub all: bool,
+
+    /// (Deprecated: Specify an exact partition name instead.)
+    #[arg(long, hide = true)]
+    pub boot_only: bool,
+
+    /// Extract specific images from the payload.
+    #[arg(short, long)]
+    pub partition: Vec<String>,
+}
+
 /// Extract partition images from an OTA zip's payload.
 #[derive(Debug, Parser)]
 pub struct ExtractCli {
@@ -1986,13 +2027,8 @@ pub struct ExtractCli {
     #[arg(short, long, value_parser, default_value = ".")]
     pub directory: PathBuf,
 
-    /// Extract all images from the payload.
-    #[arg(short, long, group = "extract")]
-    pub all: bool,
-
-    /// Extract only the boot image.
-    #[arg(long, group = "extract")]
-    pub boot_only: bool,
+    #[command(flatten)]
+    pub extract: ExtractGroup,
 
     /// (Deprecated: no longer needed)
     #[arg(long, value_name = "PARTITION", hide = true)]

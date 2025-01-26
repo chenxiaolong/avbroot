@@ -297,8 +297,7 @@ Magisk versions 25211 and newer require a writable partition for storing custom 
     ```bash
     avbroot ota extract \
         --input /path/to/ota.zip \
-        --directory . \
-        --boot-only
+        --partition <name> # init_boot or boot, depending on device
     ```
 
 2. Patch the boot image via the Magisk app. This **MUST** be done on the target device or a device of the same model! The partition name will be incorrect if patched from Magisk on a different device model.
