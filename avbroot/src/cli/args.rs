@@ -30,10 +30,13 @@ pub enum Command {
     Payload(payload::PayloadCli),
     Sparse(sparse::SparseCli),
     /// (Deprecated: Use `avbroot ota patch` instead.)
+    #[command(hide = true)]
     Patch(ota::PatchCli),
     /// (Deprecated: Use `avbroot ota extract` instead.)
+    #[command(hide = true)]
     Extract(ota::ExtractCli),
     /// (Deprecated: Use `avbroot boot magisk-info` instead.)
+    #[command(hide = true)]
     MagiskInfo(boot::MagiskInfoCli),
 }
 

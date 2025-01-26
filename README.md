@@ -121,7 +121,7 @@ When patching OTAs for multiple devices, generating unique keys for each device 
 2. Convert the public key portion of the AVB signing key to the AVB public key metadata format. This is the format that the bootloader requires when setting the custom root of trust.
 
     ```bash
-    avbroot key extract-avb -k avb.key -o avb_pkmd.bin
+    avbroot key encode-avb -k avb.key -o avb_pkmd.bin
     ```
 
 3. Generate a self-signed certificate for the OTA signing key. This is used by recovery to verify OTA updates when sideloading.

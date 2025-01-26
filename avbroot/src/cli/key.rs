@@ -46,7 +46,7 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
             crypto::write_pem_cert_file(&c.output, &cert)
                 .with_context(|| format!("Failed to write certificate: {:?}", c.output))?;
         }
-        KeyCommand::ExtractAvb(c) => {
+        KeyCommand::ExtractAvb(c) | KeyCommand::EncodeAvb(c) => {
             let public_key = if let Some(p) = &c.input.key {
                 let passphrase = get_passphrase_source(&c.passphrase, p);
                 let private_key = crypto::read_pem_key_file(p, &passphrase)
@@ -150,12 +150,12 @@ struct GenerateCertCli {
     validity: u64,
 }
 
-/// Extract the AVB public key from a private key or certificate.
+/// Convert a key or certificate to an AVB-encoded public key.
 ///
 /// The public key is stored in both the private key and the certificate. Either
 /// one can be used interchangeably.
 #[derive(Debug, Parser)]
-struct ExtractAvbCli {
+struct EncodeAvbCli {
     /// Path to output AVB public key.
     #[arg(short, long, value_name = "FILE", value_parser)]
     output: PathBuf,
@@ -183,7 +183,10 @@ struct DecodeAvbCli {
 enum KeyCommand {
     GenerateKey(GenerateKeyCli),
     GenerateCert(GenerateCertCli),
-    ExtractAvb(ExtractAvbCli),
+    /// (Deprecated: Use `avbroot key encode-avb` instead.)
+    #[command(hide = true)]
+    ExtractAvb(EncodeAvbCli),
+    EncodeAvb(EncodeAvbCli),
     DecodeAvb(DecodeAvbCli),
 }
 
