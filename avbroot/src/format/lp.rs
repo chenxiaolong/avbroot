@@ -1060,14 +1060,19 @@ impl RawMetadata {
             .read_exact(&mut buf)
             .map_err(|e| Error::DataRead("geometry", e))?;
 
-        let image_type = if util::is_zero(&buf) {
-            ImageType::Normal
-        } else {
-            ImageType::Empty
-        };
+        // For non-empty images, AOSP says the first block is supposed to be
+        // filled with zeros, but Samsung puts their own SignerVer02 structure
+        // in there, so we can't rely on that.
+        let mut geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
 
-        let geometry = match image_type {
-            ImageType::Normal => {
+        let image_type = match geometry.validate() {
+            Ok(()) => {
+                // This is an empty image for use with fastboot. These have no
+                // extra padding at the beginning of the file nor backup copies
+                // of the geometry and metadata structs.
+                ImageType::Empty
+            }
+            Err(Error::GeometryInvalidMagic(_)) => {
                 // This is an normal non-empty image, which has extra padding at
                 // the beginning to avoid having the geometry struct interpreted
                 // as a boot sector.
@@ -1077,7 +1082,7 @@ impl RawMetadata {
                     .read_exact(&mut buf)
                     .map_err(|e| Error::DataRead("geometry_primary", e))?;
 
-                let mut geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
+                geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
 
                 if geometry.validate().is_ok() {
                     // Skip the backup copy.
@@ -1094,17 +1099,9 @@ impl RawMetadata {
                     geometry.validate()?;
                 }
 
-                geometry
+                ImageType::Normal
             }
-            ImageType::Empty => {
-                // This is an empty image for use with fastboot. These have no
-                // extra padding at the beginning of the file nor backup copies
-                // of the geometry and metadata structs.
-                let geometry = RawGeometry::ref_from_prefix(&buf).unwrap().0;
-                geometry.validate()?;
-
-                geometry
-            }
+            Err(e) => return Err(e),
         };
 
         Ok((image_type, geometry.to_owned()))
