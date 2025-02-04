@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix parsing Samsung `super.img` files in `avbroot lp` due to Samsung putting their own data structures in a region that's supposed to be filled with zeros ([PR #415])
+
 ### Version 3.12.0
 
 * Add new `-p <name>` option to `avbroot ota extract` for extracting specific partitions ([PR #408])
@@ -444,3 +448,4 @@ Behind-the-scenes changes:
 [PR #409]: https://github.com/chenxiaolong/avbroot/pull/409
 [PR #410]: https://github.com/chenxiaolong/avbroot/pull/410
 [PR #411]: https://github.com/chenxiaolong/avbroot/pull/411
+[PR #415]: https://github.com/chenxiaolong/avbroot/pull/415
