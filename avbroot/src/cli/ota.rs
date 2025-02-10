@@ -592,7 +592,12 @@ fn update_vbmeta_headers(
         // Only sign and rewrite the image if we need to. Some vbmeta images may
         // have no dependencies and are only being processed to ensure that the
         // flags are set to a sane value.
-        if parent_header != &orig_parent_header {
+        //
+        // The root vbmeta image is always signed because it is possible to
+        // invoke avbroot is a way that no modifications are made (rootless +
+        // skipping recovery otacerts.zip patch). We still want the result to be
+        // bootable.
+        if parent_header != &orig_parent_header || name == "vbmeta" {
             parent_header
                 .set_algo_for_key(key)
                 .with_context(|| format!("Failed to set signature algorithm: {name}"))?;
@@ -723,6 +728,7 @@ fn patch_ota_payload(
     writer: impl Write,
     external_images: &HashMap<String, PathBuf>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
+    skip_system_ota_cert: bool,
     clear_vbmeta_flags: bool,
     key_avb: &RsaSigningKey,
     key_ota: &RsaSigningKey,
@@ -782,13 +788,17 @@ fn patch_ota_payload(
     input_files
         .retain(|n, f| !(f.state == InputFileState::Extracted && RequiredImages::is_boot(n)));
 
-    let (system_target, system_ranges) = patch_system_image(
-        &required_images,
-        &mut input_files,
-        cert_ota,
-        key_avb,
-        cancel_signal,
-    )?;
+    let system_result = if skip_system_ota_cert {
+        None
+    } else {
+        Some(patch_system_image(
+            &required_images,
+            &mut input_files,
+            cert_ota,
+            key_avb,
+            cancel_signal,
+        )?)
+    };
 
     let mut vbmeta_headers = load_vbmeta_images(&mut input_files, &vbmeta_images)?;
 
@@ -822,8 +832,12 @@ fn patch_ota_payload(
                 &mut header,
                 // We can only perform the optimization of avoiding
                 // recompression if the image came from the original payload.
-                if name == system_target && !external_images.contains_key(&name) {
-                    Some(&system_ranges)
+                if let Some((system_target, system_ranges)) = &system_result {
+                    if name == *system_target && !external_images.contains_key(&name) {
+                        Some(system_ranges)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 },
@@ -915,6 +929,7 @@ fn patch_ota_zip(
     mut zip_writer: &mut ZipWriter<impl Write>,
     external_images: &HashMap<String, PathBuf>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
+    skip_system_ota_cert: bool,
     clear_vbmeta_flags: bool,
     zip_mode: ZipMode,
     key_avb: &RsaSigningKey,
@@ -1037,6 +1052,7 @@ fn patch_ota_zip(
                     &mut writer,
                     external_images,
                     boot_patchers,
+                    skip_system_ota_cert,
                     clear_vbmeta_flags,
                     key_avb,
                     key_ota,
@@ -1305,6 +1321,10 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         assert!(cli.root.rootless);
     };
 
+    if cli.skip_system_ota_cert {
+        warn!("Not inserting OTA cert into system image; sideloading further updates may fail");
+    }
+
     if cli.skip_recovery_ota_cert {
         warn!("Not inserting OTA cert into recovery image; sideloading further updates may fail");
     } else {
@@ -1347,6 +1367,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &mut zip_writer,
         &external_images,
         &boot_patchers,
+        cli.skip_system_ota_cert,
         cli.clear_vbmeta_flags,
         cli.zip_mode,
         &key_avb,
@@ -1981,11 +2002,19 @@ pub struct PatchCli {
     )]
     pub ignore_prepatched_compat: u8,
 
+    /// Skip adding OTA certificate to system image.
+    ///
+    /// DO NOT USE THIS unless you've manually added the certificate to the
+    /// system image already. Otherwise, installing further updates via a custom
+    /// OTA updater app while booted into Android will not be possible.
+    #[arg(long, help_heading = HEADING_OTHER)]
+    pub skip_system_ota_cert: bool,
+
     /// Skip adding OTA certificate to recovery image.
     ///
     /// DO NOT USE THIS unless you've manually added the certificate to the
-    /// recovery image already. Otherwise, sideloading further updates will not
-    /// be possible.
+    /// recovery image already. Otherwise, sideloading further updates while
+    /// booted into recovery mode will not be possible.
     ///
     /// When this option is used with --rootless, the boot images in the OTA
     /// will not be modified.

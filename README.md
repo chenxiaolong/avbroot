@@ -384,9 +384,13 @@ Note that avbroot will validate that the prepatched image is compatible with the
 
 avbroot can be used for just re-signing an OTA by specifying `--rootless` instead of `--magisk`/`--prepatched`. With this option, the patched OTA will not be rooted. The only modification applied is the replacement of the OTA verification certificate so that the OS can be upgraded with future (patched) OTAs.
 
-### Skipping recovery OTA certificate patches
+### Skipping OTA certificate patches
 
-avbroot can skip modifying `otacerts.zip` in the recovery image with the `--skip-recovery-ota-cert` option. **Do not do this unless you have a good reason to do so.** (For example, if you've already manually inserted the OTA certificate into a boot image specified with `--prepatched` or `--replace`.) When this option is used with `--rootless` (and `--dsu` is not specified), then no modifications are performed on any boot image besides ensuring they are properly signed.
+avbroot can skip modifying `otacerts.zip` with the `--skip-system-ota-cert` and `--skip-recovery-ota-cert` options. **Do not do these unless you have a good reason to do so.** (For example, if you've already manually inserted the OTA certificate into a boot image specified with `--prepatched` or `--replace`.) Otherwise, the device may be left with no way to install further updates.
+
+When `--skip-system-ota-cert` is used, the no modifications are performed on the `system` image.
+
+When `--skip-recovery-ota-cert` is used with `--rootless` and `--dsu` is not specified, then no modifications are performed on any boot image besides ensuring they are properly signed.
 
 When manually adding the OTA certificate to a boot image, [verifying the patched OTA](#verifying-otas) afterwards is recommended to ensure that it was properly done.
 
