@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Fix parsing Samsung `super.img` files in `avbroot lp` due to Samsung putting their own data structures in a region that's supposed to be filled with zeros ([PR #415])
+* Add advanced option to skip replacing the OTA certificate in the system image ([Discussion #417], [PR #418])
 
 ### Version 3.12.0
 
@@ -284,6 +285,7 @@ Behind-the-scenes changes:
 [Discussion #235]: https://github.com/chenxiaolong/avbroot/discussions/235
 [Discussion #286]: https://github.com/chenxiaolong/avbroot/discussions/286
 [Discussion #294]: https://github.com/chenxiaolong/avbroot/discussions/294
+[Discussion #417]: https://github.com/chenxiaolong/avbroot/discussions/417
 [Issue #138]: https://github.com/chenxiaolong/avbroot/issues/138
 [Issue #144]: https://github.com/chenxiaolong/avbroot/issues/144
 [Issue #145]: https://github.com/chenxiaolong/avbroot/issues/145
@@ -449,3 +451,4 @@ Behind-the-scenes changes:
 [PR #410]: https://github.com/chenxiaolong/avbroot/pull/410
 [PR #411]: https://github.com/chenxiaolong/avbroot/pull/411
 [PR #415]: https://github.com/chenxiaolong/avbroot/pull/415
+[PR #418]: https://github.com/chenxiaolong/avbroot/pull/418
