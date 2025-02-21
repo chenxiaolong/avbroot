@@ -12,6 +12,7 @@ use std::{
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use bzip2::write::BzDecoder;
+use flate2::{write::GzEncoder, Compression};
 use liblzma::{
     stream::{Check, Stream},
     write::XzDecoder,
@@ -121,6 +122,8 @@ pub enum Error {
     InputOpen(String, #[source] io::Error),
     #[error("Failed to open output file for partition: {0}")]
     OutputOpen(String, #[source] io::Error),
+    #[error("Failed to GZ compress partition image chunk")]
+    GzCompress(#[source] io::Error),
     #[error("Failed to initialize XZ encoder")]
     XzInit(#[source] liblzma::stream::Error),
     #[error("Failed to XZ compress partition image chunk")]
@@ -957,17 +960,20 @@ impl VabcAlgo {
         }
     }
 
-    fn compressed_size(self, mut raw_data: &[u8], block_size: u32) -> u64 {
+    fn compressed_size(self, mut raw_data: &[u8], block_size: u32) -> Result<u64> {
         let mut total = 0;
 
         while !raw_data.is_empty() {
             let n = raw_data.len().min(block_size as usize);
+            // This should match CompressWorker::GetDefaultCompressionLevel() in
+            // AOSP's libsnapshot.
             let compressed = match self {
                 Self::Lz4 => lz4_flex::block::compress(&raw_data[..n]),
-                // We use the miniz_oxide backend for flate2, but flate2 doesn't
-                // expose a nice function for compressing to a vec, so just use
-                // miniz_oxide directly.
-                Self::Gzip => miniz_oxide::deflate::compress_to_vec_zlib(&raw_data[..n], 9),
+                Self::Gzip => {
+                    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+                    encoder.write_all(raw_data).map_err(Error::GzCompress)?;
+                    encoder.finish().map_err(Error::GzCompress)?
+                }
             };
 
             total += compressed.len().min(n) as u64;
@@ -975,7 +981,7 @@ impl VabcAlgo {
             raw_data = &raw_data[n..];
         }
 
-        total
+        Ok(total)
     }
 }
 
@@ -1069,8 +1075,10 @@ pub fn compress_image(
             .map(
                 |(raw_offset, raw_data)| -> Result<(Vec<u8>, InstallOperation, u64)> {
                     let (data, digest_compressed) = compress_chunk(&raw_data, cancel_signal)?;
-                    let cow_size =
-                        vabc_algo.map_or(0, |a| a.compressed_size(&raw_data, block_size));
+                    let cow_size = vabc_algo
+                        .map(|a| a.compressed_size(&raw_data, block_size))
+                        .transpose()?
+                        .unwrap_or(0);
 
                     let extent = Extent {
                         start_block: Some(raw_offset / u64::from(block_size)),

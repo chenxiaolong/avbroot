@@ -24,6 +24,12 @@ ignore = [
     # avbroot has no network capabilities, so this is not inherently remotely
     # exploitable.
     "RUSTSEC-2023-0071",
+
+    # https://rustsec.org/advisories/RUSTSEC-2025-0007
+    #
+    # Temporarily allow this until we can switch our SHA-256 hashing operations
+    # to using another library.
+    "RUSTSEC-2025-0007",
 ]
 
 [licenses]
@@ -39,6 +45,7 @@ allow = [
     "MIT",
     "OpenSSL",
     "Unicode-3.0",
+    "Zlib",
 ]
 
 [[licenses.clarify]]
@@ -70,5 +77,4 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
     "https://github.com/chenxiaolong/zip",
-    "https://github.com/trifectatechfoundation/bzip2-rs",
 ]

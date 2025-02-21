@@ -13,6 +13,7 @@ anyhow = "1.0.75"
 base64 = "0.22.1"
 bitflags = { version = "2.4.1", features = ["serde"] }
 bstr = "1.6.2"
+bzip2 = { version = "0.5.1", default-features = false, features = ["libbz2-rs-sys"] }
 cap-std = "3.0.0"
 cap-tempfile = "3.0.0"
 clap = { version = "4.4.1", features = ["derive"] }
@@ -22,19 +23,19 @@ const-oid = "0.9.5"
 crc32fast = "1.4.2"
 ctrlc = "3.4.0"
 dlv-list = "0.6.0"
-flate2 = "1.0.27"
+flate2 = { version = "1.0.29", features = ["zlib-rs"] }
 gf256 = { version = "0.3.0", features = ["rs"] }
 hex = { version = "0.4.3", features = ["serde"] }
 liblzma = "0.3.0"
 lz4_flex = "0.11.1"
 memchr = "2.6.0"
-miniz_oxide = "0.8.0"
 num-bigint-dig = "0.8.4"
 num-traits = "0.2.16"
 passterm = "2.0.3"
 phf = { version = "0.11.2", features = ["macros"] }
 pkcs8 = { version = "0.10.2", features = ["encryption", "pem"] }
 prost = "0.13.1"
+# We can't upgrade to 0.9.0 until rsa updates its rand_core dependency.
 rand = "0.8.5"
 rayon = "1.7.0"
 regex = { version = "1.9.4", default-features = false, features = ["perf", "std"] }
@@ -57,13 +58,6 @@ x509-cert = { version = "0.2.4", features = ["builder"] }
 zerocopy = { version = "0.8.10", features = ["std"] }
 zerocopy-derive = "0.8.5"
 
-# Waiting for next stable release.
-[dependencies.bzip2]
-git = "https://github.com/trifectatechfoundation/bzip2-rs"
-rev = "09a87db73c0517a9715ab3fd96fbe4961d545aee"
-default-features = false
-features = ["libbz2-rs-sys"]
-
 # https://github.com/zip-rs/zip/pull/383
 [dependencies.zip]
 git = "https://github.com/chenxiaolong/zip"
@@ -76,7 +70,7 @@ libc = "0.2.158"
 rustix = { version = "0.38.9", default-features = false, features = ["process"] }
 
 [build-dependencies]
-constcat = "0.5.0"
+constcat = "0.6.0"
 prost-build = "0.13.1"
 protox = "0.7.0"
 
