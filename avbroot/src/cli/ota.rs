@@ -373,8 +373,9 @@ fn get_vbmeta_patch_order(
                     .get_mut(vbmeta_name.as_str())
                     .unwrap()
                     .insert(partition_name.to_owned());
-                missing.remove(partition_name);
             }
+
+            missing.remove(partition_name);
         }
     }
 
