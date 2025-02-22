@@ -12,6 +12,8 @@
 * Fix parsing Samsung `super.img` files in `avbroot lp` due to Samsung putting their own data structures in a region that's supposed to be filled with zeros ([PR #415])
 * Add advanced option to skip replacing the OTA certificate in the system image ([Discussion #417], [PR #418])
 * Switch to stable bzip2-rs release and use zlib-rs as the backend for flate2 ([PR #421])
+* Switch to the aws-lc cryptography library for SHA1 and SHA2 hashing ([PR #422])
+    * The ring library is no longer maintained
 
 ### Version 3.12.0
 
@@ -454,3 +456,4 @@ Behind-the-scenes changes:
 [PR #415]: https://github.com/chenxiaolong/avbroot/pull/415
 [PR #418]: https://github.com/chenxiaolong/avbroot/pull/418
 [PR #421]: https://github.com/chenxiaolong/avbroot/pull/421
+[PR #422]: https://github.com/chenxiaolong/avbroot/pull/422
