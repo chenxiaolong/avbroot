@@ -15,6 +15,7 @@
 * Switch to the aws-lc cryptography library for SHA1 and SHA2 hashing ([PR #422])
     * The ring library is no longer maintained
 * Fix incorrect `Partitions aren't protected by AVB: system` warning when using `--skip-system-ota-cert` ([PR #423])
+* Discard unneeded temp file sooner when using `--skip-system-ota-cert` ([PR #424])
 
 ### Version 3.12.0
 
@@ -459,3 +460,4 @@ Behind-the-scenes changes:
 [PR #421]: https://github.com/chenxiaolong/avbroot/pull/421
 [PR #422]: https://github.com/chenxiaolong/avbroot/pull/422
 [PR #423]: https://github.com/chenxiaolong/avbroot/pull/423
+[PR #424]: https://github.com/chenxiaolong/avbroot/pull/424
