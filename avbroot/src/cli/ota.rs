@@ -784,8 +784,6 @@ fn patch_ota_payload(
         cancel_signal,
     )?;
 
-    // Main patching operation is done. Unmodified boot images no longer need to
-    // be kept around.
     input_files
         .retain(|n, f| !(f.state == InputFileState::Extracted && RequiredImages::is_boot(n)));
 
@@ -800,6 +798,9 @@ fn patch_ota_payload(
             cancel_signal,
         )?)
     };
+
+    input_files
+        .retain(|n, f| !(f.state == InputFileState::Extracted && RequiredImages::is_system(n)));
 
     let mut vbmeta_headers = load_vbmeta_images(&mut input_files, &vbmeta_images)?;
 
