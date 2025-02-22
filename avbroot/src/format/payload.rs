@@ -9,6 +9,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+use aws_lc_rs::digest::{Context, Digest};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use bzip2::write::BzDecoder;
@@ -23,7 +24,6 @@ use rayon::{
     iter::{IndexedParallelIterator, IntoParallelRefMutIterator},
     prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
 };
-use ring::digest::{Context, Digest};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use x509_cert::Certificate;
@@ -374,7 +374,7 @@ impl<W: Write> PayloadWriter<W> {
         // Get the length of an dummy signature struct since the length fields
         // are part of the data to be signed.
         let dummy_sig = sign_digest(
-            ring::digest::digest(&ring::digest::SHA256, b"").as_ref(),
+            aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, b"").as_ref(),
             &key,
         )?;
         let dummy_sig_size = dummy_sig.encoded_len();
@@ -387,9 +387,9 @@ impl<W: Write> PayloadWriter<W> {
         let manifest_raw_new = header.manifest.encode_to_vec();
 
         // Excludes signatures (hashes are for signing).
-        let mut h_partial = Context::new(&ring::digest::SHA256);
+        let mut h_partial = Context::new(&aws_lc_rs::digest::SHA256);
         // Includes signatures (hashes are for properties file).
-        let mut h_full = Context::new(&ring::digest::SHA256);
+        let mut h_full = Context::new(&aws_lc_rs::digest::SHA256);
 
         // Write header to output file.
         let raw_header = RawHeader {
@@ -600,9 +600,9 @@ pub fn verify_payload(
         .ok_or(Error::MissingField("signatures_size"))?;
 
     // Excludes signatures (hashes are for signing).
-    let mut h_partial = Context::new(&ring::digest::SHA256);
+    let mut h_partial = Context::new(&aws_lc_rs::digest::SHA256);
     // Includes signatures (hashes are for properties file).
-    let mut h_full = Context::new(&ring::digest::SHA256);
+    let mut h_full = Context::new(&aws_lc_rs::digest::SHA256);
 
     // Read from the beginning to the metadata signature.
     let metadata_size = header.blob_offset - u64::from(header.metadata_signature_size);
@@ -756,7 +756,7 @@ pub fn apply_operation(
 
         writer.seek(SeekFrom::Start(out_offset)).map_err(error_fn)?;
 
-        let mut hasher = Context::new(&ring::digest::SHA256);
+        let mut hasher = Context::new(&aws_lc_rs::digest::SHA256);
 
         match op.r#type() {
             // Handle ZERO/DISCARD specially since they don't require access to
@@ -925,7 +925,7 @@ pub fn extract_images<'a>(
 fn compress_chunk(raw_data: &[u8], cancel_signal: &AtomicBool) -> Result<(Vec<u8>, Digest)> {
     let reader = Cursor::new(raw_data);
     let writer = Cursor::new(Vec::new());
-    let hashing_writer = HashingWriter::new(writer, Context::new(&ring::digest::SHA256));
+    let hashing_writer = HashingWriter::new(writer, Context::new(&aws_lc_rs::digest::SHA256));
 
     // AOSP's payload_consumer does not support checking CRC during
     // decompression. Also, we intentionally pick the lowest compression level
@@ -1035,7 +1035,7 @@ pub fn compress_image(
 
     let chunks_total = file_size.div_ceil(CHUNK_SIZE);
     let mut bytes_compressed = 0;
-    let mut context_uncompressed = Context::new(&ring::digest::SHA256);
+    let mut context_uncompressed = Context::new(&aws_lc_rs::digest::SHA256);
     let mut cow_estimate = 0;
     let mut operations = vec![];
 
@@ -1206,7 +1206,7 @@ pub fn compress_modified_image(
 
     let groups_total = operations.len().div_ceil(OPERATION_GROUP);
     let mut bytes_compressed = 0;
-    let mut context_uncompressed = Context::new(&ring::digest::SHA256);
+    let mut context_uncompressed = Context::new(&aws_lc_rs::digest::SHA256);
     let mut modified_operations = vec![];
 
     // Read the file one group at a time. This allows for some parallelization

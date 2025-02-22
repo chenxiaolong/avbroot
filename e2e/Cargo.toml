@@ -9,12 +9,12 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+aws-lc-rs = { version = "1.0.0", default-features = false, features = ["aws-lc-sys"] }
 anyhow = "1.0.75"
 avbroot = { path = "../avbroot" }
 clap = { version = "4.4.1", features = ["derive"] }
 ctrlc = "3.4.0"
 hex = { version = "0.4.3", features = ["serde"] }
-ring = "0.17.0"
 rsa = { version = "0.9.6", features = ["hazmat"] }
 serde = { version = "1.0.188", features = ["derive"] }
 tempfile = "3.8.0"

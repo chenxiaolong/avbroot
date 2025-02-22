@@ -9,12 +9,12 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+use aws_lc_rs::digest::{Algorithm, Context};
 use bstr::ByteSlice;
 use rayon::{
     iter::{IndexedParallelIterator, ParallelIterator},
     slice::ParallelSliceMut,
 };
-use ring::digest::{Algorithm, Context};
 use thiserror::Error;
 use zerocopy::{little_endian, FromBytes, IntoBytes};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
@@ -416,8 +416,8 @@ impl HashTree {
         if hash_tree_data != actual_hash_tree_data {
             // These are multiple megabytes, so only report the hashes.
             let algorithm = self.salted_context.algorithm();
-            let expected = ring::digest::digest(algorithm, hash_tree_data);
-            let actual = ring::digest::digest(algorithm, &actual_hash_tree_data);
+            let expected = aws_lc_rs::digest::digest(algorithm, hash_tree_data);
+            let actual = aws_lc_rs::digest::digest(algorithm, &actual_hash_tree_data);
 
             return Err(Error::InvalidHashTree {
                 expected: hex::encode(expected),
@@ -492,8 +492,8 @@ impl HashTreeImage {
     const MAGIC: &'static [u8; 16] = b"avbroot!hashtree";
     const VERSION: u16 = 1;
 
-    fn ring_algorithm(name: &str) -> Result<&'static Algorithm> {
-        avb::ring_algorithm(name, false)
+    fn digest_algorithm(name: &str) -> Result<&'static Algorithm> {
+        avb::digest_algorithm(name, false)
             .map_err(|_| Error::UnsupportedHashAlgorithm(name.to_owned().into_bytes()))
     }
 
@@ -509,8 +509,8 @@ impl HashTreeImage {
             .reopen_boxed()
             .and_then(|mut f| f.seek(SeekFrom::End(0)))
             .map_err(Error::InputReopen)?;
-        let ring_algorithm = Self::ring_algorithm(algorithm)?;
-        let hash_tree = HashTree::new(block_size, ring_algorithm, salt);
+        let digest_algorithm = Self::digest_algorithm(algorithm)?;
+        let hash_tree = HashTree::new(block_size, digest_algorithm, salt);
         let (root_digest, hash_tree_data) = hash_tree.generate(input, image_size, cancel_signal)?;
 
         Ok(Self {
@@ -530,8 +530,8 @@ impl HashTreeImage {
         ranges: &[Range<u64>],
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
-        let ring_algorithm = Self::ring_algorithm(&self.algorithm)?;
-        let hash_tree = HashTree::new(self.block_size, ring_algorithm, &self.salt);
+        let digest_algorithm = Self::digest_algorithm(&self.algorithm)?;
+        let hash_tree = HashTree::new(self.block_size, digest_algorithm, &self.salt);
 
         self.root_digest = hash_tree.update(
             input,
@@ -550,8 +550,8 @@ impl HashTreeImage {
         input: &(dyn ReadSeekReopen + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
-        let ring_algorithm = Self::ring_algorithm(&self.algorithm)?;
-        let hash_tree = HashTree::new(self.block_size, ring_algorithm, &self.salt);
+        let digest_algorithm = Self::digest_algorithm(&self.algorithm)?;
+        let hash_tree = HashTree::new(self.block_size, digest_algorithm, &self.salt);
 
         hash_tree.verify(
             input,
@@ -662,7 +662,7 @@ mod tests {
 
     #[test]
     fn calculate_level_ranges() {
-        let hash_tree = HashTree::new(4096, &ring::digest::SHA256, &[]);
+        let hash_tree = HashTree::new(4096, &aws_lc_rs::digest::SHA256, &[]);
         assert_eq!(
             hash_tree.compute_level_offsets(0).unwrap(),
             &[] as &[Range<usize>],
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn blocks_for_ranges() {
-        let hash_tree = HashTree::new(4096, &ring::digest::SHA256, b"Salt");
+        let hash_tree = HashTree::new(4096, &aws_lc_rs::digest::SHA256, b"Salt");
         assert_eq!(
             hash_tree.blocks_for_ranges(16384, &[0..16384]).unwrap(),
             &[0..4],
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn generate_update_verify() {
         let cancel_signal = AtomicBool::new(false);
-        let hash_tree = HashTree::new(64, &ring::digest::SHA256, b"Salt");
+        let hash_tree = HashTree::new(64, &aws_lc_rs::digest::SHA256, b"Salt");
         let mut input = SharedCursor::new();
 
         // Try input smaller than one block.

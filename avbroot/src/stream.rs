@@ -10,8 +10,8 @@ use std::{
     },
 };
 
+use aws_lc_rs::digest::Context;
 use num_traits::ToPrimitive;
-use ring::digest::Context;
 
 use crate::util;
 
@@ -637,7 +637,7 @@ mod tests {
         sync::atomic::{AtomicBool, Ordering},
     };
 
-    use ring::digest::Context;
+    use aws_lc_rs::digest::Context;
 
     use super::{
         CountingReader, CountingWriter, HashingReader, HashingWriter, PSeekFile, ReadDiscardExt,
@@ -713,7 +713,7 @@ mod tests {
     #[test]
     fn hashing_reader() {
         let raw_reader = Cursor::new(b"foobar");
-        let mut reader = HashingReader::new(raw_reader, Context::new(&ring::digest::SHA256));
+        let mut reader = HashingReader::new(raw_reader, Context::new(&aws_lc_rs::digest::SHA256));
 
         let mut buf = [0u8; 6];
         reader.read_exact(&mut buf[..0]).unwrap();
@@ -730,7 +730,7 @@ mod tests {
     #[test]
     fn hashing_writer() {
         let raw_writer = Cursor::new([0u8; 6]);
-        let mut writer = HashingWriter::new(raw_writer, Context::new(&ring::digest::SHA256));
+        let mut writer = HashingWriter::new(raw_writer, Context::new(&aws_lc_rs::digest::SHA256));
 
         writer.write_all(b"").unwrap();
         writer.write_all(b"foo").unwrap();

@@ -14,6 +14,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+use aws_lc_rs::digest::Context;
 use bstr::ByteSlice;
 use liblzma::{
     stream::{Check, Stream},
@@ -21,7 +22,6 @@ use liblzma::{
 };
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use regex::bytes::Regex;
-use ring::digest::Context;
 use rsa::RsaPublicKey;
 use thiserror::Error;
 use tracing::{debug, debug_span, trace, warn, Span};
@@ -1180,7 +1180,7 @@ fn save_boot_image(
     };
 
     // Write new boot image. We reuse the existing salt for the digest.
-    let mut context = Context::new(&ring::digest::SHA256);
+    let mut context = Context::new(&aws_lc_rs::digest::SHA256);
     context.update(&descriptor.salt);
     let mut hashing_writer = HashingWriter::new(writer, context);
     info.boot_image

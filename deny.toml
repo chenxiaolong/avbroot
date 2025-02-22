@@ -24,12 +24,6 @@ ignore = [
     # avbroot has no network capabilities, so this is not inherently remotely
     # exploitable.
     "RUSTSEC-2023-0071",
-
-    # https://rustsec.org/advisories/RUSTSEC-2025-0007
-    #
-    # Temporarily allow this until we can switch our SHA-256 hashing operations
-    # to using another library.
-    "RUSTSEC-2025-0007",
 ]
 
 [licenses]
@@ -48,13 +42,6 @@ allow = [
     "Zlib",
 ]
 
-[[licenses.clarify]]
-name = "ring"
-expression = "MIT AND ISC AND OpenSSL"
-license-files = [
-    { path = "LICENSE", hash = 0xbd0eed23 },
-]
-
 [bans]
 multiple-versions = "warn"
 multiple-versions-include-dev = true
@@ -70,6 +57,8 @@ include-workspace = true
 bypass = [
     # Copies of unmodified crashwrangler objects for old macOS versions.
     { name = "honggfuzz", allow-globs = ["honggfuzz/third_party/mac/CrashReport_*.o"] },
+    # Only used in tests.
+    { name = "libloading", allow-globs = ["tests/*.dll"] }
 ]
 
 [sources]

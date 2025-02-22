@@ -10,10 +10,10 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
+use aws_lc_rs::digest::{Algorithm, Context};
 use bstr::ByteSlice;
 use num_bigint_dig::{ModInverse, ToBigInt};
 use num_traits::{Pow, ToPrimitive};
-use ring::digest::{Algorithm, Context};
 use rsa::{traits::PublicKeyParts, BigUint, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -55,7 +55,7 @@ pub const HEADER_MAX_SIZE: u64 = 64 * 1024;
 ///
 /// ```rust
 /// use avbroot::format::hashtree::HashTree;
-/// let size = HashTree::new(4096, &ring::digest::SHA256, b"")
+/// let size = HashTree::new(4096, &aws_lc_rs::digest::SHA256, b"")
 ///     .compute_level_offsets(8 * 1024 * 1024 * 1024)
 ///     .unwrap()
 ///    .first()
@@ -163,11 +163,11 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-pub(crate) fn ring_algorithm(name: &str, for_verify: bool) -> Result<&'static Algorithm> {
+pub(crate) fn digest_algorithm(name: &str, for_verify: bool) -> Result<&'static Algorithm> {
     match name {
-        "sha1" if for_verify => Ok(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY),
-        "sha256" => Ok(&ring::digest::SHA256),
-        "sha512" => Ok(&ring::digest::SHA512),
+        "sha1" if for_verify => Ok(&aws_lc_rs::digest::SHA1_FOR_LEGACY_USE_ONLY),
+        "sha256" => Ok(&aws_lc_rs::digest::SHA256),
+        "sha512" => Ok(&aws_lc_rs::digest::SHA512),
         a => Err(Error::UnsupportedHashAlgorithm(a.to_owned())),
     }
 }
@@ -534,7 +534,7 @@ impl HashTreeDescriptor {
         ranges: Option<&[Range<u64>]>,
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
-        let algorithm = ring_algorithm(&self.hash_algorithm, false)?;
+        let algorithm = digest_algorithm(&self.hash_algorithm, false)?;
         let hash_tree = HashTree::new(self.data_block_size, algorithm, &self.salt);
         let (root_digest, hash_tree_data) = match ranges {
             Some(r) => {
@@ -642,7 +642,7 @@ impl HashTreeDescriptor {
     ) -> Result<()> {
         self.check_offsets()?;
 
-        let algorithm = ring_algorithm(&self.hash_algorithm, true)?;
+        let algorithm = digest_algorithm(&self.hash_algorithm, true)?;
 
         util::check_bounds(self.tree_size, ..=HASH_TREE_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("HashTree::tree_size", e))?;
@@ -905,8 +905,8 @@ impl HashDescriptor {
         reader: impl Read,
         for_verify: bool,
         cancel_signal: &AtomicBool,
-    ) -> Result<ring::digest::Digest> {
-        let algorithm = ring_algorithm(&self.hash_algorithm, for_verify)?;
+    ) -> Result<aws_lc_rs::digest::Digest> {
+        let algorithm = digest_algorithm(&self.hash_algorithm, for_verify)?;
         let mut context = Context::new(algorithm);
         context.update(&self.salt);
 

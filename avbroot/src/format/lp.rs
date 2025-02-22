@@ -304,7 +304,7 @@ impl RawGeometry {
             let mut copy = *self;
             copy.checksum.fill(0);
 
-            let digest = ring::digest::digest(&ring::digest::SHA256, copy.as_bytes());
+            let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, copy.as_bytes());
             if digest.as_ref() != self.checksum {
                 return Err(Error::GeometryInvalidDigest {
                     expected: hex::encode(self.checksum),
@@ -520,7 +520,7 @@ impl RawHeader {
 
             let portion = &copy.as_bytes()[..expected_size];
 
-            let digest = ring::digest::digest(&ring::digest::SHA256, portion);
+            let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, portion);
             if digest.as_ref() != self.header_checksum {
                 return Err(Error::HeaderInvalidDigest {
                     expected: hex::encode(self.header_checksum),
@@ -1178,7 +1178,7 @@ impl RawMetadata {
         for slot in &self.slots {
             #[cfg(not(fuzzing))]
             {
-                let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+                let mut context = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
                 context.update(slot.partitions.as_bytes());
                 context.update(slot.extents.as_bytes());
                 context.update(slot.groups.as_bytes());
@@ -1848,7 +1848,7 @@ impl TryFrom<&MetadataSlot> for RawMetadataSlot {
         raw_slot.header.tables_size = offset.into();
 
         let tables_digest = {
-            let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+            let mut context = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
             context.update(raw_slot.partitions.as_bytes());
             context.update(raw_slot.extents.as_bytes());
             context.update(raw_slot.groups.as_bytes());
@@ -1860,8 +1860,8 @@ impl TryFrom<&MetadataSlot> for RawMetadataSlot {
             .tables_checksum
             .copy_from_slice(tables_digest.as_ref());
 
-        let header_digest = ring::digest::digest(
-            &ring::digest::SHA256,
+        let header_digest = aws_lc_rs::digest::digest(
+            &aws_lc_rs::digest::SHA256,
             &raw_slot.header.as_bytes()[..header_size],
         );
         raw_slot
@@ -1950,7 +1950,7 @@ impl TryFrom<&Metadata> for RawMetadata {
         };
 
         let geometry_digest =
-            ring::digest::digest(&ring::digest::SHA256, raw_metadata.geometry.as_bytes());
+            aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, raw_metadata.geometry.as_bytes());
         raw_metadata
             .geometry
             .checksum
