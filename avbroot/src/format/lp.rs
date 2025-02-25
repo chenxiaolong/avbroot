@@ -1,8 +1,7 @@
-// SPDX-FileCopyrightText: 2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
-    cmp::Ordering,
     fmt,
     io::{self, Read, Seek, Write},
     mem,
@@ -152,10 +151,8 @@ pub enum Error {
     ExtentTypeZeroNotEmpty { index: usize },
     #[error("Extent #{index}: Invalid type: {extent_type}")]
     ExtentInvalidType { index: usize, extent_type: u32 },
-    #[error("Extent #{index}: Overlaps previous extent")]
-    ExtentOverlapsPrevious { index: usize },
-    #[error("Extent #{index}: Earlier block device index than previous extent")]
-    ExtentDeviceNotConsecutive { index: usize },
+    #[error("Extent #{index}: Overlaps another extent: #{other}")]
+    ExtentOverlapsAnother { index: usize, other: usize },
     #[error("Extent #{index}: Block device index too large")]
     ExtentDeviceIndexTooLarge { index: usize },
     // Partition group errors.
@@ -598,17 +595,15 @@ impl PartitionName {
 
     fn validate(&self) -> Result<()> {
         let (prefix, suffix) = self.split();
-        let mut has_alnum = false;
 
-        for b in prefix {
-            match b {
-                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' => has_alnum = true,
-                b'_' => {}
-                _ => return Err(Error::PartitionNameInvalid(DebugString::new(self))),
-            }
-        }
+        // AOSP liblp's metadata_format.h says "Characters may only be
+        // alphanumeric or _", but AOSP creates partitions named like
+        // "system_b-cow".
+        let prefix_valid = prefix
+            .iter()
+            .all(|b| matches!(*b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-'));
 
-        if has_alnum && is_zero(suffix) {
+        if prefix_valid && is_zero(suffix) {
             Ok(())
         } else {
             Err(Error::PartitionNameInvalid(DebugString::new(self)))
@@ -1010,23 +1005,29 @@ impl RawMetadataSlot {
             extent.validate(i, &self.block_devices)?;
         }
 
-        // Ensure that all extents are in increasing order and not overlapping.
-        let mut iter = self
+        // Ensure that all extents are not overlapping. We have to sort here
+        // because the extents may not be in order when loading the super
+        // partition on an actual device. Also, AOSP liblp's `metadata_format.h`
+        // says "Gaps between extents are not allowed", but AOSP frequently
+        // creates this situation after a virtual A/B CoW merge.
+        let mut sorted_extents = self
             .extents
             .iter()
-            .filter(|e| e.target_type.get() == RawExtent::TARGET_TYPE_LINEAR)
-            .enumerate();
-        while let (Some((_, a)), Some((i, b))) = (iter.next(), iter.next()) {
-            match a.target_source.get().cmp(&b.target_source.get()) {
-                Ordering::Equal => {
-                    if a.target_data.get() + a.num_sectors.get() > b.target_data.get() {
-                        return Err(Error::ExtentOverlapsPrevious { index: i });
-                    }
-                }
-                Ordering::Greater => {
-                    return Err(Error::ExtentDeviceNotConsecutive { index: i });
-                }
-                Ordering::Less => {}
+            .enumerate()
+            .filter(|(_, e)| e.target_type.get() == RawExtent::TARGET_TYPE_LINEAR)
+            .collect::<Vec<_>>();
+        sorted_extents.sort_by_key(|(_, e)| (e.target_source, e.target_data));
+
+        for window in sorted_extents.windows(2) {
+            let ((a_i, a), (b_i, b)) = (window[0], window[1]);
+
+            if a.target_source == b.target_source
+                && a.target_data.get() + a.num_sectors.get() > b.target_data.get()
+            {
+                return Err(Error::ExtentOverlapsAnother {
+                    index: b_i,
+                    other: a_i,
+                });
             }
         }
 
