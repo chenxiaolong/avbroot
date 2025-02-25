@@ -16,6 +16,8 @@
     * The ring library is no longer maintained
 * Fix incorrect `Partitions aren't protected by AVB: system` warning when using `--skip-system-ota-cert` ([PR #423])
 * Discard unneeded temp file sooner when using `--skip-system-ota-cert` ([PR #424])
+* Make `avbroot lp`'s parser less strict so that it can load on-device `super` partitions ([PR #425])
+    * The on-disk layout on virtual A/B devices violates some requirements stated in AOSP's documentation
 
 ### Version 3.12.0
 
@@ -461,3 +463,4 @@ Behind-the-scenes changes:
 [PR #422]: https://github.com/chenxiaolong/avbroot/pull/422
 [PR #423]: https://github.com/chenxiaolong/avbroot/pull/423
 [PR #424]: https://github.com/chenxiaolong/avbroot/pull/424
+[PR #425]: https://github.com/chenxiaolong/avbroot/pull/425
