@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.13.0
 
 * Fix parsing Samsung `super.img` files in `avbroot lp` due to Samsung putting their own data structures in a region that's supposed to be filled with zeros ([PR #415])
 * Add advanced option to skip replacing the OTA certificate in the system image ([Discussion #417], [PR #418])
