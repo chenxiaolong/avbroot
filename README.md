@@ -386,13 +386,26 @@ avbroot can be used for just re-signing an OTA by specifying `--rootless` instea
 
 ### Skipping OTA certificate patches
 
-avbroot can skip modifying `otacerts.zip` with the `--skip-system-ota-cert` and `--skip-recovery-ota-cert` options. **Do not do these unless you have a good reason to do so.** (For example, if you've already manually inserted the OTA certificate into a boot image specified with `--prepatched` or `--replace`.) Otherwise, the device may be left with no way to install further updates.
+avbroot can skip modifying `otacerts.zip` with the `--skip-system-ota-cert` and `--skip-recovery-ota-cert` options. **Do not use these unless you have a good reason to do so.**
 
-When `--skip-system-ota-cert` is used, the no modifications are performed on the `system` image.
+When `--skip-system-ota-cert` is used, the OTA certificates in the `system` partition will not be modified. This prevents custom OTA updater apps from installing further patched OTAs while booted into Android.
 
-When `--skip-recovery-ota-cert` is used with `--rootless` and `--dsu` is not specified, then no modifications are performed on any boot image besides ensuring they are properly signed.
+When `--skip-recovery-ota-cert` is used, the OTA certificates in the `vendor_boot` or `recovery` partition will not be modified. **This prevents sideloading further patched OTAs from recovery mode.**
 
-When manually adding the OTA certificate to a boot image, [verifying the patched OTA](#verifying-otas) afterwards is recommended to ensure that it was properly done.
+If `--skip-recovery-ota-cert` is used because the OTA certificate was already manually added to the boot image, then [verifying the patched OTA](#verifying-otas) afterwards is recommended to ensure that it was properly done. The verification process is only capable of checking the boot image's copy of the OTA certificates, not the system image's copy of them.
+
+### Skipping all patches
+
+To have avbroot make the absolute minimal changes:
+
+* Specify `--skip-system-ota-cert`
+* Specify `--skip-recovery-ota-cert`
+* Specify `--rootless`
+* Omit `--dsu`
+
+This will re-sign the `vbmeta` partition and the OTA with the custom keys, but leave all other partitions untouched.
+
+**This should only be used for advanced troubleshooting.** Without the OTA certificate patches, the resulting OTA will not be able to install further updates.
 
 ### Replacing partitions
 
