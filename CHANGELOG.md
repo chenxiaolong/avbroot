@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Report as many errors as possible before failing in `avbroot ota verify` and improve error messages ([Discussion #426], [PR #428])
+
 ### Version 3.13.0
 
 * Fix parsing Samsung `super.img` files in `avbroot lp` due to Samsung putting their own data structures in a region that's supposed to be filled with zeros ([PR #415])
@@ -294,6 +298,7 @@ Behind-the-scenes changes:
 [Discussion #286]: https://github.com/chenxiaolong/avbroot/discussions/286
 [Discussion #294]: https://github.com/chenxiaolong/avbroot/discussions/294
 [Discussion #417]: https://github.com/chenxiaolong/avbroot/discussions/417
+[Discussion #426]: https://github.com/chenxiaolong/avbroot/discussions/426
 [Issue #138]: https://github.com/chenxiaolong/avbroot/issues/138
 [Issue #144]: https://github.com/chenxiaolong/avbroot/issues/144
 [Issue #145]: https://github.com/chenxiaolong/avbroot/issues/145
@@ -466,3 +471,4 @@ Behind-the-scenes changes:
 [PR #424]: https://github.com/chenxiaolong/avbroot/pull/424
 [PR #425]: https://github.com/chenxiaolong/avbroot/pull/425
 [PR #427]: https://github.com/chenxiaolong/avbroot/pull/427
+[PR #428]: https://github.com/chenxiaolong/avbroot/pull/428
