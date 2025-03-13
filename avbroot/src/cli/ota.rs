@@ -20,7 +20,7 @@ use clap::{value_parser, ArgAction, Args, Parser, Subcommand};
 use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
 use tempfile::NamedTempFile;
 use topological_sort::TopologicalSort;
-use tracing::{debug_span, info, warn};
+use tracing::{debug_span, error, info, warn};
 use x509_cert::Certificate;
 use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
@@ -1690,6 +1690,15 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
 }
 
 pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> {
+    let mut errors = 0;
+
+    macro_rules! fail_later {
+        ($($arg:tt)+) => {
+            error!($($arg)+);
+            errors += 1;
+        };
+    }
+
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
@@ -1697,27 +1706,39 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     info!("Verifying whole-file signature");
 
-    let embedded_cert = ota::verify_ota(&mut reader, cancel_signal)?;
+    let embedded_cert = match ota::verify_ota(&mut reader, cancel_signal)
+        .context("Failed to verify OTA against embedded certificate")
+    {
+        Ok(cert) => Some(cert),
+        Err(e) => {
+            fail_later!("{e:?}");
+            None
+        }
+    };
 
-    let (metadata, ota_cert, header, properties) = ota::parse_zip_ota_info(&mut reader)?;
-    if embedded_cert != ota_cert {
-        bail!(
+    let (metadata, ota_cert, header, properties) =
+        ota::parse_zip_ota_info(&mut reader).context("Failed to parse OTA metadata")?;
+    if embedded_cert.as_ref() != Some(&ota_cert) {
+        fail_later!(
             "CMS embedded certificate does not match {}",
-            ota::PATH_OTACERT,
+            ota::PATH_OTACERT
         );
     } else if let Some(p) = &cli.cert_ota {
         let verify_cert = crypto::read_pem_cert_file(p)
             .with_context(|| format!("Failed to load certificate: {p:?}"))?;
 
-        if embedded_cert != verify_cert {
-            bail!("OTA has a valid signature, but was not signed with: {p:?}");
+        if embedded_cert != Some(verify_cert) {
+            fail_later!("OTA has a valid signature, but was not signed with: {p:?}");
         }
     } else {
         warn!("Whole-file signature is valid, but its trust is unknown");
     }
 
-    ota::verify_metadata(&mut reader, &metadata, header.blob_offset)
-        .context("Failed to verify OTA metadata offsets")?;
+    if let Err(e) = ota::verify_metadata(&mut reader, &metadata, header.blob_offset)
+        .context("Failed to verify OTA metadata offsets")
+    {
+        fail_later!("{e:?}");
+    }
 
     info!("Verifying payload");
 
@@ -1735,7 +1756,11 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     let section_reader = SectionReader::new(&mut reader, pf_payload.offset, pf_payload.size)
         .context("Failed to directly open payload section")?;
 
-    payload::verify_payload(section_reader, &ota_cert, &properties, cancel_signal)?;
+    if let Err(e) = payload::verify_payload(section_reader, &ota_cert, &properties, cancel_signal)
+        .context("Failed to verify payload signatures and digests")
+    {
+        fail_later!("{e:?}");
+    }
 
     info!("Extracting partition images to temporary directory");
 
@@ -1762,40 +1787,8 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     info!("Verifying partition hashes");
 
-    verify_partition_hashes(&temp_dir, &header, &unique_images, cancel_signal)?;
-
-    if cli.skip_recovery_ota_cert {
-        warn!("Not verifying recovery ramdisk's otacerts.zip");
-    } else {
-        info!("Checking recovery ramdisk's otacerts.zip");
-
-        let required_images = RequiredImages::new(&header.manifest);
-        let boot_images =
-            boot::load_boot_images(&required_images.iter_boot().collect::<Vec<_>>(), |name| {
-                Ok(Box::new(
-                    temp_dir
-                        .open(format!("{name}.img"))
-                        .map(|f| PSeekFile::new(f.into_std()))?,
-                ))
-            })
-            .context("Failed to load all boot images")?;
-        let targets = OtaCertPatcher::new(ota_cert.clone())
-            .find_targets(&boot_images, cancel_signal)
-            .context("Failed to find boot image containing otacerts.zip")?;
-
-        if targets.is_empty() {
-            bail!("No boot image contains otacerts.zip");
-        }
-
-        for target in targets {
-            let boot_image = &boot_images[target].boot_image;
-            let ramdisk_certs = OtaCertPatcher::get_certificates(boot_image, cancel_signal)
-                .context("Failed to read {target}'s otacerts.zip")?;
-
-            if !ramdisk_certs.contains(&ota_cert) {
-                bail!("{target}'s otacerts.zip does not contain OTA certificate");
-            }
-        }
+    if let Err(e) = verify_partition_hashes(&temp_dir, &header, &unique_images, cancel_signal) {
+        fail_later!("{e:?}");
     }
 
     info!("Verifying AVB signatures");
@@ -1813,16 +1806,73 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     let mut seen = HashSet::<String>::new();
     let mut descriptors = HashMap::<String, Descriptor>::new();
 
-    cli::avb::verify_headers(
+    if let Err(e) = cli::avb::verify_headers(
         &temp_dir,
         "vbmeta",
         public_key.as_ref(),
         &mut seen,
         &mut descriptors,
-    )?;
-    cli::avb::verify_descriptors(&temp_dir, &descriptors, false, cancel_signal)?;
+    )
+    .context("Failed to verify AVB signatures")
+    {
+        fail_later!("{e:?}");
+    }
 
-    info!("Signatures are all valid!");
+    if let Err(e) = cli::avb::verify_descriptors(&temp_dir, &descriptors, false, cancel_signal)
+        .context("Failed to verify images against AVB descriptors")
+    {
+        fail_later!("{e:?}");
+    }
+
+    info!("Checking recovery ramdisk's otacerts.zip");
+
+    let required_images = RequiredImages::new(&header.manifest);
+    let boot_images =
+        boot::load_boot_images(&required_images.iter_boot().collect::<Vec<_>>(), |name| {
+            Ok(Box::new(
+                temp_dir
+                    .open(format!("{name}.img"))
+                    .map(|f| PSeekFile::new(f.into_std()))?,
+            ))
+        })
+        .context("Failed to load all boot images")?;
+    let targets = OtaCertPatcher::new(ota_cert.clone())
+        .find_targets(&boot_images, cancel_signal)
+        .context("Failed to find boot image containing otacerts.zip")?;
+
+    if targets.is_empty() {
+        let msg = "No boot image contains otacerts.zip";
+
+        if cli.skip_recovery_ota_cert {
+            warn!("{msg}");
+        } else {
+            fail_later!("{msg}");
+        }
+    }
+
+    for target in targets {
+        let boot_image = &boot_images[target].boot_image;
+        let ramdisk_certs = OtaCertPatcher::get_certificates(boot_image, cancel_signal)
+            .with_context(|| format!("Failed to read {target}'s otacerts.zip"))?;
+
+        if !ramdisk_certs.contains(&ota_cert) {
+            let msg = format!(
+                "{target}'s otacerts.zip does not contain the certificate that signed the OTA"
+            );
+
+            if cli.skip_recovery_ota_cert {
+                warn!("{msg}");
+            } else {
+                fail_later!("{msg}");
+            }
+        }
+    }
+
+    if errors == 0 {
+        info!("OK!");
+    } else {
+        bail!("Encountered {errors} error(s) during verification");
+    }
 
     Ok(())
 }
