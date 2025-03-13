@@ -431,7 +431,7 @@ impl HashTree {
 
 /// Raw on-disk layout for our custom hash tree image header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawHeader {
     /// Magic value. This should be equal to [`HashTreeImage::MAGIC`].
     magic: [u8; 16],

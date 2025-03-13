@@ -106,7 +106,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 /// Raw on-disk layout for the header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawHeader {
     /// Magic value. This should be equal to [`HEADER_MAGIC`].
     magic: little_endian::U32,
@@ -183,7 +183,7 @@ impl RawHeader {
 
 /// Raw on-disk layout for the chunk header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawChunk {
     /// Chunk type. Must be [`CHUNK_TYPE_RAW`], [`CHUNK_TYPE_FILL`],
     /// [`CHUNK_TYPE_DONT_CARE`], or [`CHUNK_TYPE_CRC32`].

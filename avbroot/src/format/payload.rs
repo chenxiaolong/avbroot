@@ -138,7 +138,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 /// Raw on-disk layout for the payload header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawHeader {
     /// Magic value. This should be equal to [`PAYLOAD_MAGIC`].
     magic: [u8; 4],

@@ -292,7 +292,7 @@ trait DescriptorTag {
 
 /// Raw on-disk layout for the AVB property descriptor after the prefix.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawPropertyDescriptor {
     key_size: big_endian::U64,
     value_size: big_endian::U64,
@@ -395,7 +395,7 @@ impl<W: Write> ToWriter<W> for PropertyDescriptor {
 
 /// Raw on-disk layout for the AVB hash tree descriptor after the prefix.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawHashTreeDescriptor {
     dm_verity_version: big_endian::U32,
     image_size: big_endian::U64,
@@ -860,7 +860,7 @@ impl<W: Write> ToWriter<W> for HashTreeDescriptor {
 
 /// Raw on-disk layout for the AVB hash descriptor after the prefix.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawHashDescriptor {
     image_size: big_endian::U64,
     hash_algorithm: [u8; 32],
@@ -1065,7 +1065,7 @@ impl<W: Write> ToWriter<W> for HashDescriptor {
 /// Raw on-disk layout for the AVB kernel command line descriptor after the
 /// prefix.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawKernelCmdlineDescriptor {
     flags: big_endian::U32,
     cmdline_len: big_endian::U32,
@@ -1139,7 +1139,7 @@ impl<W: Write> ToWriter<W> for KernelCmdlineDescriptor {
 
 /// Raw on-disk layout for the AVB chain partition descriptor after the prefix.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawChainPartitionDescriptor {
     rollback_index_location: big_endian::U32,
     partition_name_len: big_endian::U32,
@@ -1258,7 +1258,7 @@ impl<W: Write> ToWriter<W> for ChainPartitionDescriptor {
 
 /// Raw on-disk layout for the AVB descriptor prefix.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawDescriptor {
     tag: big_endian::U64,
     num_bytes_following: big_endian::U64,
@@ -1458,7 +1458,7 @@ impl<'a> TryFrom<&'a mut Descriptor> for AppendedDescriptorMut<'a> {
 
 /// Raw on-disk layout for the AVB header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawHeader {
     /// Magic value. This should be equal to [`HEADER_MAGIC`].
     magic: [u8; 4],
@@ -1927,7 +1927,7 @@ impl<W: Write> ToWriter<W> for Header {
 
 /// Raw on-disk layout for the AVB footer.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawFooter {
     /// Magic value. This should be equal to [`FOOTER_MAGIC`].
     magic: [u8; 4],
@@ -2015,10 +2015,9 @@ impl<W: Write> ToWriter<W> for Footer {
 
 /// Raw on-disk layout for the AVB binary public key header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawPublicKey {
     key_num_bits: big_endian::U32,
-    #[expect(unused)]
     n0inv: big_endian::U32,
 }
 

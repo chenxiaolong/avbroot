@@ -76,7 +76,7 @@ pub struct InvalidHexCharError(RawHexU32, char);
 
 /// ASCII-encoded hex integer value used in cpio header fields.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawHexU32([u8; 8]);
 
 impl fmt::Debug for RawHexU32 {
@@ -121,7 +121,7 @@ impl TryFrom<RawHexU32> for u32 {
 
 /// Raw on-disk layout for the cpio header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawHeader {
     /// Magic value. This should be equal to [`MAGIC_NEW`] or [`MAGIC_NEW_CRC`].
     magic: [u8; 6],

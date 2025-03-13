@@ -592,7 +592,7 @@ impl Fec {
 
 /// Raw on-disk layout for the FEC image header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawHeader {
     /// Magic value. This should be equal to [`FEC_MAGIC`].
     magic: little_endian::U32,

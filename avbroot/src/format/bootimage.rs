@@ -117,7 +117,7 @@ pub trait BootImageExt {
 
 /// Raw on-disk layout for the v0 image header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawV0 {
     /// Magic value. This should be equal to [`BOOT_MAGIC`].
     magic: [u8; 8],
@@ -139,7 +139,7 @@ struct RawV0 {
 
 /// Raw on-disk layout for the extra v1 image header fields.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawV1Extra {
     recovery_dtbo_size: little_endian::U32,
     recovery_dtbo_offset: little_endian::U64,
@@ -148,7 +148,7 @@ struct RawV1Extra {
 
 /// Raw on-disk layout for the extra v2 image header fields.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawV2Extra {
     dtb_size: little_endian::U32,
     dtb_addr: little_endian::U64,
@@ -595,7 +595,7 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
 
 /// Raw on-disk layout for the v3 image header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawV3 {
     /// Magic value. This should be equal to [`BOOT_MAGIC`].
     magic: [u8; 8],
@@ -610,7 +610,7 @@ struct RawV3 {
 
 /// Raw on-disk layout for the extra v4 image header fields.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawV4Extra {
     signature_size: little_endian::U32,
 }
@@ -961,7 +961,7 @@ impl<W: Write> ToWriter<W> for BootImageV3Through4 {
 
 /// Raw on-disk layout for the vendor v3 image header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawVendorV3 {
     /// Magic value. This should be equal to [`VENDOR_BOOT_MAGIC`].
     magic: [u8; 8],
@@ -980,7 +980,7 @@ struct RawVendorV3 {
 
 /// Raw on-disk layout for the extra vendor v4 image header fields.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawVendorV4Extra {
     vendor_ramdisk_table_size: little_endian::U32,
     vendor_ramdisk_table_entry_num: little_endian::U32,
@@ -990,7 +990,7 @@ struct RawVendorV4Extra {
 
 /// Raw on-disk layout for the vendor v4 ramdisk table entry.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawVendorV4RamdiskTableEntry {
     ramdisk_size: little_endian::U32,
     ramdisk_offset: little_endian::U32,

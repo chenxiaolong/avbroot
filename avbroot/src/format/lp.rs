@@ -250,7 +250,7 @@ impl PartitionAttributes {
 
 /// Raw on-disk layout for the metadata geometry.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawGeometry {
     /// Magic value. This should be equal to [`GEOMETRY_MAGIC`].
     magic: little_endian::U32,
@@ -332,7 +332,7 @@ impl RawGeometry {
 
 /// Raw on-disk layout for a table descriptor within a [`RawHeader`].
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawTableDescriptor {
     /// Offset relative to the end of the [`RawHeader`].
     offset: little_endian::U32,
@@ -391,7 +391,7 @@ impl RawTableDescriptor {
 
 /// Raw on-disk layout for the metadata header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawHeader {
     /// Magic value. This should be equal to [`HEADER_MAGIC`].
     magic: little_endian::U32,
@@ -569,7 +569,7 @@ impl RawHeader {
 
 /// A potentially invalid raw partition name string.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct PartitionName([u8; 36]);
 
 impl fmt::Debug for PartitionName {
@@ -639,7 +639,7 @@ impl FromStr for PartitionName {
 
 /// Raw on-disk layout for an entry in the logical partitions table.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawPartition {
     /// Partition name in ASCII. This must be unique across all partitions.
     name: PartitionName,
@@ -701,7 +701,7 @@ impl RawPartition {
                     .first_extent_index
                     .get()
                     .checked_add(self.num_extents.get())
-                    .map_or(true, |n| n as usize > extents.len())
+                    .is_none_or(|n| n as usize > extents.len())
                 {
                     return Err(Error::PartitionExtentIndicesTooLarge {
                         name: DebugString::new(self.name),
@@ -730,7 +730,7 @@ impl RawPartition {
 
 /// Raw on-disk layout for an entry in the extent table.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawExtent {
     /// Number of [`SECTOR_SIZE`]-byte sectors in this extent.
     num_sectors: little_endian::U64,
@@ -822,7 +822,7 @@ impl RawExtent {
 
 /// Raw on-disk layout for an entry in the partition groups table.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawPartitionGroup {
     /// Partition group name in ASCII. This must be unique across all groups.
     name: PartitionName,
@@ -889,7 +889,7 @@ impl RawPartitionGroup {
 
 /// Raw on-disk layout for an entry in the block devices table.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(packed)]
+#[repr(C, packed)]
 struct RawBlockDevice {
     /// The first [`SECTOR_SIZE`]-byte sector where actual data for the logical
     /// partitions can be allocated.
