@@ -10,7 +10,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use aws_lc_rs::digest::Context;
+use aws_lc_rs::digest::{Algorithm, Context};
 use clap::ValueEnum;
 use cms::signed_data::SignedData;
 use const_oid::{db::rfc5912, ObjectIdentifier};
@@ -566,14 +566,14 @@ pub fn verify_metadata(
 }
 
 #[derive(Clone, Debug)]
-pub struct OtaSignature {
+struct RawOtaSignature {
     /// Decoded CMS structure.
-    pub signed_data: SignedData,
+    signed_data: SignedData,
     /// Length of the file (from the beginning) that's covered by the signature.
-    pub hashed_size: u64,
+    hashed_size: u64,
 }
 
-impl OtaSignature {
+impl RawOtaSignature {
     pub fn embedded_cert(&self) -> Result<&Certificate> {
         let mut iter = crypto::iter_cms_certs(&self.signed_data);
 
@@ -589,9 +589,110 @@ impl OtaSignature {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct OtaSignature {
+    pub cert: Certificate,
+    pub digest_algo: &'static Algorithm,
+    pub sig_algo: SignatureAlgorithm,
+    pub sig: Vec<u8>,
+    pub data_size: u64,
+}
+
+impl TryFrom<RawOtaSignature> for OtaSignature {
+    type Error = Error;
+
+    fn try_from(raw_ota_sig: RawOtaSignature) -> Result<Self> {
+        let cert = raw_ota_sig.embedded_cert()?;
+
+        // Make sure this is a signature scheme we can handle. There's currently
+        // no Rust library to verify arbitrary CMS signatures for large files
+        // without fully reading them into memory.
+        let signers_len = raw_ota_sig.signed_data.signer_infos.0.len();
+        if signers_len != 1 {
+            return Err(Error::NotOneCmsSignerInfo(signers_len));
+        }
+
+        let signer = raw_ota_sig.signed_data.signer_infos.0.get(0).unwrap();
+        if signer.digest_alg.oid != rfc5912::ID_SHA_256
+            && signer.digest_alg.oid != rfc5912::ID_SHA_1
+        {
+            return Err(Error::UnsupportedDigestAlgorithm(signer.digest_alg.oid));
+        } else if signer.signature_algorithm.oid != rfc5912::RSA_ENCRYPTION
+            && signer.signature_algorithm.oid != rfc5912::SHA_256_WITH_RSA_ENCRYPTION
+        {
+            return Err(Error::UnsupportedSignatureAlgorithm(
+                signer.signature_algorithm.oid,
+            ));
+        }
+
+        // We support SHA1 for verification only.
+        let (digest_algo, sig_algo) = if signer.digest_alg.oid == rfc5912::ID_SHA_256 {
+            (
+                &aws_lc_rs::digest::SHA256,
+                SignatureAlgorithm::Sha256WithRsa,
+            )
+        } else {
+            (
+                &aws_lc_rs::digest::SHA1_FOR_LEGACY_USE_ONLY,
+                SignatureAlgorithm::Sha1WithRsa,
+            )
+        };
+
+        Ok(Self {
+            cert: cert.clone(),
+            digest_algo,
+            sig_algo,
+            sig: signer.signature.as_bytes().to_vec(),
+            data_size: raw_ota_sig.hashed_size,
+        })
+    }
+}
+
+impl OtaSignature {
+    /// Verify an OTA zip against its embedded certificate. This function makes
+    /// no assertion about whether the certificate is actually trusted.
+    ///
+    /// CMS signed attributes are intentionally not supported because AOSP
+    /// recovery does not support them either. It expects the CMS [`SignedData`]
+    /// structure to be used for nothing more than a raw signature transport
+    /// mechanism.
+    pub fn verify_ota(
+        &self,
+        mut reader: impl Read + Seek,
+        cancel_signal: &AtomicBool,
+    ) -> Result<()> {
+        let public_key = crypto::get_public_key(&self.cert).map_err(Error::OtaCertExtractPubKey)?;
+
+        // Manually hash the parts of the file covered by the signature.
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(|e| Error::DataRead("raw_data", e))?;
+
+        let mut hashing_reader = HashingReader::new(reader, Context::new(self.digest_algo));
+
+        stream::copy_n(
+            &mut hashing_reader,
+            io::sink(),
+            self.data_size,
+            cancel_signal,
+        )
+        .map_err(|e| Error::DataRead("raw_data", e))?;
+
+        let (_, context) = hashing_reader.finish();
+        let digest = context.finish();
+
+        // Verify the signature against the public key.
+        public_key
+            .verify_sig(self.sig_algo, digest.as_ref(), &self.sig)
+            .map_err(Error::CmsVerify)?;
+
+        Ok(())
+    }
+}
+
 /// Parse the CMS signature from the OTA zip comment. This does not perform any
 /// parsing of zip data structures.
-pub fn parse_ota_sig(mut reader: impl Read + Seek) -> Result<OtaSignature> {
+fn parse_raw_ota_sig(mut reader: impl Read + Seek) -> Result<RawOtaSignature> {
     let file_size = reader
         .seek(SeekFrom::End(0))
         .map_err(|e| Error::DataRead("file_size", e))?;
@@ -642,80 +743,16 @@ pub fn parse_ota_sig(mut reader: impl Read + Seek) -> Result<OtaSignature> {
     // length field.
     let hashed_size = file_size - 2 - u64::from(comment_size);
 
-    Ok(OtaSignature {
+    Ok(RawOtaSignature {
         signed_data,
         hashed_size,
     })
 }
 
-/// Verify an OTA zip against its embedded certificates. This function makes no
-/// assertion about whether the certificate is actually trusted. Returns the
-/// embedded certificate.
-///
-/// CMS signed attributes are intentionally not supported because AOSP recovery
-/// does not support them either. It expects the CMS [`SignedData`] structure to
-/// be used for nothing more than a raw signature transport mechanism.
-pub fn verify_ota(mut reader: impl Read + Seek, cancel_signal: &AtomicBool) -> Result<Certificate> {
-    let ota_sig = parse_ota_sig(&mut reader)?;
-    let cert = ota_sig.embedded_cert()?;
-    let public_key = crypto::get_public_key(cert).map_err(Error::OtaCertExtractPubKey)?;
-
-    // Make sure this is a signature scheme we can handle. There's currently no
-    // Rust library to verify arbitrary CMS signatures for large files without
-    // fully reading them into memory.
-    let signers_len = ota_sig.signed_data.signer_infos.0.len();
-    if signers_len != 1 {
-        return Err(Error::NotOneCmsSignerInfo(signers_len));
-    }
-
-    let signer = ota_sig.signed_data.signer_infos.0.get(0).unwrap();
-    if signer.digest_alg.oid != rfc5912::ID_SHA_256 && signer.digest_alg.oid != rfc5912::ID_SHA_1 {
-        return Err(Error::UnsupportedDigestAlgorithm(signer.digest_alg.oid));
-    } else if signer.signature_algorithm.oid != rfc5912::RSA_ENCRYPTION
-        && signer.signature_algorithm.oid != rfc5912::SHA_256_WITH_RSA_ENCRYPTION
-    {
-        return Err(Error::UnsupportedSignatureAlgorithm(
-            signer.signature_algorithm.oid,
-        ));
-    }
-
-    // Manually hash the parts of the file covered by the signature.
-    reader
-        .seek(SeekFrom::Start(0))
-        .map_err(|e| Error::DataRead("raw_data", e))?;
-
-    // We support SHA1 for verification only.
-    let (algorithm, algo) = if signer.digest_alg.oid == rfc5912::ID_SHA_256 {
-        (
-            &aws_lc_rs::digest::SHA256,
-            SignatureAlgorithm::Sha256WithRsa,
-        )
-    } else {
-        (
-            &aws_lc_rs::digest::SHA1_FOR_LEGACY_USE_ONLY,
-            SignatureAlgorithm::Sha1WithRsa,
-        )
-    };
-
-    let mut hashing_reader = HashingReader::new(reader, Context::new(algorithm));
-
-    stream::copy_n(
-        &mut hashing_reader,
-        io::sink(),
-        ota_sig.hashed_size,
-        cancel_signal,
-    )
-    .map_err(|e| Error::DataRead("raw_data", e))?;
-
-    let (_, context) = hashing_reader.finish();
-    let digest = context.finish();
-
-    // Verify the signature against the public key.
-    public_key
-        .verify_sig(algo, digest.as_ref(), signer.signature.as_bytes())
-        .map_err(Error::CmsVerify)?;
-
-    Ok(cert.clone())
+/// Parse the signature information from the CMS signature embedded in the OTA
+/// zip archive comment.
+pub fn parse_ota_sig(reader: impl Read + Seek) -> Result<OtaSignature> {
+    parse_raw_ota_sig(reader)?.try_into()
 }
 
 /// Get and parse the protobuf-encoded OTA metadata, the PEM-encoded otacert,

@@ -1505,9 +1505,8 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         info!("Extracting embedded OTA certificate from zip signature");
 
         let ota_sig = ota::parse_ota_sig(&mut raw_reader)?;
-        let embedded_cert = ota_sig.embedded_cert()?;
 
-        crypto::write_pem_cert_file(path, embedded_cert)
+        crypto::write_pem_cert_file(path, &ota_sig.cert)
             .with_context(|| format!("Failed to write OTA certificate: {path:?}"))?;
     }
 
@@ -1706,28 +1705,27 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     info!("Verifying whole-file signature");
 
-    let embedded_cert = match ota::verify_ota(&mut reader, cancel_signal)
+    let ota_sig = ota::parse_ota_sig(&mut reader).context("Failed to parse OTA signature")?;
+
+    if let Err(e) = ota_sig
+        .verify_ota(&mut reader, cancel_signal)
         .context("Failed to verify OTA against embedded certificate")
     {
-        Ok(cert) => Some(cert),
-        Err(e) => {
-            fail_later!("{e:?}");
-            None
-        }
-    };
+        fail_later!("{e:?}");
+    }
 
     let (metadata, ota_cert, header, properties) =
         ota::parse_zip_ota_info(&mut reader).context("Failed to parse OTA metadata")?;
-    if embedded_cert.as_ref() != Some(&ota_cert) {
+    if ota_cert != ota_sig.cert {
         fail_later!(
-            "CMS embedded certificate does not match {}",
-            ota::PATH_OTACERT
+            "{} does not match CMS embedded certificate",
+            ota::PATH_OTACERT,
         );
     } else if let Some(p) = &cli.cert_ota {
         let verify_cert = crypto::read_pem_cert_file(p)
             .with_context(|| format!("Failed to load certificate: {p:?}"))?;
 
-        if embedded_cert != Some(verify_cert) {
+        if ota_sig.cert != verify_cert {
             fail_later!("OTA has a valid signature, but was not signed with: {p:?}");
         }
     } else {
@@ -1756,8 +1754,9 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     let section_reader = SectionReader::new(&mut reader, pf_payload.offset, pf_payload.size)
         .context("Failed to directly open payload section")?;
 
-    if let Err(e) = payload::verify_payload(section_reader, &ota_cert, &properties, cancel_signal)
-        .context("Failed to verify payload signatures and digests")
+    if let Err(e) =
+        payload::verify_payload(section_reader, &ota_sig.cert, &properties, cancel_signal)
+            .context("Failed to verify payload signatures and digests")
     {
         fail_later!("{e:?}");
     }
