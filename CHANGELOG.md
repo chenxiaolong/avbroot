@@ -9,7 +9,7 @@
 
 ### Unreleased
 
-* Report as many errors as possible before failing in `avbroot ota verify` and improve error messages ([Discussion #426], [PR #428])
+* Report as many errors as possible before failing in `avbroot ota verify` and improve error messages ([Discussion #426], [PR #428], [PR #430])
 * Fix new clippy warnings introduced in Rust 1.85 ([PR #429])
 
 ### Version 3.13.0
@@ -474,3 +474,4 @@ Behind-the-scenes changes:
 [PR #427]: https://github.com/chenxiaolong/avbroot/pull/427
 [PR #428]: https://github.com/chenxiaolong/avbroot/pull/428
 [PR #429]: https://github.com/chenxiaolong/avbroot/pull/429
+[PR #430]: https://github.com/chenxiaolong/avbroot/pull/430
