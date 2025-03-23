@@ -965,20 +965,22 @@ impl VabcAlgo {
 
         while !raw_data.is_empty() {
             let n = raw_data.len().min(block_size as usize);
+            let (chunk, remaining) = raw_data.split_at(n);
+
             // This should match CompressWorker::GetDefaultCompressionLevel() in
             // AOSP's libsnapshot.
             let compressed = match self {
-                Self::Lz4 => lz4_flex::block::compress(&raw_data[..n]),
+                Self::Lz4 => lz4_flex::block::compress(chunk),
                 Self::Gzip => {
                     let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
-                    encoder.write_all(raw_data).map_err(Error::GzCompress)?;
+                    encoder.write_all(chunk).map_err(Error::GzCompress)?;
                     encoder.finish().map_err(Error::GzCompress)?
                 }
             };
 
             total += compressed.len().min(n) as u64;
 
-            raw_data = &raw_data[n..];
+            raw_data = remaining;
         }
 
         Ok(total)

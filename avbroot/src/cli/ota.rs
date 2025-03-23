@@ -683,8 +683,6 @@ pub fn compress_image(
     // update the CoW size estimate or else the CoW block device may run out of
     // space during flashing.
     let vabc_algo = if partition.estimate_cow_size.is_some() {
-        info!("Needs updated CoW size estimate: {name}");
-
         // Only CoW v2 seems to exist in the wild currently, so that is all we
         // support.
         let Some(dpm) = &header.manifest.dynamic_partition_metadata else {
@@ -704,6 +702,8 @@ pub fn compress_image(
         let Some(vabc_algo) = VabcAlgo::new(compression) else {
             bail!("Unsupported VABC compression: {compression}");
         };
+
+        info!("Needs updated {vabc_algo} CoW size estimate: {name}");
 
         Some(vabc_algo)
     } else {
