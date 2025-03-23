@@ -122,13 +122,13 @@ fn find_allocated_regions(
     loop {
         stream::check_cancel(cancel_signal)?;
 
-        start = match rustix::fs::seek(reader, SeekFrom::Data(end as i64)) {
+        start = match rustix::fs::seek(reader, SeekFrom::Data(end)) {
             Ok(offset) => offset,
             Err(e) if e == Errno::NXIO => break,
             Err(e) => return Err(e).with_context(|| format!("Failed to seek to data: {path:?}")),
         };
 
-        end = rustix::fs::seek(reader, SeekFrom::Hole(start as i64))
+        end = rustix::fs::seek(reader, SeekFrom::Hole(start))
             .with_context(|| format!("Failed to seek to hole: {path:?}"))?;
 
         result.push(start..end);

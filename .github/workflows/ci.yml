@@ -36,8 +36,7 @@ jobs:
               - aarch64-apple-darwin
               - x86_64-apple-darwin
             combine: lipo
-          # ubuntu-latest is not 24.04 yet and 22.04's qemu-user-static segfaults.
-          - os: ubuntu-24.04
+          - os: ubuntu-latest
             name: aarch64-linux-android31
             targets:
               - aarch64-linux-android
@@ -86,7 +85,7 @@ jobs:
           done
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           key: ${{ matrix.artifact.name }}
 
@@ -157,7 +156,7 @@ jobs:
         run: cp LICENSE README.md target/output/
 
       - name: Archive executable
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: avbroot-${{ steps.get_version.outputs.version }}-${{ matrix.artifact.name }}
           path: |
