@@ -12,6 +12,7 @@
 * Report as many errors as possible before failing in `avbroot ota verify` and improve error messages ([Discussion #426], [PR #428], [PR #430])
 * Fix new clippy warnings introduced in Rust 1.85 ([PR #429])
 * Fix massive performance regression introduced in 3.13.0 for OTAs that use gzip for virtual A/B CoW compression ([Issue #433], [PR #434])
+* Update dependencies ([PR #435])
 
 ### Version 3.13.0
 
@@ -478,3 +479,4 @@ Behind-the-scenes changes:
 [PR #429]: https://github.com/chenxiaolong/avbroot/pull/429
 [PR #430]: https://github.com/chenxiaolong/avbroot/pull/430
 [PR #434]: https://github.com/chenxiaolong/avbroot/pull/434
+[PR #435]: https://github.com/chenxiaolong/avbroot/pull/435
