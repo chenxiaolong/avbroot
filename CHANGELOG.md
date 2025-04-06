@@ -12,6 +12,7 @@
 * Add support for changing the virtual A/B compression algorithm ([PR #437])
     * For devices that launched with Android <14, `--vabc-algo lz4` can significantly increase OTA installation speed when using a custom OTA updater app (with caveats). There is no difference when sideloading from recovery mode.
     * See [the documentation](#changing-virtual-ab-cow-compression-algorithm) for more details.
+* Switch back to the ring library now that it is maintained again ([PR #438])
 
 ### Version 3.14.0
 
@@ -487,3 +488,4 @@ Behind-the-scenes changes:
 [PR #434]: https://github.com/chenxiaolong/avbroot/pull/434
 [PR #435]: https://github.com/chenxiaolong/avbroot/pull/435
 [PR #437]: https://github.com/chenxiaolong/avbroot/pull/437
+[PR #438]: https://github.com/chenxiaolong/avbroot/pull/438
