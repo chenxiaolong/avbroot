@@ -7,6 +7,12 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for changing the virtual A/B compression algorithm ([PR #437])
+    * For devices that launched with Android <14, `--vabc-algo lz4` can significantly increase OTA installation speed when using a custom OTA updater app (with caveats). There is no difference when sideloading from recovery mode.
+    * See [the documentation](#changing-virtual-ab-cow-compression-algorithm) for more details.
+
 ### Version 3.14.0
 
 * Report as many errors as possible before failing in `avbroot ota verify` and improve error messages ([Discussion #426], [PR #428], [PR #430])
@@ -480,3 +486,4 @@ Behind-the-scenes changes:
 [PR #430]: https://github.com/chenxiaolong/avbroot/pull/430
 [PR #434]: https://github.com/chenxiaolong/avbroot/pull/434
 [PR #435]: https://github.com/chenxiaolong/avbroot/pull/435
+[PR #437]: https://github.com/chenxiaolong/avbroot/pull/437
