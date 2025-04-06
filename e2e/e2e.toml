@@ -143,7 +143,7 @@ patched = "27b80c7be9c1e527ea26abe3dabde245c580e6f26ec084204278fbfd81a39f83"
 # What's unique: boot (boot v2)
 
 [profile.pixel_v2]
-vabc_algo = "Gzip"
+vabc_algo = "Gz"
 
 [profile.pixel_v2.partitions.boot]
 avb.signed = false

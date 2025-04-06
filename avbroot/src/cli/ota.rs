@@ -14,9 +14,10 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use bitflags::bitflags;
 use cap_std::{ambient_authority, fs::Dir};
 use cap_tempfile::TempDir;
-use clap::{value_parser, ArgAction, Args, Parser, Subcommand};
+use clap::{value_parser, ArgAction, Args, Parser, Subcommand, ValueEnum};
 use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
 use tempfile::NamedTempFile;
 use topological_sort::TopologicalSort;
@@ -72,48 +73,65 @@ fn sorted<T: Ord>(iter: impl Iterator<Item = T>) -> Vec<T> {
     items
 }
 
-pub struct RequiredImages(HashSet<String>);
+bitflags! {
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct PartitionFlags: u8 {
+        const BOOT = 1 << 0;
+        const SYSTEM = 1 << 1;
+        const VBMETA = 1 << 2;
+        const COW = 1 << 3;
 
-impl RequiredImages {
-    pub fn new(manifest: &DeltaArchiveManifest) -> Self {
-        let partitions = manifest
-            .partitions
-            .iter()
-            .map(|p| &p.partition_name)
-            .filter(|n| Self::is_boot(n) || Self::is_system(n) || Self::is_vbmeta(n))
-            .cloned()
-            .collect();
-
-        Self(partitions)
+        const KNOWN = Self::BOOT.bits() | Self::SYSTEM.bits() | Self::VBMETA.bits();
     }
 
-    pub fn is_boot(name: &str) -> bool {
-        name == "boot" || name == "init_boot" || name == "recovery" || name == "vendor_boot"
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct RequiredFlags: u8 {
+        const SYSTEM = 1 << 0;
+        const ALL_COW = 1 << 1;
+    }
+}
+
+/// Get the images required for patching. If [`RequiredFlags::SYSTEM`] is
+/// specified, then the system image is included. If [`RequiredFlags::ALL_COW`]
+/// is specified, then all images with CoW size estimates are included.
+pub fn get_required_images(
+    manifest: &DeltaArchiveManifest,
+    required_flags: RequiredFlags,
+) -> HashMap<String, PartitionFlags> {
+    let mut result = HashMap::new();
+
+    for partition in &manifest.partitions {
+        let name = &partition.partition_name;
+        let mut flags = PartitionFlags::empty();
+
+        if name == "boot" || name == "init_boot" || name == "recovery" || name == "vendor_boot" {
+            flags |= PartitionFlags::BOOT;
+        } else if required_flags.contains(RequiredFlags::SYSTEM) && name == "system" {
+            flags |= PartitionFlags::SYSTEM;
+        } else if name.starts_with("vbmeta") {
+            flags |= PartitionFlags::VBMETA;
+        }
+
+        if partition.estimate_cow_size.is_some() {
+            flags |= PartitionFlags::COW;
+        }
+
+        // Skip completely unrecognized partitions.
+        if flags.is_empty() {
+            continue;
+        }
+
+        // Skip unrecognized CoW partitions unless we ask for them.
+        if flags == PartitionFlags::COW && !required_flags.contains(RequiredFlags::ALL_COW) {
+            continue;
+        }
+
+        result.insert(name.clone(), flags);
     }
 
-    pub fn is_system(name: &str) -> bool {
-        name == "system"
-    }
-
-    pub fn is_vbmeta(name: &str) -> bool {
-        name.starts_with("vbmeta")
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().map(|n| n.as_str())
-    }
-
-    pub fn iter_boot(&self) -> impl Iterator<Item = &str> {
-        self.iter().filter(|n| Self::is_boot(n))
-    }
-
-    pub fn iter_system(&self) -> impl Iterator<Item = &str> {
-        self.iter().filter(|n| Self::is_system(n))
-    }
-
-    pub fn iter_vbmeta(&self) -> impl Iterator<Item = &str> {
-        self.iter().filter(|n| Self::is_vbmeta(n))
-    }
+    result
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -134,7 +152,7 @@ struct InputFile {
 /// operating system).
 fn open_input_files(
     payload: &(dyn ReadSeekReopen + Sync),
-    required_images: &RequiredImages,
+    required_images: &HashMap<String, PartitionFlags>,
     external_images: &HashMap<String, PathBuf>,
     header: &PayloadHeader,
     cancel_signal: &AtomicBool,
@@ -144,8 +162,8 @@ fn open_input_files(
     // We always include replacement images that the user specifies, even if
     // they don't need to be patched.
     let all_images = required_images
-        .iter()
-        .chain(external_images.keys().map(|k| k.as_str()))
+        .keys()
+        .chain(external_images.keys())
         .collect::<HashSet<_>>();
 
     for name in all_images {
@@ -158,7 +176,7 @@ fn open_input_files(
                 .map(PSeekFile::new)
                 .with_context(|| format!("Failed to open external image: {path:?}"))?;
             input_files.insert(
-                name.to_owned(),
+                name.clone(),
                 InputFile {
                     file,
                     state: InputFileState::External,
@@ -174,7 +192,7 @@ fn open_input_files(
             payload::extract_image(payload, &file, header, name, cancel_signal)
                 .with_context(|| format!("Failed to extract from original payload: {name}"))?;
             input_files.insert(
-                name.to_owned(),
+                name.clone(),
                 InputFile {
                     file,
                     state: InputFileState::Extracted,
@@ -190,15 +208,19 @@ fn open_input_files(
 /// necessarily patched. Each patcher will determine which image it should
 /// target. If the original image is signed, then it will be re-signed with
 /// `key_avb`.
-fn patch_boot_images<'a, 'b: 'a>(
-    required_images: &'b RequiredImages,
+fn patch_boot_images(
+    required_images: &HashMap<String, PartitionFlags>,
     input_files: &mut HashMap<String, InputFile>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     key_avb: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let input_files = Mutex::new(input_files);
-    let boot_partitions = required_images.iter_boot().collect::<Vec<_>>();
+    let boot_partitions = required_images
+        .iter()
+        .filter(|(_, flags)| flags.contains(PartitionFlags::BOOT))
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
 
     info!(
         "Candidate boot images: {}",
@@ -234,15 +256,22 @@ fn patch_boot_images<'a, 'b: 'a>(
 
 /// Patch the single system image listed in `required_images` to replace the
 /// `otacerts.zip` contents.
-fn patch_system_image<'a, 'b: 'a>(
-    required_images: &'b RequiredImages,
+fn patch_system_image<'a>(
+    required_images: &'a HashMap<String, PartitionFlags>,
     input_files: &mut HashMap<String, InputFile>,
     cert_ota: &Certificate,
     key_avb: &RsaSigningKey,
     cancel_signal: &AtomicBool,
-) -> Result<(&'b str, Vec<Range<u64>>)> {
-    let Some(target) = required_images.iter_system().next() else {
+) -> Result<(&'a str, Vec<Range<u64>>)> {
+    let mut system_iter = required_images
+        .iter()
+        .filter(|(_, flags)| flags.contains(PartitionFlags::SYSTEM))
+        .map(|(name, _)| name);
+    let Some(target) = system_iter.next() else {
         bail!("No system partition found");
+    };
+    if system_iter.next().is_some() {
+        bail!("Multiple system partitions found");
     };
 
     let _span = debug_span!("image", name = target).entered();
@@ -309,12 +338,13 @@ fn load_vbmeta_images(
 /// Check that all critical partitions within the payload are protected by a
 /// vbmeta image in `vbmeta_headers`.
 fn ensure_partitions_protected(
-    required_images: &RequiredImages,
+    required_images: &HashMap<String, PartitionFlags>,
     vbmeta_headers: &HashMap<String, Header>,
 ) -> Result<()> {
     let critical_partitions = required_images
-        .iter_boot()
-        .chain(required_images.iter_vbmeta())
+        .iter()
+        .filter(|(_, flags)| flags.intersects(PartitionFlags::BOOT | PartitionFlags::VBMETA))
+        .map(|(name, _)| name.as_str())
         .collect::<BTreeSet<_>>();
 
     // vbmeta partitions first.
@@ -546,6 +576,58 @@ fn update_metadata_descriptors(parent_header: &mut Header, child_header: &Header
     }
 }
 
+/// Get the VABC algorithm from the payload header. This will fail if an
+/// unsupported VABC algorithm is specified, but not if VABC is disabled.
+fn get_vabc_algo(header: &PayloadHeader) -> Result<Option<VabcAlgo>> {
+    // Only CoW v2 seems to exist in the wild currently, so that is all we
+    // support.
+    let Some(dpm) = &header.manifest.dynamic_partition_metadata else {
+        return Ok(None);
+    };
+
+    if !dpm.vabc_enabled() {
+        return Ok(None);
+    }
+
+    let cow_version = dpm.cow_version();
+    if dpm.cow_version() != 2 {
+        bail!("Unsupported CoW version: {cow_version}");
+    }
+
+    let compression = dpm.vabc_compression_param();
+    let Ok(vabc_algo) = VabcAlgo::from_str(compression, false) else {
+        bail!("Unsupported VABC compression: {compression}");
+    };
+
+    Ok(Some(vabc_algo))
+}
+
+/// Set the VABC algorithm in the payload header and return whether it was
+/// changed. This will fail if VABC was originally disabled. Returns whether the
+/// new algorithm is different from the old algorithm.
+fn set_vabc_algo(header: &mut PayloadHeader, vabc_algo: VabcAlgo) -> Result<bool> {
+    let Some(dpm) = &mut header.manifest.dynamic_partition_metadata else {
+        bail!("Dynamic partition metadata is missing");
+    };
+
+    if !dpm.vabc_enabled() {
+        bail!("Cannot change VABC algorithm when VABC is disabled");
+    }
+
+    let compression = dpm.vabc_compression_param();
+    let Ok(old_vabc_algo) = VabcAlgo::from_str(compression, false) else {
+        bail!("Unsupported VABC compression: {compression}");
+    };
+
+    if vabc_algo == old_vabc_algo {
+        return Ok(false);
+    }
+
+    dpm.vabc_compression_param = Some(vabc_algo.to_string());
+
+    Ok(true)
+}
+
 /// Update vbmeta headers.
 ///
 /// * If [`Header::flags`] is non-zero, then an error is returned because the
@@ -566,6 +648,11 @@ fn update_vbmeta_headers(
     key: &RsaSigningKey,
     block_size: u64,
 ) -> Result<()> {
+    info!(
+        "Patching vbmeta images: {}",
+        joined(order.iter().map(|(n, _)| n)),
+    );
+
     for (name, deps) in order {
         let parent_header = headers.get_mut(name).unwrap();
         let orig_parent_header = parent_header.clone();
@@ -644,6 +731,7 @@ pub fn compress_image(
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to create temp file for: {name}"))?;
 
+    let vabc_algo = get_vabc_algo(header)?;
     let block_size = header.manifest.block_size();
     let partition = header
         .manifest
@@ -651,6 +739,20 @@ pub fn compress_image(
         .iter_mut()
         .find(|p| p.partition_name == name)
         .unwrap();
+
+    // If VABC is enabled, we need to update the CoW size estimate or else the
+    // CoW block device may run out of space during flashing.
+    let vabc_algo = if partition.estimate_cow_size.is_some() {
+        let Some(vabc_algo) = vabc_algo else {
+            bail!("Partition has CoW estimate, but VABC is disabled: {name}");
+        };
+
+        info!("Needs updated {vabc_algo} CoW size estimate: {name}");
+
+        Some(vabc_algo)
+    } else {
+        None
+    };
 
     if let Some(r) = ranges {
         info!("Compressing partial image: {name}: {r:?}");
@@ -665,7 +767,23 @@ pub fn compress_image(
             cancel_signal,
         ) {
             Ok(indices) => {
+                // The changes we make usually aren't any less compressible, but
+                // we'll still recompute the CoW size estimate to handle the
+                // case where the user requested a different algorithm.
+                if let Some(vabc_algo) = vabc_algo {
+                    let cow_estimate = payload::compute_cow_estimate(
+                        &*file,
+                        name,
+                        block_size,
+                        vabc_algo,
+                        cancel_signal,
+                    )?;
+
+                    partition.estimate_cow_size = Some(cow_estimate);
+                }
+
                 *file = writer;
+
                 return Ok(indices);
             }
             // If we can't take advantage of the optimization, we can still
@@ -678,37 +796,6 @@ pub fn compress_image(
     }
 
     info!("Compressing full image: {name}");
-
-    // Otherwise, compress the entire image. If VABC is enabled, we need to
-    // update the CoW size estimate or else the CoW block device may run out of
-    // space during flashing.
-    let vabc_algo = if partition.estimate_cow_size.is_some() {
-        // Only CoW v2 seems to exist in the wild currently, so that is all we
-        // support.
-        let Some(dpm) = &header.manifest.dynamic_partition_metadata else {
-            bail!("Dynamic partition metadata is missing");
-        };
-
-        if !dpm.vabc_enabled() {
-            bail!("Partition has CoW estimate, but VABC is disabled: {name}");
-        }
-
-        let cow_version = dpm.cow_version();
-        if dpm.cow_version() != 2 {
-            bail!("Unsupported CoW version: {cow_version}");
-        }
-
-        let compression = dpm.vabc_compression_param();
-        let Some(vabc_algo) = VabcAlgo::new(compression) else {
-            bail!("Unsupported VABC compression: {compression}");
-        };
-
-        info!("Needs updated {vabc_algo} CoW size estimate: {name}");
-
-        Some(vabc_algo)
-    } else {
-        None
-    };
 
     let (partition_info, operations, cow_estimate) =
         payload::compress_image(&*file, &writer, name, block_size, vabc_algo, cancel_signal)?;
@@ -723,6 +810,45 @@ pub fn compress_image(
     Ok(vec![0..partition.operations.len()])
 }
 
+/// Recompute the CoW estimate for an image and update the OTA manifest
+/// partition entry appropriately. The input file is not modified.
+fn recow_image(
+    name: &str,
+    file: &mut PSeekFile,
+    header: &mut PayloadHeader,
+    cancel_signal: &AtomicBool,
+) -> Result<()> {
+    let _span = debug_span!("image", name).entered();
+
+    file.rewind()?;
+
+    let vabc_algo = get_vabc_algo(header)?;
+    let block_size = header.manifest.block_size();
+    let partition = header
+        .manifest
+        .partitions
+        .iter_mut()
+        .find(|p| p.partition_name == name)
+        .unwrap();
+
+    if partition.estimate_cow_size.is_none() {
+        bail!("Partition has no original CoW estimate: {name}");
+    };
+
+    let Some(vabc_algo) = vabc_algo else {
+        bail!("Partition has CoW estimate, but VABC is disabled: {name}");
+    };
+
+    info!("Recomputing {vabc_algo} CoW size estimate: {name}");
+
+    let cow_estimate =
+        payload::compute_cow_estimate(&*file, name, block_size, vabc_algo, cancel_signal)?;
+
+    partition.estimate_cow_size = Some(cow_estimate);
+
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn patch_ota_payload(
     payload: &(dyn ReadSeekReopen + Sync),
@@ -731,6 +857,7 @@ fn patch_ota_payload(
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     skip_system_ota_cert: bool,
     clear_vbmeta_flags: bool,
+    vabc_algo_override: Option<VabcAlgo>,
     key_avb: &RsaSigningKey,
     key_ota: &RsaSigningKey,
     cert_ota: &Certificate,
@@ -740,6 +867,16 @@ fn patch_ota_payload(
         .context("Failed to load OTA payload header")?;
     if !header.is_full_ota() {
         bail!("Payload is a delta OTA, not a full OTA");
+    }
+
+    let mut required_flags = RequiredFlags::empty();
+    if !skip_system_ota_cert {
+        required_flags |= RequiredFlags::SYSTEM;
+    }
+    if let Some(vabc_algo) = vabc_algo_override {
+        if set_vabc_algo(&mut header, vabc_algo)? {
+            required_flags |= RequiredFlags::ALL_COW;
+        }
     }
 
     let all_partitions = header
@@ -757,11 +894,17 @@ fn patch_ota_payload(
         }
     }
 
-    // Determine what images need to be patched. For simplicity, we pre-read all
-    // vbmeta images since they're tiny. They're discarded later if the they
-    // don't need to be modified.
-    let required_images = RequiredImages::new(&header.manifest);
-    let vbmeta_images = required_images.iter_vbmeta().collect::<HashSet<_>>();
+    let required_images = get_required_images(&header.manifest, required_flags);
+    let vbmeta_images = required_images
+        .iter()
+        .filter(|(_, flags)| flags.contains(PartitionFlags::VBMETA))
+        .map(|(name, _)| name.as_str())
+        .collect::<HashSet<_>>();
+    let cow_images = required_images
+        .iter()
+        .filter(|(_, flags)| flags.contains(PartitionFlags::COW))
+        .map(|(name, _)| name.as_str())
+        .collect::<HashSet<_>>();
 
     // The set of source images to be inserted into the new payload, replacing
     // what was in the original payload. Initially, this refers to either user
@@ -784,9 +927,6 @@ fn patch_ota_payload(
         cancel_signal,
     )?;
 
-    input_files
-        .retain(|n, f| !(f.state == InputFileState::Extracted && RequiredImages::is_boot(n)));
-
     let system_result = if skip_system_ota_cert {
         None
     } else {
@@ -799,19 +939,11 @@ fn patch_ota_payload(
         )?)
     };
 
-    input_files
-        .retain(|n, f| !(f.state == InputFileState::Extracted && RequiredImages::is_system(n)));
-
     let mut vbmeta_headers = load_vbmeta_images(&mut input_files, &vbmeta_images)?;
 
     ensure_partitions_protected(&required_images, &vbmeta_headers)?;
 
     let mut vbmeta_order = get_vbmeta_patch_order(&input_files, &vbmeta_headers)?;
-
-    info!(
-        "Patching vbmeta images: {}",
-        joined(vbmeta_order.iter().map(|(n, _)| n)),
-    );
 
     update_vbmeta_headers(
         &mut input_files,
@@ -822,7 +954,19 @@ fn patch_ota_payload(
         header.manifest.block_size().into(),
     )?;
 
-    // Unmodified vbmeta images no longer need to be kept around either.
+    // Recompute CoW estimates for partitions we don't modify.
+    input_files
+        .iter_mut()
+        .filter(|(name, f)| {
+            f.state == InputFileState::Extracted && cow_images.contains(name.as_str())
+        })
+        .try_for_each(|(name, input_file)| {
+            recow_image(name, &mut input_file.file, &mut header, cancel_signal)
+        })?;
+
+    // Drop all unmodified images. We only want to compress modified images.
+    // For recowed images, the payload header was already updated with the new
+    // estimate. The actual data can be copied from the original payload.
     input_files.retain(|_, f| f.state != InputFileState::Extracted);
 
     let mut compressed_files = input_files
@@ -933,6 +1077,7 @@ fn patch_ota_zip(
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     skip_system_ota_cert: bool,
     clear_vbmeta_flags: bool,
+    vabc_algo_override: Option<VabcAlgo>,
     zip_mode: ZipMode,
     key_avb: &RsaSigningKey,
     key_ota: &RsaSigningKey,
@@ -1056,6 +1201,7 @@ fn patch_ota_zip(
                     boot_patchers,
                     skip_system_ota_cert,
                     clear_vbmeta_flags,
+                    vabc_algo_override,
                     key_avb,
                     key_ota,
                     cert_ota,
@@ -1371,6 +1517,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &boot_patchers,
         cli.skip_system_ota_cert,
         cli.clear_vbmeta_flags,
+        cli.vabc_algo,
         cli.zip_mode,
         &key_avb,
         &key_ota,
@@ -1492,13 +1639,12 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
 
         unique_images.extend(cli.extract.partition.iter().cloned());
     } else if !cli.extract.none {
-        let images = RequiredImages::new(&header.manifest);
+        let images = get_required_images(&header.manifest, RequiredFlags::SYSTEM)
+            .into_iter()
+            .filter(|(_, flags)| !cli.extract.boot_only || flags.contains(PartitionFlags::BOOT))
+            .map(|(name, _)| name);
 
-        if cli.extract.boot_only {
-            unique_images.extend(images.iter_boot().map(|n| n.to_owned()));
-        } else {
-            unique_images.extend(images.iter().map(|n| n.to_owned()));
-        }
+        unique_images.extend(images);
     }
 
     if let Some(path) = &cli.cert_ota {
@@ -1825,16 +1971,20 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     info!("Checking recovery ramdisk's otacerts.zip");
 
-    let required_images = RequiredImages::new(&header.manifest);
-    let boot_images =
-        boot::load_boot_images(&required_images.iter_boot().collect::<Vec<_>>(), |name| {
-            Ok(Box::new(
-                temp_dir
-                    .open(format!("{name}.img"))
-                    .map(|f| PSeekFile::new(f.into_std()))?,
-            ))
-        })
-        .context("Failed to load all boot images")?;
+    let required_images = get_required_images(&header.manifest, RequiredFlags::empty());
+    let boot_image_names = required_images
+        .iter()
+        .filter(|(_, flags)| flags.contains(PartitionFlags::BOOT))
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    let boot_images = boot::load_boot_images(&boot_image_names, |name| {
+        Ok(Box::new(
+            temp_dir
+                .open(format!("{name}.img"))
+                .map(|f| PSeekFile::new(f.into_std()))?,
+        ))
+    })
+    .context("Failed to load all boot images")?;
     let targets = OtaCertPatcher::new(ota_cert.clone())
         .find_targets(&boot_images, cancel_signal)
         .context("Failed to find boot image containing otacerts.zip")?;
@@ -2079,6 +2229,18 @@ pub struct PatchCli {
     /// Forcibly clear vbmeta flags if they disable AVB.
     #[arg(long, help_heading = HEADING_OTHER)]
     pub clear_vbmeta_flags: bool,
+
+    /// Override the virtual A/B CoW compression algorithm.
+    ///
+    /// This will slow down the patching process because every dynamic partition
+    /// needs to be extracted to recompute the CoW size estimate. However, if a
+    /// faster algorithm is chosen, then OTA installation using an OTA updater
+    /// app will be faster. This does not affect sideloading from recovery mode.
+    ///
+    /// Note that selecting a newer algorithm will prevent upgrading from older
+    /// Android versions before support for the algorithm was introduced.
+    #[arg(long, value_name = "ALGO", help_heading = HEADING_OTHER)]
+    pub vabc_algo: Option<VabcAlgo>,
 
     /// Zip creation mode for the output OTA zip.
     ///

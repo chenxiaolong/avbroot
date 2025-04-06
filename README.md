@@ -431,6 +431,18 @@ Verified boot is disabled by vbmeta's header flags: 0x3
 
 To forcibly enable AVB (by clearing the flags), pass in `--clear-vbmeta-flags`.
 
+### Changing virtual A/B CoW compression algorithm
+
+The virtual A/B CoW compression algorithm can be changed by passing in `--vabc-algo <algo>` with `gz` or `lz4`. OTAs normally use an algorithm that is compatible with the initial version of Android shipped on the device.
+
+* Devices launching with Android 12 support `gz` and `brotli` (unsupported by avbroot)
+* Devices launching with Android 14 support `lz4`
+* Devices launching with Android 15 support `zstd` (unsupported by avbroot)
+
+Picking a fast algorithm, like lz4, can speed up OTA installation significantly when installing via a custom OTA updater app. However, there is no performance difference when sideloading an OTA from recovery mode.
+
+Note that the currently running version of Android must support the specified compression algorithm or else the OTA will fail to install. For example, trying to install an Android 14 OTA that uses lz4 CoW compression will fail if the running system is Android 13.
+
 ### Non-interactive use
 
 avbroot prompts for the private key passphrases interactively by default. To run avbroot non-interactively, either:

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2022-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2022-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -13,6 +13,7 @@ use aws_lc_rs::digest::{Context, Digest};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use bzip2::write::BzDecoder;
+use clap::ValueEnum;
 use flate2::{write::GzEncoder, Compression};
 use liblzma::{
     stream::{Check, Stream},
@@ -47,6 +48,9 @@ const PAYLOAD_MAGIC: &[u8; 4] = b"CrAU";
 const PAYLOAD_VERSION: u64 = 2;
 
 const MANIFEST_MAX_SIZE: usize = 4 * 1024 * 1024;
+
+/// Size of each extent. This matches what AOSP's delta_generator does.
+const CHUNK_SIZE: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -945,21 +949,13 @@ fn compress_chunk(raw_data: &[u8], cancel_signal: &AtomicBool) -> Result<(Vec<u8
     Ok((data, digest_compressed))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, ValueEnum)]
 pub enum VabcAlgo {
     Lz4,
-    Gzip,
+    Gz,
 }
 
 impl VabcAlgo {
-    pub fn new(name: &str) -> Option<Self> {
-        match name {
-            "lz4" => Some(Self::Lz4),
-            "gz" => Some(Self::Gzip),
-            _ => None,
-        }
-    }
-
     fn compressed_size(self, mut raw_data: &[u8], block_size: u32) -> Result<u64> {
         let mut total = 0;
 
@@ -971,7 +967,7 @@ impl VabcAlgo {
             // AOSP's libsnapshot.
             let compressed = match self {
                 Self::Lz4 => lz4_flex::block::compress(chunk),
-                Self::Gzip => {
+                Self::Gz => {
                     let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
                     encoder.write_all(chunk).map_err(Error::GzCompress)?;
                     encoder.finish().map_err(Error::GzCompress)?
@@ -989,11 +985,98 @@ impl VabcAlgo {
 
 impl fmt::Display for VabcAlgo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Lz4 => f.write_str("lz4"),
-            Self::Gzip => f.write_str("gz"),
-        }
+        f.write_str(self.to_possible_value().ok_or(fmt::Error)?.get_name())
     }
+}
+
+/// Add fudge factor to CoW estimate to account for overhead.
+fn fudge_cow_estimate(mut estimate: u64) -> Option<u64> {
+    // lz4_flex and zlib-rs usually compress better than the lz4 and zlib
+    // implementations used by libsnapshot_cow. Make up for this by adding
+    // percentage-based overhead.
+    estimate = estimate.checked_add(estimate / 100)?;
+
+    // We also need to account for constant overhead, especially with smaller
+    // partitions. We can match what delta_generator normally adds in
+    // CowWriterV2::InitPos() exactly. Since we only ever create full  OTAs, we
+    // can assume that all CoW operations are kCowReplaceOp.
+
+    // sizeof(CowHeader).
+    estimate = estimate.checked_add(38)?;
+    // header_.buffer_size (equal to BUFFER_REGION_DEFAULT_SIZE).
+    estimate = estimate.checked_add(2 * 1024 * 1024)?;
+    // CowOptions::cluster_ops * sizeof(CowOperationV2).
+    estimate = estimate.checked_add(200 * 20)?;
+
+    Some(estimate)
+}
+
+/// Compute the VABC CoW v2 size estimate. The caller must update
+/// [`PartitionUpdate::estimate_cow_size`] with this value or else update_engine
+/// may fail to flash the partition due to running out of space on the CoW block
+/// device. CoW v2 + other algorithms and also CoW v3 are currently unsupported
+/// because there currently are no known OTAs that use those configurations.
+pub fn compute_cow_estimate(
+    input: &(dyn ReadSeekReopen + Sync),
+    partition_name: &str,
+    block_size: u32,
+    vabc_algo: VabcAlgo,
+    cancel_signal: &AtomicBool,
+) -> Result<u64> {
+    let file_size = input
+        .reopen_boxed()
+        .and_then(|mut r| r.seek(SeekFrom::End(0)))
+        .map_err(|e| Error::InputOpen(partition_name.to_owned(), e))?;
+    let final_chunk_different = file_size % CHUNK_SIZE != 0;
+
+    if file_size % u64::from(block_size) != 0 || CHUNK_SIZE % u64::from(block_size) != 0 {
+        return Err(Error::InvalidPartitionSize {
+            name: partition_name.to_owned(),
+            size: file_size,
+            block_size,
+        });
+    }
+
+    let chunks_total = file_size.div_ceil(CHUNK_SIZE);
+
+    let cow_estimate = (0..chunks_total)
+        .into_par_iter()
+        .map(|chunk| -> Result<u64> {
+            let data = (|| {
+                let mut reader = input.reopen_boxed()?;
+                reader.seek(SeekFrom::Start(chunk * CHUNK_SIZE))?;
+
+                let chunk_size = if final_chunk_different && chunk == chunks_total - 1 {
+                    file_size % CHUNK_SIZE
+                } else {
+                    CHUNK_SIZE
+                };
+
+                stream::check_cancel(cancel_signal)?;
+                reader.read_vec_exact(chunk_size as usize)
+            })()
+            .map_err(Error::ChunkRead)?;
+
+            vabc_algo.compressed_size(&data, block_size)
+        })
+        .try_fold(
+            || 0u64,
+            |total, chunk_estimate| -> Result<u64> {
+                total
+                    .checked_add(chunk_estimate?)
+                    .ok_or(Error::IntOverflow("cow_estimate"))
+            },
+        )
+        .try_reduce(
+            || 0u64,
+            |total, partial| {
+                total
+                    .checked_add(partial)
+                    .ok_or(Error::IntOverflow("cow_estimate"))
+            },
+        )?;
+
+    fudge_cow_estimate(cow_estimate).ok_or(Error::IntOverflow("cow_estimate_fudged"))
 }
 
 /// Compress the image and return the corresponding information to insert into
@@ -1004,12 +1087,9 @@ impl fmt::Display for VabcAlgo {
 /// update [`InstallOperation::data_offset`] in each operation manually because
 /// the initial values are relative to 0.
 ///
-/// If `vabc_algo` is set, the VABC CoW v2 size estimate will be computed. The
-/// caller must update [`PartitionUpdate::estimate_cow_size`] with this value or
-/// else update_engine may fail to flash the partition due to running out of
-/// space on the CoW block device. CoW v2 + other algorithms and also CoW v3 are
-/// currently unsupported because there currently are no known OTAs that use
-/// those configurations.
+/// If `vabc_algo` is set, the VABC CoW size estimate will also be computed.
+/// This is more efficient than separately calling [`compute_cow_estimate`]
+/// since the input does not need to be read twice.
 pub fn compress_image(
     input: &(dyn ReadSeekReopen + Sync),
     output: &(dyn WriteSeekReopen + Sync),
@@ -1018,7 +1098,6 @@ pub fn compress_image(
     vabc_algo: Option<VabcAlgo>,
     cancel_signal: &AtomicBool,
 ) -> Result<(PartitionInfo, Vec<InstallOperation>, Option<u64>)> {
-    const CHUNK_SIZE: u64 = 2 * 1024 * 1024;
     const CHUNK_GROUP: u64 = 32;
 
     let file_size = input
@@ -1036,9 +1115,9 @@ pub fn compress_image(
     }
 
     let chunks_total = file_size.div_ceil(CHUNK_SIZE);
-    let mut bytes_compressed = 0;
+    let mut bytes_compressed = 0u64;
     let mut context_uncompressed = Context::new(&aws_lc_rs::digest::SHA256);
-    let mut cow_estimate = 0;
+    let mut cow_estimate = 0u64;
     let mut operations = vec![];
 
     // Read the file one group at a time. This allows for some parallelization
@@ -1100,8 +1179,12 @@ pub fn compress_image(
 
         for (data, operation, cow_size) in &mut compressed_data_group {
             operation.data_offset = Some(bytes_compressed);
-            bytes_compressed += data.len() as u64;
-            cow_estimate += *cow_size;
+            bytes_compressed = bytes_compressed
+                .checked_add(data.len() as u64)
+                .ok_or(Error::IntOverflow("bytes_compressed"))?;
+            cow_estimate = cow_estimate
+                .checked_add(*cow_size)
+                .ok_or(Error::IntOverflow("cow_estimate"))?;
         }
 
         let group_operations = compressed_data_group
@@ -1126,24 +1209,7 @@ pub fn compress_image(
     };
 
     let cow_estimate = if vabc_algo.is_some() {
-        // lz4_flex and miniz_oxide usually compress better than the lz4 and
-        // zlib implementations used by libsnapshot_cow. Make up for this by
-        // adding percentage-based overhead.
-        cow_estimate += cow_estimate / 100;
-
-        // We also need to account for constant overhead, especially with
-        // smaller partitions. We can match what delta_generator normally adds
-        // in CowWriterV2::InitPos() exactly. Since we only ever create full
-        // OTAs, we can assume that all CoW operations are kCowReplaceOp.
-
-        // sizeof(CowHeader).
-        cow_estimate += 38;
-        // header_.buffer_size (equal to BUFFER_REGION_DEFAULT_SIZE).
-        cow_estimate += 2 * 1024 * 1024;
-        // CowOptions::cluster_ops * sizeof(CowOperationV2).
-        cow_estimate += 200 * 20;
-
-        Some(cow_estimate)
+        Some(fudge_cow_estimate(cow_estimate).ok_or(Error::IntOverflow("cow_estimate_fudged"))?)
     } else {
         None
     };
