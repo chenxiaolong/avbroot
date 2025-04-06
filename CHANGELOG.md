@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.15.0
 
 * Add support for changing the virtual A/B compression algorithm ([PR #437])
     * For devices that launched with Android <14, `--vabc-algo lz4` can significantly increase OTA installation speed when using a custom OTA updater app (with caveats). There is no difference when sideloading from recovery mode.
