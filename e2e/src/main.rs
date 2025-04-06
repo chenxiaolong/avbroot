@@ -69,7 +69,7 @@ fn hash_file(path: &Path, cancel_signal: &AtomicBool) -> Result<[u8; 32]> {
     let raw_reader =
         File::open(path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
     let buf_reader = BufReader::new(raw_reader);
-    let context = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
+    let context = ring::digest::Context::new(&ring::digest::SHA256);
     let mut hashing_reader = HashingReader::new(buf_reader, context);
 
     stream::copy(&mut hashing_reader, io::sink(), cancel_signal)?;
@@ -104,7 +104,7 @@ fn append_avb(
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let image_size = file.seek(SeekFrom::End(0))?;
-    let salt = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, b"avbroot");
+    let salt = ring::digest::digest(&ring::digest::SHA256, b"avbroot");
     let descriptors = vec![
         if hash_tree {
             let mut descriptor = HashTreeDescriptor {

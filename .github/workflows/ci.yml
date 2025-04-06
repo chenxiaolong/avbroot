@@ -20,8 +20,6 @@ jobs:
       RUSTFLAGS: -C strip=symbols -C target-feature=+crt-static
       TARGETS: ${{ join(matrix.artifact.targets, ' ') || matrix.artifact.name }}
       ANDROID_API: ${{ matrix.artifact.android_api }}
-      # https://aws.github.io/aws-lc-rs/requirements/windows.html#use-of-prebuilt-nasm-objects
-      AWS_LC_SYS_PREBUILT_NASM: 1
     strategy:
       fail-fast: false
       matrix:

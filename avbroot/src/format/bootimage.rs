@@ -8,9 +8,9 @@ use std::{
     str::{self, Utf8Error},
 };
 
-use aws_lc_rs::digest::Context;
 use bstr::ByteSlice;
 use num_traits::ToPrimitive;
+use ring::digest::Context;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zerocopy::{little_endian, FromBytes, IntoBytes};
@@ -890,7 +890,7 @@ impl BootImageV3Through4 {
     /// image was successfully signed. Returns false if there's no vbmeta
     /// structure to sign in [`V4Extra::signature`].
     pub fn sign(&mut self, key: &RsaSigningKey) -> Result<bool> {
-        let mut context = Context::new(&aws_lc_rs::digest::SHA256);
+        let mut context = Context::new(&ring::digest::SHA256);
         let image_size;
 
         if let Some(v4) = &self.v4_extra {

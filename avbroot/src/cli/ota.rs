@@ -1347,7 +1347,7 @@ fn verify_partition_hashes(
 
             let mut writer = HashingWriter::new(
                 io::sink(),
-                aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256),
+                ring::digest::Context::new(&ring::digest::SHA256),
             );
 
             stream::copy(file, &mut writer, cancel_signal)?;

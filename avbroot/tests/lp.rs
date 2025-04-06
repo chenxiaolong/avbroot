@@ -17,7 +17,7 @@ fn round_trip(metadata: &Metadata, sha512: &[u8; 64]) {
     let data = writer.into_inner();
 
     assert_eq!(
-        aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA512, &data).as_ref(),
+        ring::digest::digest(&ring::digest::SHA512, &data).as_ref(),
         sha512,
     );
 

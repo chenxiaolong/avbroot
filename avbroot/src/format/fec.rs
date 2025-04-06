@@ -707,7 +707,7 @@ impl FecImage {
         let fec_size: u32 =
             util::try_cast(self.fec.len()).map_err(|e| Error::IntOutOfBounds("fec_size", e))?;
 
-        let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &self.fec);
+        let digest = ring::digest::digest(&ring::digest::SHA256, &self.fec);
 
         let header = RawHeader {
             magic: FEC_MAGIC.into(),
@@ -781,7 +781,7 @@ impl<R: Read> FromReader<R> for FecImage {
 
         let data_size = header.data_size.get();
 
-        let actual_digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &fec[..fec_size]);
+        let actual_digest = ring::digest::digest(&ring::digest::SHA256, &fec[..fec_size]);
         if header.digest != actual_digest.as_ref() {
             return Err(Error::InvalidFecDigest {
                 expected: hex::encode(header.digest),
@@ -886,7 +886,7 @@ mod tests {
             let mut buf = vec![0u8; size];
             rand::thread_rng().fill_bytes(&mut buf);
             file.write_all(&buf).unwrap();
-            aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &buf)
+            ring::digest::digest(&ring::digest::SHA256, &buf)
         };
 
         let fec = Fec::new(size as u64, block_size, parity).unwrap();
@@ -921,7 +921,7 @@ mod tests {
             let mut buf = Vec::new();
             file.rewind().unwrap();
             file.read_to_end(&mut buf).unwrap();
-            aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &buf)
+            ring::digest::digest(&ring::digest::SHA256, &buf)
         };
         assert_eq!(repaired_digest.as_ref(), orig_digest.as_ref());
 

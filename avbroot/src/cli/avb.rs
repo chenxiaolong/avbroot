@@ -599,7 +599,7 @@ pub fn verify_descriptors(
 fn compute_digest_recursive(
     directory: &Dir,
     name: &str,
-    context: &mut aws_lc_rs::digest::Context,
+    context: &mut ring::digest::Context,
     max_depth: u8,
     seen: &mut HashSet<String>,
     cancel_signal: &AtomicBool,
@@ -670,7 +670,7 @@ fn compute_digest_recursive(
 /// chained partitions more than one level deep are ignored.
 pub fn compute_digest(directory: &Dir, name: &str, cancel_signal: &AtomicBool) -> Result<[u8; 32]> {
     let mut seen = HashSet::<String>::new();
-    let mut context = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
 
     compute_digest_recursive(directory, name, &mut context, 2, &mut seen, cancel_signal)?;
 

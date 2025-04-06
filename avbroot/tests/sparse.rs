@@ -39,7 +39,7 @@ fn round_trip(block_size: u32, crc32: u32, test_chunks: &[TestChunk], sha512: &[
     let data = writer.into_inner();
 
     assert_eq!(
-        aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA512, &data).as_ref(),
+        ring::digest::digest(&ring::digest::SHA512, &data).as_ref(),
         sha512,
     );
 

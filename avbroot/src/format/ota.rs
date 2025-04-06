@@ -10,12 +10,12 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use aws_lc_rs::digest::{Algorithm, Context};
 use clap::ValueEnum;
 use cms::signed_data::SignedData;
 use const_oid::{db::rfc5912, ObjectIdentifier};
 use memchr::memmem;
 use prost::Message;
+use ring::digest::{Algorithm, Context};
 use thiserror::Error;
 use x509_cert::{der::Encode, Certificate};
 use zip::{result::ZipError, write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
@@ -627,13 +627,10 @@ impl TryFrom<RawOtaSignature> for OtaSignature {
 
         // We support SHA1 for verification only.
         let (digest_algo, sig_algo) = if signer.digest_alg.oid == rfc5912::ID_SHA_256 {
-            (
-                &aws_lc_rs::digest::SHA256,
-                SignatureAlgorithm::Sha256WithRsa,
-            )
+            (&ring::digest::SHA256, SignatureAlgorithm::Sha256WithRsa)
         } else {
             (
-                &aws_lc_rs::digest::SHA1_FOR_LEGACY_USE_ONLY,
+                &ring::digest::SHA1_FOR_LEGACY_USE_ONLY,
                 SignatureAlgorithm::Sha1WithRsa,
             )
         };
@@ -831,7 +828,7 @@ fn validate_eocd(eocd: &[u8]) -> Result<()> {
 fn compute_signature_comment(
     key: &RsaSigningKey,
     cert: &Certificate,
-    digest: aws_lc_rs::digest::Digest,
+    digest: ring::digest::Digest,
 ) -> Result<Vec<u8>> {
     let cms_signature =
         crypto::cms_sign_external(key, cert, digest.as_ref()).map_err(Error::CmsSign)?;
@@ -883,7 +880,7 @@ pub struct StreamingSigningWriter<W> {
 impl<W: Write> StreamingSigningWriter<W> {
     pub fn new(inner: W) -> Self {
         Self {
-            inner: HashingWriter::new(inner, Context::new(&aws_lc_rs::digest::SHA256)),
+            inner: HashingWriter::new(inner, Context::new(&ring::digest::SHA256)),
             queue: Default::default(),
             used: 0,
         }
@@ -987,7 +984,7 @@ impl<W: Read + Write + Seek> SeekableSigningWriter<W> {
         // Compute the digest of everything up until the comment size field.
         let mut hashing_writer = HashingWriter::new(
             io::sink(),
-            aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256),
+            ring::digest::Context::new(&ring::digest::SHA256),
         );
 
         self.rewind().map_err(|e| Error::DataRead("raw_data", e))?;

@@ -9,12 +9,12 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use aws_lc_rs::digest::{Algorithm, Context};
 use bstr::ByteSlice;
 use rayon::{
     iter::{IndexedParallelIterator, ParallelIterator},
     slice::ParallelSliceMut,
 };
+use ring::digest::{Algorithm, Context};
 use thiserror::Error;
 use zerocopy::{little_endian, FromBytes, IntoBytes};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
@@ -416,8 +416,8 @@ impl HashTree {
         if hash_tree_data != actual_hash_tree_data {
             // These are multiple megabytes, so only report the hashes.
             let algorithm = self.salted_context.algorithm();
-            let expected = aws_lc_rs::digest::digest(algorithm, hash_tree_data);
-            let actual = aws_lc_rs::digest::digest(algorithm, &actual_hash_tree_data);
+            let expected = ring::digest::digest(algorithm, hash_tree_data);
+            let actual = ring::digest::digest(algorithm, &actual_hash_tree_data);
 
             return Err(Error::InvalidHashTree {
                 expected: hex::encode(expected),
@@ -662,7 +662,7 @@ mod tests {
 
     #[test]
     fn calculate_level_ranges() {
-        let hash_tree = HashTree::new(4096, &aws_lc_rs::digest::SHA256, &[]);
+        let hash_tree = HashTree::new(4096, &ring::digest::SHA256, &[]);
         assert_eq!(
             hash_tree.compute_level_offsets(0).unwrap(),
             &[] as &[Range<usize>],
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn blocks_for_ranges() {
-        let hash_tree = HashTree::new(4096, &aws_lc_rs::digest::SHA256, b"Salt");
+        let hash_tree = HashTree::new(4096, &ring::digest::SHA256, b"Salt");
         assert_eq!(
             hash_tree.blocks_for_ranges(16384, &[0..16384]).unwrap(),
             &[0..4],
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn generate_update_verify() {
         let cancel_signal = AtomicBool::new(false);
-        let hash_tree = HashTree::new(64, &aws_lc_rs::digest::SHA256, b"Salt");
+        let hash_tree = HashTree::new(64, &ring::digest::SHA256, b"Salt");
         let mut input = SharedCursor::new();
 
         // Try input smaller than one block.

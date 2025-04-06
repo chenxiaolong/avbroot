@@ -49,7 +49,7 @@ fn round_trip(image: &BootImage, sha512: &[u8; 64], expected_version: u32) {
     let data = writer.into_inner();
 
     assert_eq!(
-        aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA512, &data).as_ref(),
+        ring::digest::digest(&ring::digest::SHA512, &data).as_ref(),
         sha512,
     );
 
