@@ -2,11 +2,9 @@
 
 (This page is also available in: [Russian (Русский)](./README.ru.md).)
 
-avbroot is a program for patching Android A/B-style OTA images for root access while preserving AVB (Android Verified Boot) using custom signing keys. It is compatible with both Magisk and KernelSU. If desired, it can also just re-sign an OTA without enabling root access.
+avbroot is a tool for modifying Android A/B OTA images reproducibly and re-signing them with custom keys. It also includes a [collection of subcommands](./README.extra.md) for packing and unpacking numerous Android image formats.
 
 Having a good understanding of how AVB and A/B OTAs work is recommended prior to using avbroot. At the very least, please make sure the [warnings and caveats](#warnings-and-caveats) are well-understood to avoid the risk of hard bricking.
-
-**NOTE:** avbroot 2.0 has been rewritten in Rust and no longer relies on any AOSP code. The CLI is fully backwards compatible, but the old Python implementation can be found in the `python` branch if needed.
 
 ## Requirements
 
@@ -23,7 +21,7 @@ Having a good understanding of how AVB and A/B OTAs work is recommended prior to
 
 avbroot applies the following patches to the partition images:
 
-* The `boot` or `init_boot` image, depending on device, is patched to enable root access. For Magisk, the patch is equivalent to what would be normally done by the Magisk app.
+* The `boot` or `init_boot` image, depending on device, is patched to enable root access if requested.
 
 * The `boot`, `recovery`, or `vendor_boot` image, depending on device, is patched to replace the OTA signature verification certificates with the custom OTA signing certificate. This allows future patched OTAs to be sideloaded from recovery mode after the bootloader has been locked. It also prevents accidental flashing of the original unpatched OTA.
 
@@ -31,7 +29,7 @@ avbroot applies the following patches to the partition images:
 
 ## Warnings and Caveats
 
-* **Always leave the `OEM unlocking` checkbox enabled when using a locked bootloader with root.** This is critically important. Root access allows the boot partition to potentially be overwritten, either accidentally or intentionally, with an image that is not properly signed. In this scenario, if the checkbox is turned off, both the OS and recovery mode will be made unbootable and `fastboot flashing unlock` will not be allowed. This effectively renders the device **_hard bricked_**.
+* **Always leave the `OEM unlocking` checkbox enabled when using a locked bootloader while rooted.** This is critically important. Root access allows the boot partition to potentially be overwritten, either accidentally or intentionally, with an image that is not properly signed. In this scenario, if the checkbox is turned off, both the OS and recovery mode will be made unbootable and `fastboot flashing unlock` will not be allowed. This effectively renders the device **_hard bricked_**.
 
     Repeat: **_ALWAYS leave `OEM unlocking` enabled if rooted._**
 
