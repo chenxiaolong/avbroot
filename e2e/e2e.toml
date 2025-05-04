@@ -51,12 +51,12 @@ data.version = "vendor_v4"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v4_gki.hashes_streaming]
-original = "6b2a71bb4c2057e7625f97a2ab9832416399d4ce5788db1bab978eb5cf6e8c51"
-patched = "0538bdff77c4ead8b6c7cf70e95a44a3559d8651bfd0afdcd3963d08c65999f6"
+original = "c83bff30dbd30ed8baf5a954a158a2c3a75b25175089809e52ea9052020b0627"
+patched = "20bd1835c6ea90104eab7ec51be48ee8aae76508f8a6501621d7a1f384103c2f"
 
 [profile.pixel_v4_gki.hashes_seekable]
-original = "46e88872ab1591f86b98b146278ec6392a97e0258d42ceb84a87d43a316a9edd"
-patched = "00eeb6832c62e872e8a226a27728726a5f7d7f2436c4ddeba143efea6206924e"
+original = "ffc5c7839dfa68d5ff7d888287f808259be34bd63c5df0a385e2e78e6fdcc647"
+patched = "90a51e890560486d4bd73685176c833c94f31f9d05d524186bb4c544c8eca32c"
 
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
@@ -105,7 +105,7 @@ patched = "373309f28234866625462253d6f41f5a3b016b3676c7cb87a88bf55099ad6b13"
 
 [profile.pixel_v3.vabc]
 version = "V2"
-algo = { kind = "Lz4" }
+algo = { kind = "Gz" }
 
 [profile.pixel_v3.partitions.boot]
 avb.signed = true
@@ -136,19 +136,15 @@ data.version = "vendor_v3"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v3.hashes_streaming]
-original = "65048a5a6d2c90c7e3220b0e3500840613dceb0c167388bc44cb19796f13b89e"
-patched = "191945e73dd8032deb485c2b1e0260c00e56d5b003fa5acf32219a8a4c91bf44"
+original = "678f5ba8cff01802ce964d31abf7a2c77b63e9c06e911857b588a16872fb6860"
+patched = "3691c2cf89728307e143b7084b40bbbfb181e15be6f65914a6c40408e0c6eab3"
 
 [profile.pixel_v3.hashes_seekable]
-original = "cf200d0c1c82599cc174afdff585548e89ecc7e4089019083b28456baa757204"
-patched = "673c0b24b6d59426e4c96b820d2d57cc1c83fcefa24e175f4631d8d5dc44a40e"
+original = "202d447215f80919f464bd59c7b38f20cbe3a9625d38bc81a0b71e5a3da334eb"
+patched = "ec94739fdef7efc4930e96828761c2ebd4ece79014b735eab303c5cbdda2e529"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)
-
-[profile.pixel_v2.vabc]
-version = "V2"
-algo = { kind = "Gz" }
 
 [profile.pixel_v2.partitions.boot]
 avb.signed = false
@@ -173,9 +169,9 @@ data.type = "vbmeta"
 data.deps = ["system"]
 
 [profile.pixel_v2.hashes_streaming]
-original = "7c1f648bef642f794716e9177e69520ad868951bbfa4b9004607f00fdb2ad99c"
-patched = "23adbe34a2272603c81fe6632c5f2ec7fe4f7dacd82c4d6409fc09966d71388a"
+original = "79bb20bd57f51a8a7b52d0ff59b7d096a1e4ada425a6230818ca25916a81e021"
+patched = "7f199cc4a6fd244034b597cb916651e1c3e0d6f59450617a5cadbd274f02ec7a"
 
 [profile.pixel_v2.hashes_seekable]
-original = "e4e874e28bab5692ab6a385812194f4e139e8e13a186bac6d584ac8be6a25e68"
-patched = "c48a71a4eb6eb1f68efa8447ebe995dc092fa58716963cde4208106a6af1dbbb"
+original = "c9b32282f247555fed92cc6d599b9005c81ffdc88d5f55d2248e8bf6fb66f1b5"
+patched = "c856f7f7245c02d32b3cec93c2d4365a2b3823fed9a9b27f94508637d79b1492"

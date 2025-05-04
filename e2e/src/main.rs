@@ -656,11 +656,16 @@ fn create_payload(
                     partition_names: dynamic_partitions_names,
                 }],
                 snapshot_enabled: Some(true),
-                vabc_enabled: Some(true),
+                // Everything below is meant to be unset if VABC is not
+                // supported.
+                vabc_enabled: profile.vabc.map(|_| true),
                 vabc_compression_param: profile.vabc.map(|v| v.algo.to_string()),
-                cow_version: Some(2),
+                cow_version: profile.vabc.map(|v| match v.version {
+                    CowVersion::V2 => 2,
+                    CowVersion::V3 => 3,
+                }),
                 vabc_feature_set: None,
-                compression_factor: Some(COMPRESSION_FACTOR.into()),
+                compression_factor: profile.vabc.map(|_| COMPRESSION_FACTOR.into()),
             }),
             partial_update: None,
             apex_info: vec![],
