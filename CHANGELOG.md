@@ -7,6 +7,11 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for CoW version 3 ([Issue #441], [PR #442])
+  * This was recently introduced with the Pixel 9a. Previous devices all used CoW version 2.
+
 ### Version 3.15.0
 
 * Add support for changing the virtual A/B compression algorithm ([PR #437])
@@ -337,6 +342,7 @@ Behind-the-scenes changes:
 [Issue #366]: https://github.com/chenxiaolong/avbroot/issues/366
 [Issue #393]: https://github.com/chenxiaolong/avbroot/issues/393
 [Issue #433]: https://github.com/chenxiaolong/avbroot/issues/433
+[Issue #441]: https://github.com/chenxiaolong/avbroot/issues/441
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -491,3 +497,4 @@ Behind-the-scenes changes:
 [PR #437]: https://github.com/chenxiaolong/avbroot/pull/437
 [PR #438]: https://github.com/chenxiaolong/avbroot/pull/438
 [PR #439]: https://github.com/chenxiaolong/avbroot/pull/439
+[PR #442]: https://github.com/chenxiaolong/avbroot/pull/442
