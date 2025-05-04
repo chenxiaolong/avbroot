@@ -9,7 +9,7 @@
 
 ### Unreleased
 
-* Add support for CoW version 3 for virtual A/B ([Issue #441], [PR #442])
+* Add support for CoW version 3 for virtual A/B ([Issue #441], [PR #442], [PR #445])
   * This was recently introduced with the Pixel 9a. Previous devices all used CoW version 2.
 * Add support for uncompressed CoW for virtual A/B ([PR #443])
   * This is not used on actual devices, but is very useful for testing the CoW estimation logic.
@@ -505,3 +505,4 @@ Behind-the-scenes changes:
 [PR #442]: https://github.com/chenxiaolong/avbroot/pull/442
 [PR #443]: https://github.com/chenxiaolong/avbroot/pull/443
 [PR #444]: https://github.com/chenxiaolong/avbroot/pull/444
+[PR #445]: https://github.com/chenxiaolong/avbroot/pull/445
