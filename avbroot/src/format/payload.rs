@@ -1122,10 +1122,19 @@ impl CheckedAdd for CowEstimate {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub enum VabcAlgo {
+pub enum VabcAlgoKind {
     None,
     Lz4,
     Gz,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct VabcAlgo {
+    /// Compression algorithm.
+    pub kind: VabcAlgoKind,
+    /// Compression level. AOSP allows this to be present even if the algorithm
+    /// can't use it.
+    pub level: Option<u32>,
 }
 
 impl VabcAlgo {
@@ -1152,11 +1161,14 @@ impl VabcAlgo {
             // raw data is smaller. Because we use a different implementation of
             // the compression algorithms, we don't implement this. It's safer
             // to just overestimate and use the (larger) compressed size.
-            size += match self {
-                Self::None => chunk_size as u64,
-                Self::Lz4 => lz4_flex::block::compress(chunk).len() as u64,
-                Self::Gz => {
-                    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+            size += match self.kind {
+                VabcAlgoKind::None => chunk_size as u64,
+                VabcAlgoKind::Lz4 => lz4_flex::block::compress(chunk).len() as u64,
+                VabcAlgoKind::Gz => {
+                    let level = self
+                        .level
+                        .map_or(Compression::best(), |l| Compression::new(l.into()));
+                    let mut encoder = GzEncoder::new(Vec::new(), level);
                     encoder.write_all(chunk).map_err(Error::GzCompress)?;
                     encoder.finish().map_err(Error::GzCompress)?.len() as u64
                 }
@@ -1172,29 +1184,47 @@ impl VabcAlgo {
 
 impl fmt::Display for VabcAlgo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Self::None => "none",
-            Self::Lz4 => "lz4",
-            Self::Gz => "gz",
+        let name = match self.kind {
+            VabcAlgoKind::None => "none",
+            VabcAlgoKind::Lz4 => "lz4",
+            VabcAlgoKind::Gz => "gz",
         };
-        f.write_str(name)
+
+        f.write_str(name)?;
+
+        if let Some(level) = self.level {
+            write!(f, ",{level}")?;
+        }
+
+        Ok(())
     }
 }
 
 #[derive(Clone, Debug, Error)]
-#[error("Invalid VABC algorithm: {0} (must be {{none|lz4|gz}}[,<level>])")]
+#[error("Invalid VABC algorithm: {0:?} (must be {{none|lz4|gz}}[,<level>])")]
 pub struct InvalidVabcAlgo(String);
 
 impl FromStr for VabcAlgo {
     type Err = InvalidVabcAlgo;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "" | "none" => Ok(Self::None),
-            "lz4" => Ok(Self::Lz4),
-            "gz" => Ok(Self::Gz),
-            a => Err(InvalidVabcAlgo(a.to_owned())),
-        }
+        let (prefix, suffix) = s.split_once(",").unwrap_or((s, ""));
+
+        // AOSP allows any algorithm to accept a level, even if it's unused.
+        let level = if !suffix.is_empty() {
+            Some(suffix.parse().map_err(|_| InvalidVabcAlgo(s.to_owned()))?)
+        } else {
+            None
+        };
+
+        let kind = match prefix {
+            "" | "none" => VabcAlgoKind::None,
+            "lz4" => VabcAlgoKind::Lz4,
+            "gz" => VabcAlgoKind::Gz,
+            _ => return Err(InvalidVabcAlgo(s.to_owned())),
+        };
+
+        Ok(Self { kind, level })
     }
 }
 

@@ -15,7 +15,7 @@ security_patch_level = "2024-01-01"
 [profile.pixel_v4_gki.vabc]
 # CoW v3 is used starting with the Google Pixel 9a.
 version = "V3"
-algo = "Lz4"
+algo = { kind = "Lz4" }
 
 [profile.pixel_v4_gki.partitions.boot]
 avb.signed = true
@@ -63,7 +63,7 @@ patched = "00eeb6832c62e872e8a226a27728726a5f7d7f2436c4ddeba143efea6206924e"
 
 [profile.pixel_v4_non_gki.vabc]
 version = "V2"
-algo = "Lz4"
+algo = { kind = "Lz4" }
 
 [profile.pixel_v4_non_gki.partitions.boot]
 avb.signed = true
@@ -105,7 +105,7 @@ patched = "373309f28234866625462253d6f41f5a3b016b3676c7cb87a88bf55099ad6b13"
 
 [profile.pixel_v3.vabc]
 version = "V2"
-algo = "Lz4"
+algo = { kind = "Lz4" }
 
 [profile.pixel_v3.partitions.boot]
 avb.signed = true
@@ -148,7 +148,7 @@ patched = "673c0b24b6d59426e4c96b820d2d57cc1c83fcefa24e175f4631d8d5dc44a40e"
 
 [profile.pixel_v2.vabc]
 version = "V2"
-algo = "Gz"
+algo = { kind = "Gz" }
 
 [profile.pixel_v2.partitions.boot]
 avb.signed = false
