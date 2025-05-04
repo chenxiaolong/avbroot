@@ -97,7 +97,7 @@ fn verify_hash(path: &Path, sha256: &[u8; 32], cancel_signal: &AtomicBool) -> Re
 fn append_avb(
     file: &mut PSeekFile,
     name: &str,
-    avb: &Avb,
+    avb: Avb,
     hash_tree: bool,
     ota_info: &OtaInfo,
     key_avb: &RsaSigningKey,
@@ -295,7 +295,7 @@ fn create_ramdisk(
 fn create_boot_image(
     file: &mut PSeekFile,
     name: &str,
-    avb: &Avb,
+    avb: Avb,
     boot_data: &BootData,
     ota_info: &OtaInfo,
     key_avb: &RsaSigningKey,
@@ -422,8 +422,8 @@ fn create_boot_image(
 fn create_dm_verity_image(
     file: &mut PSeekFile,
     name: &str,
-    avb: &Avb,
-    dm_verity_data: &DmVerityData,
+    avb: Avb,
+    dm_verity_data: DmVerityData,
     ota_info: &OtaInfo,
     key_avb: &RsaSigningKey,
     cert_ota: &Certificate,
@@ -451,7 +451,7 @@ fn create_dm_verity_image(
 fn create_vbmeta_image(
     file: &mut PSeekFile,
     name: &str,
-    avb: &Avb,
+    avb: Avb,
     vbmeta_data: &VbmetaData,
     inputs: &BTreeMap<String, PSeekFile>,
     key: &RsaSigningKey,
@@ -537,7 +537,7 @@ fn create_partition_images(
                 create_boot_image(
                     &mut file,
                     name,
-                    &partition.avb,
+                    partition.avb,
                     data,
                     ota_info,
                     key_avb,
@@ -550,8 +550,8 @@ fn create_partition_images(
                 create_dm_verity_image(
                     &mut file,
                     name,
-                    &partition.avb,
-                    data,
+                    partition.avb,
+                    *data,
                     ota_info,
                     key_avb,
                     cert_ota,
@@ -560,7 +560,7 @@ fn create_partition_images(
                 .with_context(|| format!("Failed to create dm-verity image: {name}"))?;
             }
             Data::Vbmeta(data) => {
-                create_vbmeta_image(&mut file, name, &partition.avb, data, &files, key_avb)
+                create_vbmeta_image(&mut file, name, partition.avb, data, &files, key_avb)
                     .with_context(|| format!("Failed to create vbmeta image: {name}"))?;
             }
         }
@@ -611,10 +611,7 @@ fn create_payload(
 
         compressed.insert(name, writer);
 
-        let is_v3 = profile
-            .vabc
-            .map(|e| e.version == CowVersion::V3)
-            .unwrap_or_default();
+        let is_v3 = profile.vabc.is_some_and(|e| e.version == CowVersion::V3);
 
         payload_partitions.push(PartitionUpdate {
             partition_name: name.clone(),
@@ -1205,6 +1202,7 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
         Some(_) => None,
         None => Some(TempDir::new().context("Failed to create temp directory")?),
     };
+    #[allow(clippy::option_if_let_else)]
     let work_dir = match &cli.config.work_dir {
         Some(w) => w.as_path(),
         None => work_temp_dir.as_ref().unwrap().path(),
@@ -1340,7 +1338,7 @@ fn helper_mode() -> Result<()> {
     let cli = HelperCli::parse();
 
     let private_key_path = {
-        let parent = cli.public_key.parent().unwrap_or(Path::new("."));
+        let parent = cli.public_key.parent().unwrap_or_else(|| Path::new("."));
         let name = cli
             .public_key
             .file_name()
@@ -1414,7 +1412,10 @@ fn main() -> Result<()> {
     if env::var_os(ENV_HELPER_MODE).is_some() {
         return helper_mode();
     }
-    env::set_var(ENV_HELPER_MODE, "true");
+    // SAFETY: No multithreading at this point.
+    unsafe {
+        env::set_var(ENV_HELPER_MODE, "true");
+    }
 
     // Set up a cancel signal so we can properly clean up any temporary files.
     let cancel_signal = Arc::new(AtomicBool::new(false));

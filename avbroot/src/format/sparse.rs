@@ -159,7 +159,7 @@ impl RawHeader {
             return Err(Error::UnsupportedMajorVersion(self.major_version.get()));
         }
 
-        if self.file_hdr_sz.get() < mem::size_of::<RawHeader>() as u16 {
+        if self.file_hdr_sz.get() < mem::size_of::<Self>() as u16 {
             return Err(Error::InvalidFileHeaderSize(self.file_hdr_sz.get()));
         } else if self.chunk_hdr_sz.get() < mem::size_of::<RawChunk>() as u16 {
             return Err(Error::InvalidChunkHeaderSize(self.chunk_hdr_sz.get()));
@@ -173,7 +173,7 @@ impl RawHeader {
     }
 
     fn excess_raw_header_bytes(&self) -> u16 {
-        self.file_hdr_sz.get() - mem::size_of::<RawHeader>() as u16
+        self.file_hdr_sz.get() - mem::size_of::<Self>() as u16
     }
 
     fn excess_raw_chunk_bytes(&self) -> u16 {
@@ -811,7 +811,7 @@ impl<R: Read> SparseReader<R> {
                 data = ChunkData::Crc32(expected.get());
             }
             _ => unreachable!(),
-        };
+        }
 
         let chunk = Chunk {
             bounds: ChunkBounds {

@@ -432,7 +432,7 @@ impl BootImagePatch for MagiskRootPatcher {
             targets.push("init_boot");
         } else if boot_images.contains_key("boot") {
             targets.push("boot");
-        };
+        }
 
         Ok(targets)
     }
@@ -781,7 +781,7 @@ impl DsuPubKeyPatcher {
             e.data = data;
         } else {
             entries.push(CpioEntry::new_file(Self::AVBROOT_KEY_PATH, 0o644, data));
-        };
+        }
 
         *ramdisk = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
 
@@ -971,7 +971,7 @@ impl BootImagePatch for PrepatchedImagePatcher {
             targets.push("init_boot");
         } else if boot_images.contains_key("boot") {
             targets.push("boot");
-        };
+        }
 
         Ok(targets)
     }

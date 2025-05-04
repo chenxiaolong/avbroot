@@ -1640,7 +1640,7 @@ impl TryFrom<&RawMetadataSlot> for MetadataSlot {
     type Error = Error;
 
     fn try_from(raw_slot: &RawMetadataSlot) -> Result<Self> {
-        let mut slot = MetadataSlot {
+        let mut slot = Self {
             major_version: raw_slot.header.major_version.get(),
             minor_version: raw_slot.header.minor_version.get(),
             groups: Vec::with_capacity(raw_slot.groups.len()),
@@ -1720,7 +1720,7 @@ impl TryFrom<&MetadataSlot> for RawMetadataSlot {
     fn try_from(slot: &MetadataSlot) -> Result<Self> {
         let header_size = RawHeader::size_for_version(slot.major_version, slot.minor_version);
 
-        let mut raw_slot = RawMetadataSlot {
+        let mut raw_slot = Self {
             header: RawHeader {
                 magic: HEADER_MAGIC.into(),
                 major_version: slot.major_version.into(),
@@ -1937,7 +1937,7 @@ impl TryFrom<&Metadata> for RawMetadata {
         // We only do the bare minimum calculations needed here to fill out the
         // raw fields. There is no semantic validation.
 
-        let mut raw_metadata = RawMetadata {
+        let mut raw_metadata = Self {
             image_type: metadata.image_type,
             geometry: RawGeometry {
                 magic: GEOMETRY_MAGIC.into(),

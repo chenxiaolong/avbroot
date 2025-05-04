@@ -1,9 +1,9 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
     collections::BTreeMap,
-    fmt,
+    fmt::{self, Write as _},
     fs::{self, File},
     io::{BufRead, BufReader},
     path::Path,
@@ -108,7 +108,7 @@ fn update_changelog_links(path: &Path, base_url: &str) -> Result<()> {
     }
 
     for (link_ref, link) in links {
-        result.push_str(&format!("{link_ref}: {link}\n"));
+        let _ = writeln!(result, "{link_ref}: {link}");
     }
 
     fs::write(path, result)?;

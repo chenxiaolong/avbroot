@@ -1,3 +1,4 @@
+#![allow(clippy::all)]
 #![allow(clippy::nursery)]
 #![allow(clippy::pedantic)]
 

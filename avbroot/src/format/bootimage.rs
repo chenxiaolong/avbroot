@@ -269,6 +269,7 @@ impl fmt::Display for BootImageV0Through2 {
 
 impl BootImageExt for BootImageV0Through2 {
     fn header_version(&self) -> u32 {
+        #[allow(clippy::bool_to_int_with_if)]
         if self.v2_extra.is_some() {
             2
         } else if self.v1_extra.is_some() {

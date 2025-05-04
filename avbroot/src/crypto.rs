@@ -144,6 +144,7 @@ pub enum PassphraseSource {
 
 impl PassphraseSource {
     pub fn new(key_file: &Path, pass_file: Option<&Path>, env_var: Option<&OsStr>) -> Self {
+        #[allow(clippy::option_if_let_else)]
         if let Some(v) = env_var {
             Self::EnvVar(v.to_owned())
         } else if let Some(p) = pass_file {

@@ -6,7 +6,7 @@ resolver = "2"
 [workspace.package]
 version = "3.15.0"
 license = "GPL-3.0-only"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/chenxiaolong/avbroot"
 
 [workspace.lints.clippy]

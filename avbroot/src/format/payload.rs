@@ -1048,7 +1048,7 @@ struct ChunkingParams {
 }
 
 impl ChunkingParams {
-    fn chunk_size(&self, num_blocks: u64) -> u32 {
+    fn chunk_size(self, num_blocks: u64) -> u32 {
         match self.method {
             ChunkingMethod::Exact => self.block_size,
             ChunkingMethod::MaxPowerOf2(max_chunk_size) => {
@@ -1165,9 +1165,7 @@ impl VabcAlgo {
                 VabcAlgoKind::None => chunk_size as u64,
                 VabcAlgoKind::Lz4 => lz4_flex::block::compress(chunk).len() as u64,
                 VabcAlgoKind::Gz => {
-                    let level = self
-                        .level
-                        .map_or(Compression::best(), |l| Compression::new(l.into()));
+                    let level = self.level.map_or(Compression::best(), Compression::new);
                     let mut encoder = GzEncoder::new(Vec::new(), level);
                     encoder.write_all(chunk).map_err(Error::GzCompress)?;
                     encoder.finish().map_err(Error::GzCompress)?.len() as u64
@@ -1208,7 +1206,7 @@ impl FromStr for VabcAlgo {
     type Err = InvalidVabcAlgo;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let (prefix, suffix) = s.split_once(",").unwrap_or((s, ""));
+        let (prefix, suffix) = s.split_once(',').unwrap_or((s, ""));
 
         // AOSP allows any algorithm to accept a level, even if it's unused.
         let level = if !suffix.is_empty() {
@@ -1632,6 +1630,8 @@ pub fn compress_modified_image(
                 writer.seek(SeekFrom::Start(operation.data_offset.unwrap()))?;
                 writer.write_all(&data)?;
 
+                // Clippy doesn't know we're returning a Range.
+                #[allow(clippy::range_plus_one)]
                 Ok(i..i + 1)
             })
             .collect::<io::Result<Vec<_>>>()

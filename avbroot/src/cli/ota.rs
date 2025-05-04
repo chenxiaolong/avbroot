@@ -273,7 +273,7 @@ fn patch_system_image<'a>(
     };
     if system_iter.next().is_some() {
         bail!("Multiple system partitions found");
-    };
+    }
 
     let _span = debug_span!("image", name = target).entered();
 
@@ -832,9 +832,7 @@ pub fn compress_image(
     partition.new_partition_info = Some(partition_info);
     partition.operations = operations;
     partition.estimate_cow_size = cow_estimate.map(|e| e.size);
-    let is_v3 = vabc_params
-        .map(|p| p.version == CowVersion::V3)
-        .unwrap_or_default();
+    let is_v3 = vabc_params.is_some_and(|p| p.version == CowVersion::V3);
     partition.estimate_op_count_max = cow_estimate.and_then(|e| is_v3.then_some(e.num_ops));
 
     *file = writer;
@@ -866,7 +864,7 @@ fn recow_image(
 
     if partition.estimate_cow_size.is_none() {
         bail!("Partition has no original CoW estimate: {name}");
-    };
+    }
 
     let Some(vabc_params) = vabc_params else {
         bail!("Partition has CoW estimate, but VABC is disabled: {name}");
@@ -1508,7 +1506,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         )));
     } else {
         assert!(cli.root.rootless);
-    };
+    }
 
     if cli.skip_system_ota_cert {
         warn!("Not inserting OTA cert into system image; sideloading further updates may fail");

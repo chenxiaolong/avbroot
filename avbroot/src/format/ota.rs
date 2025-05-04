@@ -377,7 +377,7 @@ fn compute_property_files(
         }
 
         let remain = l - joined.len();
-        joined.extend(iter::repeat(' ').take(remain));
+        joined.extend(iter::repeat_n(' ', remain));
     }
 
     Ok(joined)
