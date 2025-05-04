@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.16.0
 
 * Add support for CoW version 3 for virtual A/B ([Issue #441], [PR #442], [PR #445])
   * This was recently introduced with the Pixel 9a. Previous devices all used CoW version 2.
