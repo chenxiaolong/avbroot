@@ -7,13 +7,13 @@ use std::{
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     num::NonZeroU32,
     ops::{Add, Range},
+    str::FromStr,
     sync::atomic::AtomicBool,
 };
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use bzip2::write::BzDecoder;
-use clap::ValueEnum;
 use flate2::{write::GzEncoder, Compression};
 use liblzma::{
     stream::{Check, Stream},
@@ -974,7 +974,7 @@ impl CowVersion {
         const NUM_RESUME_POINTS: u64 = 4;
         const SIZEOF_COW_FOOTER_V2: u64 = 84;
         const SIZEOF_COW_HEADER_V2: u64 = 38;
-        const SIZEOF_COW_HEADER_V3: u64 = 40;
+        const SIZEOF_COW_HEADER_V3: u64 = SIZEOF_COW_HEADER_V2 + 40;
         const SIZEOF_COW_OPERATION_V2: u64 = 20;
         const SIZEOF_COW_OPERATION_V3: u64 = 16;
         const SIZEOF_RESUME_POINT_V3: u64 = 16;
@@ -991,25 +991,25 @@ impl CowVersion {
                 // AOSP: CowWriterV2::InitPos()
                 overhead += BUFFER_REGION_DEFAULT_SIZE;
 
-                // Add an operation header (sizeof(CowOperationV2)) for each
-                // kCowReplaceOp for the raw data.
+                // Add all the CoW operation headers:
+                //
+                // - There is a kCowReplaceOp for each compressed chunk.
+                // - There is a kCowLabelOp for each InstallOperation in the
+                //   payload. This is added by delta_generator in CowDryRun().
+                // - There is a kCowClusterOp at the end of each cluster of
+                //   operations (which includes the kCowClusterOp itself). The
+                //   cluster size used to be 200, but was changed to 1024 in
+                //   5e8e488c13cbff9e0a305ce7c22fd6a13aabb886. We'll use the
+                //   smaller value because it's better to overestimate.
+                //
                 // AOSP: CowWriterV2::EmitClusterIfNeeded()
-                overhead += cow_replace_ops * SIZEOF_COW_OPERATION_V2;
+                let cow_label_ops = payload_install_ops;
+                let cow_cluster_ops = (cow_replace_ops + cow_label_ops).div_ceil(CLUSTER_OPS - 1);
 
-                // Add an operation header (sizeof(CowOperationV2)) for each
-                // kCowLabelOp. delta_generator adds one for each install
-                // operation.
-                // AOSP: CowDryRun()
-                overhead += payload_install_ops * SIZEOF_COW_OPERATION_V2;
-
-                // Add an operation header (sizeof(CowOperationV2)) for each
-                // kCowClusterOp, which is emitted for each cluster of cow
-                // operations. The cluster size used to be 200, but changed to
-                // 1024 in 5e8e488c13cbff9e0a305ce7c22fd6a13aabb886. We'll use
-                // the smaller value because it's better to overestimate.
-                // AOSP: CowWriterV2::EmitClusterIfNeeded()
-                let num_ops = (cow_replace_ops + payload_install_ops).div_ceil(CLUSTER_OPS - 1);
-                overhead += num_ops * SIZEOF_COW_OPERATION_V2;
+                // A cluster cannot be truncated, so round up to the nearest
+                // cluster boundary.
+                // AOSP: CowWriterV2::AddOperation()
+                overhead += cow_cluster_ops * CLUSTER_OPS * SIZEOF_COW_OPERATION_V2;
 
                 // sizeof(CowFooter).
                 // AOSP: CowWriterV2::GetCowSizeInfo()
@@ -1082,24 +1082,22 @@ pub struct CowEstimate {
 
 impl CowEstimate {
     /// Add fudge factor to account for overhead.
-    fn fudged(
-        &self,
-        payload_install_ops: u64,
-        cow_version: CowVersion,
-        vabc_algo: VabcAlgo,
-    ) -> Option<Self> {
+    fn fudged(&self, payload_install_ops: u64, cow_version: CowVersion) -> Option<Self> {
         let version_overhead = cow_version.size_overhead(self.num_ops, payload_install_ops);
-        let algo_overhead = vabc_algo.size_overhead(self.size);
 
-        let size = self
-            .size
-            .checked_add(version_overhead)
-            .and_then(|e| e.checked_add(algo_overhead))?;
+        let mut size = self.size.checked_add(version_overhead)?;
 
-        Some(Self {
-            size,
-            num_ops: self.num_ops,
-        })
+        // delta_generator adds 1% overhead to the original CoW size estimate,
+        // even if compression is disabled. We'll do the same too. For the
+        // compressed scenario, we rely on this more because lz4_flex and
+        // zlib-rs usually compress better than the lz4 and zlib implementations
+        // used by libsnapshot_cow.
+        size += size / 100;
+
+        // AOSP: PartitionProcessor::Run()
+        let num_ops = self.num_ops.max(25);
+
+        Some(Self { size, num_ops })
     }
 }
 
@@ -1123,22 +1121,14 @@ impl CheckedAdd for CowEstimate {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum VabcAlgo {
+    None,
     Lz4,
     Gz,
 }
 
 impl VabcAlgo {
-    /// Compute the size overhead to account for differences in compression
-    /// level between our compression libraries and AOSP's.
-    fn size_overhead(self, estimate: u64) -> u64 {
-        // lz4_flex and zlib-rs usually compress better than the lz4 and zlib
-        // implementations used by libsnapshot_cow. Make up for this by adding
-        // percentage-based overhead.
-        estimate / 100
-    }
-
     /// Compute the compressed size of the raw data when split into chunks based
     /// on the specified [`ChunkingParams`]. The length of `raw_data` must be a
     /// multiple of the block size or else this will panic. The compressed data
@@ -1157,20 +1147,20 @@ impl VabcAlgo {
 
             // This should match CompressWorker::GetDefaultCompressionLevel() in
             // AOSP's libsnapshot.
-            let compressed = match self {
-                Self::Lz4 => lz4_flex::block::compress(chunk),
-                Self::Gz => {
-                    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
-                    encoder.write_all(chunk).map_err(Error::GzCompress)?;
-                    encoder.finish().map_err(Error::GzCompress)?
-                }
-            };
-
+            //
             // CoW v3 uses the raw data instead of the compressed data if the
             // raw data is smaller. Because we use a different implementation of
             // the compression algorithms, we don't implement this. It's safer
             // to just overestimate and use the (larger) compressed size.
-            size += compressed.len().min(chunk_size) as u64;
+            size += match self {
+                Self::None => chunk_size as u64,
+                Self::Lz4 => lz4_flex::block::compress(chunk).len() as u64,
+                Self::Gz => {
+                    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+                    encoder.write_all(chunk).map_err(Error::GzCompress)?;
+                    encoder.finish().map_err(Error::GzCompress)?.len() as u64
+                }
+            };
 
             num_ops += 1;
             raw_data = remaining;
@@ -1182,7 +1172,29 @@ impl VabcAlgo {
 
 impl fmt::Display for VabcAlgo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.to_possible_value().ok_or(fmt::Error)?.get_name())
+        let name = match self {
+            Self::None => "none",
+            Self::Lz4 => "lz4",
+            Self::Gz => "gz",
+        };
+        f.write_str(name)
+    }
+}
+
+#[derive(Clone, Debug, Error)]
+#[error("Invalid VABC algorithm: {0} (must be {{none|lz4|gz}}[,<level>])")]
+pub struct InvalidVabcAlgo(String);
+
+impl FromStr for VabcAlgo {
+    type Err = InvalidVabcAlgo;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "" | "none" => Ok(Self::None),
+            "lz4" => Ok(Self::Lz4),
+            "gz" => Ok(Self::Gz),
+            a => Err(InvalidVabcAlgo(a.to_owned())),
+        }
     }
 }
 
@@ -1300,7 +1312,7 @@ pub fn compute_cow_estimate(
         })?;
 
     initial_estimate
-        .fudged(payload_install_ops, vabc_params.version, vabc_params.algo)
+        .fudged(payload_install_ops, vabc_params.version)
         .ok_or(Error::IntOverflow("fudged_estimate"))
 }
 
@@ -1441,7 +1453,7 @@ pub fn compress_image(
     let cow_estimate = if let Some(p) = vabc_params {
         Some(
             initial_estimate
-                .fudged(operations.len() as u64, p.version, p.algo)
+                .fudged(operations.len() as u64, p.version)
                 .ok_or(Error::IntOverflow("fudged_estimate"))?,
         )
     } else {

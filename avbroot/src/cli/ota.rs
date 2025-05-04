@@ -10,6 +10,7 @@ use std::{
     io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     ops::Range,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{atomic::AtomicBool, Mutex},
 };
 
@@ -17,7 +18,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use bitflags::bitflags;
 use cap_std::{ambient_authority, fs::Dir};
 use cap_tempfile::TempDir;
-use clap::{value_parser, ArgAction, Args, Parser, Subcommand, ValueEnum};
+use clap::{value_parser, ArgAction, Args, Parser, Subcommand};
 use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
 use tempfile::NamedTempFile;
 use topological_sort::TopologicalSort;
@@ -597,7 +598,7 @@ fn get_vabc_params(header: &PayloadHeader) -> Result<Option<VabcParams>> {
     };
 
     let compression = dpm.vabc_compression_param();
-    let Ok(vabc_algo) = VabcAlgo::from_str(compression, false) else {
+    let Ok(vabc_algo) = VabcAlgo::from_str(compression) else {
         bail!("Unsupported VABC compression: {compression}");
     };
 
@@ -631,7 +632,7 @@ fn set_vabc_algo(header: &mut PayloadHeader, vabc_algo: VabcAlgo) -> Result<bool
     }
 
     let compression = dpm.vabc_compression_param();
-    let Ok(old_vabc_algo) = VabcAlgo::from_str(compression, false) else {
+    let Ok(old_vabc_algo) = VabcAlgo::from_str(compression) else {
         bail!("Unsupported VABC compression: {compression}");
     };
 

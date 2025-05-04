@@ -51,12 +51,12 @@ data.version = "vendor_v4"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v4_gki.hashes_streaming]
-original = "0615b681742f243aae0a022aeba6c180a3920bf6f0175a1a17129f13c7a2a214"
-patched = "8e9506f447585e54b060d8b0ccb6d705a6370ebd2425dffd5bc21a438be5a454"
+original = "6b2a71bb4c2057e7625f97a2ab9832416399d4ce5788db1bab978eb5cf6e8c51"
+patched = "0538bdff77c4ead8b6c7cf70e95a44a3559d8651bfd0afdcd3963d08c65999f6"
 
 [profile.pixel_v4_gki.hashes_seekable]
-original = "dda797dfbf8b2a9dfe103d4050a2b801e9e58c52bdd7606a8b73e8846a5cffec"
-patched = "361f2337db95e29366aa473a618d7839d7c43b02f9a374d223546230dd794096"
+original = "46e88872ab1591f86b98b146278ec6392a97e0258d42ceb84a87d43a316a9edd"
+patched = "00eeb6832c62e872e8a226a27728726a5f7d7f2436c4ddeba143efea6206924e"
 
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
@@ -93,12 +93,12 @@ data.version = "vendor_v4"
 data.ramdisks = [["init", "otacerts", "first_stage", "dsu_key_dir"], ["dlkm"]]
 
 [profile.pixel_v4_non_gki.hashes_streaming]
-original = "7b7acb994f938b256f07248f0b05dd160a44ed069c4bf8520db8cdc1a4441d8a"
-patched = "593d7b7969c018575c3d5f9c9764354750d0677abc8340e37ac3c500f9f78532"
+original = "8d76f17b33949c8ca3d4d5872858bb725d755e315f67d61db0e0b7b58cf69685"
+patched = "7c7cb69087d4c8c54a7f4bac6525354b1e9c1550545bc954194aaf6882f7982d"
 
 [profile.pixel_v4_non_gki.hashes_seekable]
-original = "23036d93a2b28aedff59390b6850469eb4ba57cf6bc0f80826cfef290a5e0246"
-patched = "73e3852db9a0f6848f83599802fbf790a0d130068a0fe6341641547fe9c68cfc"
+original = "6825bc02115e0c64f05651571138fbcc5cc04459e5c7e225dcc5e3096051c341"
+patched = "373309f28234866625462253d6f41f5a3b016b3676c7cb87a88bf55099ad6b13"
 
 # Google Pixel 4a 5G
 # What's unique: boot (boot v3) + vendor_boot (vendor v3)
@@ -136,12 +136,12 @@ data.version = "vendor_v3"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v3.hashes_streaming]
-original = "ca09a0158beae3f0ad215f9f381f61b28bc27377507664b79ab106c173cea700"
-patched = "e59884857ac5773f66e666ada6c10382220ce4e4d3f602c3f07e6c570e159a1d"
+original = "65048a5a6d2c90c7e3220b0e3500840613dceb0c167388bc44cb19796f13b89e"
+patched = "191945e73dd8032deb485c2b1e0260c00e56d5b003fa5acf32219a8a4c91bf44"
 
 [profile.pixel_v3.hashes_seekable]
-original = "b10d9708c1d1baade25aa07a045e24846b0cd7520f2d6ede94be32f93b32a5da"
-patched = "1e7cedcd4631327531451b32349eb13d8bb8cbc374f587a80bdac0985dd2812b"
+original = "cf200d0c1c82599cc174afdff585548e89ecc7e4089019083b28456baa757204"
+patched = "673c0b24b6d59426e4c96b820d2d57cc1c83fcefa24e175f4631d8d5dc44a40e"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)
@@ -173,9 +173,9 @@ data.type = "vbmeta"
 data.deps = ["system"]
 
 [profile.pixel_v2.hashes_streaming]
-original = "6c5f1d534bafb687fd1829c42f12f381fc58d3f6c905b09de2ee9c34aa05bfc5"
-patched = "c738e1ecc5e4a99cdc9387c050254eee35045cf1c800aa04942b213bf77a6eb7"
+original = "7c1f648bef642f794716e9177e69520ad868951bbfa4b9004607f00fdb2ad99c"
+patched = "23adbe34a2272603c81fe6632c5f2ec7fe4f7dacd82c4d6409fc09966d71388a"
 
 [profile.pixel_v2.hashes_seekable]
-original = "bdec93bcffdeb8fa9c0e540aeef1bc0df79bfa65baba76363262c5520e0ce6b5"
-patched = "69d768a14580b789050375709f6eba176e117c81871b5f8ae44cfd491f9f30fa"
+original = "e4e874e28bab5692ab6a385812194f4e139e8e13a186bac6d584ac8be6a25e68"
+patched = "c48a71a4eb6eb1f68efa8447ebe995dc092fa58716963cde4208106a6af1dbbb"
