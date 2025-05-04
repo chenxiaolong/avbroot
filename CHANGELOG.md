@@ -16,6 +16,7 @@
   * All differences between avbroot's and AOSP delta_generator's estimation logic are now fixed.
 * Add support for custom CoW compression levels for virtual A/B ([PR #444])
   * This is also not used on actual devices, but is supported by AOSP, so avbroot should support it too.
+* Update dependencies ([PR #446])
 
 ### Version 3.15.0
 
@@ -506,3 +507,4 @@ Behind-the-scenes changes:
 [PR #443]: https://github.com/chenxiaolong/avbroot/pull/443
 [PR #444]: https://github.com/chenxiaolong/avbroot/pull/444
 [PR #445]: https://github.com/chenxiaolong/avbroot/pull/445
+[PR #446]: https://github.com/chenxiaolong/avbroot/pull/446
