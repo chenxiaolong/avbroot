@@ -9,8 +9,11 @@
 
 ### Unreleased
 
-* Add support for CoW version 3 ([Issue #441], [PR #442])
+* Add support for CoW version 3 for virtual A/B ([Issue #441], [PR #442])
   * This was recently introduced with the Pixel 9a. Previous devices all used CoW version 2.
+* Add support for uncompressed CoW for virtual A/B ([PR #443])
+  * This is not used on actual devices, but is very useful for testing the CoW estimation logic.
+  * All differences between avbroot's and AOSP delta_generator's estimation logic are now fixed.
 
 ### Version 3.15.0
 
@@ -498,3 +501,4 @@ Behind-the-scenes changes:
 [PR #438]: https://github.com/chenxiaolong/avbroot/pull/438
 [PR #439]: https://github.com/chenxiaolong/avbroot/pull/439
 [PR #442]: https://github.com/chenxiaolong/avbroot/pull/442
+[PR #443]: https://github.com/chenxiaolong/avbroot/pull/443
