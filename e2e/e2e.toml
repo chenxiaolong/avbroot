@@ -12,8 +12,10 @@ security_patch_level = "2024-01-01"
 # Google Pixel 7 Pro
 # What's unique: init_boot (boot v4) + vendor_boot (vendor v4)
 
-[profile.pixel_v4_gki]
-vabc_algo = "Lz4"
+[profile.pixel_v4_gki.vabc]
+# CoW v3 is used starting with the Google Pixel 9a.
+version = "V3"
+algo = "Lz4"
 
 [profile.pixel_v4_gki.partitions.boot]
 avb.signed = true
@@ -49,18 +51,19 @@ data.version = "vendor_v4"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v4_gki.hashes_streaming]
-original = "c00f891f941f3dddb28966f7b07f3acea773bee104dace82b37c2d1341f09422"
-patched = "6c27ffb07f4497af8539f8283e506066af9417580230c3209c9875fc15d5069d"
+original = "0615b681742f243aae0a022aeba6c180a3920bf6f0175a1a17129f13c7a2a214"
+patched = "8e9506f447585e54b060d8b0ccb6d705a6370ebd2425dffd5bc21a438be5a454"
 
 [profile.pixel_v4_gki.hashes_seekable]
-original = "96a6c366b5de1c3b10d4d6cb4ca503c83ac4cd9ca952a965cceb041990ba7022"
-patched = "e4fc12523ffc312796b92210bc1e3bbb70dd60797a47daae76c8b5852e48b382"
+original = "dda797dfbf8b2a9dfe103d4050a2b801e9e58c52bdd7606a8b73e8846a5cffec"
+patched = "361f2337db95e29366aa473a618d7839d7c43b02f9a374d223546230dd794096"
 
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
 
-[profile.pixel_v4_non_gki]
-vabc_algo = "Lz4"
+[profile.pixel_v4_non_gki.vabc]
+version = "V2"
+algo = "Lz4"
 
 [profile.pixel_v4_non_gki.partitions.boot]
 avb.signed = true
@@ -90,18 +93,19 @@ data.version = "vendor_v4"
 data.ramdisks = [["init", "otacerts", "first_stage", "dsu_key_dir"], ["dlkm"]]
 
 [profile.pixel_v4_non_gki.hashes_streaming]
-original = "4d692bc777b568b0626d3c08d2e6f83f1b472db5ad903486daaec6a78d0cc26e"
-patched = "6832ded3e98a14edc8c5ea7284fcea0b958fa710ebf222c27116faec8dfefe2e"
+original = "7b7acb994f938b256f07248f0b05dd160a44ed069c4bf8520db8cdc1a4441d8a"
+patched = "593d7b7969c018575c3d5f9c9764354750d0677abc8340e37ac3c500f9f78532"
 
 [profile.pixel_v4_non_gki.hashes_seekable]
-original = "ea27ecd9718c17b63400b2548680bb3cee93ce63b4fc44ff9654ca0d9c5372a8"
-patched = "114f8936e917d7e4a71bc1521adb3c8e676de3a738f8c7c505b86464d20bd95c"
+original = "23036d93a2b28aedff59390b6850469eb4ba57cf6bc0f80826cfef290a5e0246"
+patched = "73e3852db9a0f6848f83599802fbf790a0d130068a0fe6341641547fe9c68cfc"
 
 # Google Pixel 4a 5G
 # What's unique: boot (boot v3) + vendor_boot (vendor v3)
 
-[profile.pixel_v3]
-vabc_algo = "Lz4"
+[profile.pixel_v3.vabc]
+version = "V2"
+algo = "Lz4"
 
 [profile.pixel_v3.partitions.boot]
 avb.signed = true
@@ -132,18 +136,19 @@ data.version = "vendor_v3"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v3.hashes_streaming]
-original = "f432dc7931520feb238474aa707dd5299747562ffe6129f3f763b5f11ac473ab"
-patched = "1f28d9210a17e233cd5da4af55b07db764b19eeab991394514170b405240464f"
+original = "ca09a0158beae3f0ad215f9f381f61b28bc27377507664b79ab106c173cea700"
+patched = "e59884857ac5773f66e666ada6c10382220ce4e4d3f602c3f07e6c570e159a1d"
 
 [profile.pixel_v3.hashes_seekable]
-original = "7d29ecc6780953c22052a576b8dc85066c8667a875e918a786a08ff4545b47d1"
-patched = "27b80c7be9c1e527ea26abe3dabde245c580e6f26ec084204278fbfd81a39f83"
+original = "b10d9708c1d1baade25aa07a045e24846b0cd7520f2d6ede94be32f93b32a5da"
+patched = "1e7cedcd4631327531451b32349eb13d8bb8cbc374f587a80bdac0985dd2812b"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)
 
-[profile.pixel_v2]
-vabc_algo = "Gz"
+[profile.pixel_v2.vabc]
+version = "V2"
+algo = "Gz"
 
 [profile.pixel_v2.partitions.boot]
 avb.signed = false
@@ -168,9 +173,9 @@ data.type = "vbmeta"
 data.deps = ["system"]
 
 [profile.pixel_v2.hashes_streaming]
-original = "bd2f19cf3d2285e35e8b36d44f75ed910e8e0be44c3ebd29f17a812521ba754b"
-patched = "cf65d5b90500af54cd1204a646379bb852825061bc7c3f973b7a042f353f75ad"
+original = "6c5f1d534bafb687fd1829c42f12f381fc58d3f6c905b09de2ee9c34aa05bfc5"
+patched = "c738e1ecc5e4a99cdc9387c050254eee35045cf1c800aa04942b213bf77a6eb7"
 
 [profile.pixel_v2.hashes_seekable]
-original = "7f96ebf7366e0b60c91ac1e5f196a2189ffdb0bbc73f77804a736466fcab7315"
-patched = "c2d9d60d73c038da39f82073ffadb459c96b901d66db7af11f59da58e0dd53e4"
+original = "bdec93bcffdeb8fa9c0e540aeef1bc0df79bfa65baba76363262c5520e0ce6b5"
+patched = "69d768a14580b789050375709f6eba176e117c81871b5f8ae44cfd491f9f30fa"

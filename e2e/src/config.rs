@@ -1,14 +1,14 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result};
-use avbroot::format::payload::VabcAlgo;
+use avbroot::format::payload::{CowVersion, VabcAlgo};
 use serde::{Deserialize, Serialize};
 use toml_edit::DocumentMut;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Sha256Hash(
     #[serde(
         serialize_with = "hex::serialize",
@@ -17,7 +17,7 @@ pub struct Sha256Hash(
     pub [u8; 32],
 );
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OtaInfo {
     pub device: String,
@@ -29,7 +29,7 @@ pub struct OtaInfo {
     pub security_patch_level: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Avb {
     pub signed: bool,
@@ -55,7 +55,7 @@ pub enum BootVersion {
     VendorV4,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BootData {
     pub version: BootVersion,
@@ -71,19 +71,19 @@ pub enum DmVerityContent {
     SystemOtacerts,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DmVerityData {
     pub content: DmVerityContent,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VbmetaData {
     pub deps: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Data {
     Boot(BootData),
@@ -91,30 +91,37 @@ pub enum Data {
     Vbmeta(VbmetaData),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Hashes {
     pub original: Sha256Hash,
     pub patched: Sha256Hash,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Partition {
     pub avb: Avb,
     pub data: Data,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VabcSettings {
+    pub version: CowVersion,
+    pub algo: VabcAlgo,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
-    pub vabc_algo: Option<VabcAlgo>,
+    pub vabc: Option<VabcSettings>,
     pub partitions: BTreeMap<String, Partition>,
     pub hashes_streaming: Hashes,
     pub hashes_seekable: Hashes,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub ota_info: OtaInfo,

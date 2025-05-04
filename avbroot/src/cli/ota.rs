@@ -32,7 +32,7 @@ use crate::{
         avb::{self, Descriptor, Header},
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         padding,
-        payload::{self, PayloadHeader, PayloadWriter, VabcAlgo},
+        payload::{self, CowVersion, PayloadHeader, PayloadWriter, VabcAlgo, VabcParams},
     },
     patch::{
         boot::{
@@ -576,9 +576,10 @@ fn update_metadata_descriptors(parent_header: &mut Header, child_header: &Header
     }
 }
 
-/// Get the VABC algorithm from the payload header. This will fail if an
-/// unsupported VABC algorithm is specified, but not if VABC is disabled.
-fn get_vabc_algo(header: &PayloadHeader) -> Result<Option<VabcAlgo>> {
+/// Get the VABC parameters from the payload header. This will fail if an
+/// unsupported VABC algorithm or CoW version is specified, but not if VABC is
+/// disabled.
+fn get_vabc_params(header: &PayloadHeader) -> Result<Option<VabcParams>> {
     // Only CoW v2 seems to exist in the wild currently, so that is all we
     // support.
     let Some(dpm) = &header.manifest.dynamic_partition_metadata else {
@@ -589,17 +590,32 @@ fn get_vabc_algo(header: &PayloadHeader) -> Result<Option<VabcAlgo>> {
         return Ok(None);
     }
 
-    let cow_version = dpm.cow_version();
-    if dpm.cow_version() != 2 {
-        bail!("Unsupported CoW version: {cow_version}");
-    }
+    let cow_version = match dpm.cow_version() {
+        2 => CowVersion::V2,
+        3 => CowVersion::V3,
+        v => bail!("Unsupported CoW version: {v}"),
+    };
 
     let compression = dpm.vabc_compression_param();
     let Ok(vabc_algo) = VabcAlgo::from_str(compression, false) else {
         bail!("Unsupported VABC compression: {compression}");
     };
 
-    Ok(Some(vabc_algo))
+    // This is unused by v2, but delta_generator sets it anyway.
+    let Some(compression_factor) = dpm.compression_factor else {
+        bail!("No CoW compression factor specified");
+    };
+    let Ok(compression_factor) = u32::try_from(compression_factor) else {
+        bail!("CoW compression factor is too large: {compression_factor}");
+    };
+
+    let vabc_params = VabcParams {
+        version: cow_version,
+        algo: vabc_algo,
+        compression_factor,
+    };
+
+    Ok(Some(vabc_params))
 }
 
 /// Set the VABC algorithm in the payload header and return whether it was
@@ -731,7 +747,7 @@ pub fn compress_image(
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to create temp file for: {name}"))?;
 
-    let vabc_algo = get_vabc_algo(header)?;
+    let vabc_params = get_vabc_params(header)?;
     let block_size = header.manifest.block_size();
     let partition = header
         .manifest
@@ -742,14 +758,17 @@ pub fn compress_image(
 
     // If VABC is enabled, we need to update the CoW size estimate or else the
     // CoW block device may run out of space during flashing.
-    let vabc_algo = if partition.estimate_cow_size.is_some() {
-        let Some(vabc_algo) = vabc_algo else {
+    let vabc_params = if partition.estimate_cow_size.is_some() {
+        let Some(vabc_params) = vabc_params else {
             bail!("Partition has CoW estimate, but VABC is disabled: {name}");
         };
 
-        info!("Needs updated {vabc_algo} CoW size estimate: {name}");
+        info!(
+            "Needs updated {} CoW size estimate: {name}",
+            vabc_params.algo,
+        );
 
-        Some(vabc_algo)
+        Some(vabc_params)
     } else {
         None
     };
@@ -770,16 +789,19 @@ pub fn compress_image(
                 // The changes we make usually aren't any less compressible, but
                 // we'll still recompute the CoW size estimate to handle the
                 // case where the user requested a different algorithm.
-                if let Some(vabc_algo) = vabc_algo {
+                if let Some(vabc_params) = vabc_params {
                     let cow_estimate = payload::compute_cow_estimate(
                         &*file,
+                        partition.operations.len() as u64,
                         name,
                         block_size,
-                        vabc_algo,
+                        vabc_params,
                         cancel_signal,
                     )?;
 
-                    partition.estimate_cow_size = Some(cow_estimate);
+                    partition.estimate_cow_size = Some(cow_estimate.size);
+                    partition.estimate_op_count_max =
+                        (vabc_params.version == CowVersion::V3).then_some(cow_estimate.num_ops);
                 }
 
                 *file = writer;
@@ -797,12 +819,22 @@ pub fn compress_image(
 
     info!("Compressing full image: {name}");
 
-    let (partition_info, operations, cow_estimate) =
-        payload::compress_image(&*file, &writer, name, block_size, vabc_algo, cancel_signal)?;
+    let (partition_info, operations, cow_estimate) = payload::compress_image(
+        &*file,
+        &writer,
+        name,
+        block_size,
+        vabc_params,
+        cancel_signal,
+    )?;
 
     partition.new_partition_info = Some(partition_info);
     partition.operations = operations;
-    partition.estimate_cow_size = cow_estimate;
+    partition.estimate_cow_size = cow_estimate.map(|e| e.size);
+    let is_v3 = vabc_params
+        .map(|p| p.version == CowVersion::V3)
+        .unwrap_or_default();
+    partition.estimate_op_count_max = cow_estimate.and_then(|e| is_v3.then_some(e.num_ops));
 
     *file = writer;
 
@@ -822,7 +854,7 @@ fn recow_image(
 
     file.rewind()?;
 
-    let vabc_algo = get_vabc_algo(header)?;
+    let vabc_params = get_vabc_params(header)?;
     let block_size = header.manifest.block_size();
     let partition = header
         .manifest
@@ -835,16 +867,24 @@ fn recow_image(
         bail!("Partition has no original CoW estimate: {name}");
     };
 
-    let Some(vabc_algo) = vabc_algo else {
+    let Some(vabc_params) = vabc_params else {
         bail!("Partition has CoW estimate, but VABC is disabled: {name}");
     };
 
-    info!("Recomputing {vabc_algo} CoW size estimate: {name}");
+    info!("Recomputing {} CoW size estimate: {name}", vabc_params.algo);
 
-    let cow_estimate =
-        payload::compute_cow_estimate(&*file, name, block_size, vabc_algo, cancel_signal)?;
+    let cow_estimate = payload::compute_cow_estimate(
+        &*file,
+        partition.operations.len() as u64,
+        name,
+        block_size,
+        vabc_params,
+        cancel_signal,
+    )?;
 
-    partition.estimate_cow_size = Some(cow_estimate);
+    partition.estimate_cow_size = Some(cow_estimate.size);
+    partition.estimate_op_count_max =
+        (vabc_params.version == CowVersion::V3).then_some(cow_estimate.num_ops);
 
     Ok(())
 }

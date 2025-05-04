@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-FileCopyrightText: 2023 Pascal Roeleven
 // SPDX-License-Identifier: GPL-3.0-only
 
@@ -36,7 +36,7 @@ use avbroot::{
         cpio::{self, CpioEntry, CpioEntryData},
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         padding,
-        payload::{self, PayloadHeader, PayloadWriter},
+        payload::{self, CowVersion, PayloadHeader, PayloadWriter, VabcParams},
     },
     patch::otacert::{self, OtaCertBuildFlags},
     protobuf::{
@@ -580,6 +580,8 @@ fn create_payload(
     key_ota: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
+    const COMPRESSION_FACTOR: u32 = 64 * 1024;
+
     let dynamic_partitions_names = partitions
         .iter()
         .filter(|(_, p)| matches!(&p.data, Data::DmVerity(_)))
@@ -594,16 +596,25 @@ fn create_payload(
             .map(PSeekFile::new)
             .with_context(|| format!("Failed to create temp file for: {name}"))?;
 
-        let vabc_algo = if dynamic_partitions_names.contains(name) {
-            profile.vabc_algo
+        let vabc_params = if dynamic_partitions_names.contains(name) {
+            profile.vabc.map(|v| VabcParams {
+                version: v.version,
+                algo: v.algo,
+                compression_factor: COMPRESSION_FACTOR,
+            })
         } else {
             None
         };
 
         let (partition_info, operations, cow_estimate) =
-            payload::compress_image(file, &writer, name, 4096, vabc_algo, cancel_signal)?;
+            payload::compress_image(file, &writer, name, 4096, vabc_params, cancel_signal)?;
 
         compressed.insert(name, writer);
+
+        let is_v3 = profile
+            .vabc
+            .map(|e| e.version == CowVersion::V3)
+            .unwrap_or_default();
 
         payload_partitions.push(PartitionUpdate {
             partition_name: name.clone(),
@@ -624,8 +635,8 @@ fn create_payload(
             fec_roots: None,
             version: None,
             merge_operations: vec![],
-            estimate_cow_size: cow_estimate,
-            estimate_op_count_max: None,
+            estimate_cow_size: cow_estimate.map(|e| e.size),
+            estimate_op_count_max: cow_estimate.and_then(|e| is_v3.then_some(e.num_ops)),
         });
     }
 
@@ -646,10 +657,10 @@ fn create_payload(
                 }],
                 snapshot_enabled: Some(true),
                 vabc_enabled: Some(true),
-                vabc_compression_param: profile.vabc_algo.map(|a| a.to_string()),
+                vabc_compression_param: profile.vabc.map(|v| v.algo.to_string()),
                 cow_version: Some(2),
                 vabc_feature_set: None,
-                compression_factor: None,
+                compression_factor: Some(COMPRESSION_FACTOR.into()),
             }),
             partial_update: None,
             apex_info: vec![],
