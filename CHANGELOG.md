@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Add support for Magisk 29000 ([PR #448])
+* Update dependencies ([PR #449])
 
 ### Version 3.16.0
 
@@ -513,3 +514,4 @@ Behind-the-scenes changes:
 [PR #445]: https://github.com/chenxiaolong/avbroot/pull/445
 [PR #446]: https://github.com/chenxiaolong/avbroot/pull/446
 [PR #448]: https://github.com/chenxiaolong/avbroot/pull/448
+[PR #449]: https://github.com/chenxiaolong/avbroot/pull/449
