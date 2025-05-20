@@ -194,7 +194,7 @@ impl MagiskRootPatcher {
     //   replaced by PREINITDEVICE
     // - Versions newer than the latest supported version are assumed to support
     //   the same features as the latest version
-    const VERS_SUPPORTED: &'static [Range<u32>] = &[25102..25207, 25211..28200];
+    const VERS_SUPPORTED: &'static [Range<u32>] = &[25102..25207, 25211..29100];
     const VER_PREINIT_DEVICE: RangeFrom<u32> = 25211..;
     const VER_RANDOM_SEED: Range<u32> = 25211..26103;
     const VER_PATCH_VBMETA: Range<u32> = Self::VERS_SUPPORTED[0].start..26202;
