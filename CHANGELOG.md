@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for Magisk 29000 ([PR #448])
+
 ### Version 3.16.0
 
 * Add support for CoW version 3 for virtual A/B ([Issue #441], [PR #442], [PR #445])
@@ -508,3 +512,4 @@ Behind-the-scenes changes:
 [PR #444]: https://github.com/chenxiaolong/avbroot/pull/444
 [PR #445]: https://github.com/chenxiaolong/avbroot/pull/445
 [PR #446]: https://github.com/chenxiaolong/avbroot/pull/446
+[PR #448]: https://github.com/chenxiaolong/avbroot/pull/448
