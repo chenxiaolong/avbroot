@@ -323,6 +323,15 @@ fn compute_property_files(
     max_length: Option<usize>,
     want_pb: bool,
 ) -> Result<String> {
+    // AOSP's ota_utils.py reserves 15 bytes for the `<offset>:<size>`
+    // placeholder. Since the size of `metadata.pb` is almost always 4 digits,
+    // this prevents the offset from exceeding 10 digits. In the wild, there are
+    // OTA files larger than 10 GB. With ota_utils.py, this limit is never
+    // reached because it puts the OTA metadata files at the beginning of the
+    // zip. However, avbroot needs to put them at the end due to streaming
+    // writes, so we reserve an additional byte to allow offsets <100 GB.
+    const RESERVATION_SIZE: usize = 16;
+
     let compute = |path: &'static str| -> Result<String> {
         let entry = entries
             .iter()
@@ -355,9 +364,9 @@ fn compute_property_files(
     }
 
     if max_length.is_none() {
-        tokens.push(format!("metadata:{}", " ".repeat(15)));
+        tokens.push(format!("metadata:{}", " ".repeat(RESERVATION_SIZE)));
         if want_pb {
-            tokens.push(format!("metadata.pb:{}", " ".repeat(15)));
+            tokens.push(format!("metadata.pb:{}", " ".repeat(RESERVATION_SIZE)));
         }
     } else {
         tokens.push(compute(PATH_METADATA)?);
