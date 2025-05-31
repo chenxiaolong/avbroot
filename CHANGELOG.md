@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.17.0
 
 * Fix reserved space error when patching OTA zips larger than ~10 GB ([Issue #451], [PR #452])
 * Update dependencies ([PR #453])
