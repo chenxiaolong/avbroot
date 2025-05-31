@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix reserved space error when patching OTA zips larger than ~10 GB ([Issue #451], [PR #452])
+
 ### Version 3.16.1
 
 * Add support for Magisk 29000 ([PR #448])
@@ -354,6 +358,7 @@ Behind-the-scenes changes:
 [Issue #393]: https://github.com/chenxiaolong/avbroot/issues/393
 [Issue #433]: https://github.com/chenxiaolong/avbroot/issues/433
 [Issue #441]: https://github.com/chenxiaolong/avbroot/issues/441
+[Issue #451]: https://github.com/chenxiaolong/avbroot/issues/451
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -515,3 +520,4 @@ Behind-the-scenes changes:
 [PR #446]: https://github.com/chenxiaolong/avbroot/pull/446
 [PR #448]: https://github.com/chenxiaolong/avbroot/pull/448
 [PR #449]: https://github.com/chenxiaolong/avbroot/pull/449
+[PR #452]: https://github.com/chenxiaolong/avbroot/pull/452
