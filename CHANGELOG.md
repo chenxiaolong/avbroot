@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Fix reserved space error when patching OTA zips larger than ~10 GB ([Issue #451], [PR #452])
+* Update dependencies ([PR #453])
 
 ### Version 3.16.1
 
@@ -521,3 +522,4 @@ Behind-the-scenes changes:
 [PR #448]: https://github.com/chenxiaolong/avbroot/pull/448
 [PR #449]: https://github.com/chenxiaolong/avbroot/pull/449
 [PR #452]: https://github.com/chenxiaolong/avbroot/pull/452
+[PR #453]: https://github.com/chenxiaolong/avbroot/pull/453
