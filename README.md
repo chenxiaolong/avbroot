@@ -239,6 +239,10 @@ Updates to Android, Magisk, and KernelSU are all done the same way by patching (
 
 5. That's it!
 
+**Warning**: Due to how virtual A/B works, there is a snapshot merge operation that Android runs invisibly in the background after installing an OTA and rebooting. During the snapshot merge process, it's not possible to sideload another OTA from recovery mode. Avoid doing anything that could result in a boot loop (eg. installing modules) until this process is complete because there is no way to recover, aside from unlocking the bootloader (and wiping) again.
+
+The status can be found by running `adb logcat -v color -s update_engine`. Alternatively, if [Custota](https://github.com/chenxiaolong/Custota) is installed (even if it's not configured to point to a custom OTA server), it will show a notification until the snapshot merge operation completes.
+
 ## Reverting to stock firmware
 
 To stop using avbroot and revert to the stock firmware:
