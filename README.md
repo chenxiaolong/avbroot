@@ -225,21 +225,21 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
 
     **WARNING**: If you are flashing CalyxOS, the setup wizard will [automatically turn off the `OEM unlocking` switch](https://github.com/CalyxOS/platform_packages_apps_SetupWizard/blob/7d2df25cedcbff83ddb608e628f9d97b38259c26/src/org/lineageos/setupwizard/SetupWizardApp.java#L135-L140). Make sure to manually reenable it again from Android's developer settings. Consider using the [`OEMUnlockOnBoot` module](https://github.com/chenxiaolong/OEMUnlockOnBoot) to automatically ensure OEM unlocking is enabled on every boot.
 
-10. That's it! To install future OS, Magisk, or KernelSU updates, see the [next section](#updates).
+10. That's it! To update the OS, Magisk, or KernelSU see the [next section](#updates).
 
 ## Updates
 
 Updates to Android, Magisk, and KernelSU are all done the same way: by patching (or repatching) the OTA.
 
-1. If Magisk or KernelSU is being updated, first install their new `.apk`. If you happen to open the app, make sure it **does not** flash the boot image. Cancel the boot image update prompts if needed.
+1. Generate a new patched OTA by following the steps in the [usage section](#usage).
 
-2. Follow the step in the [usage section](#usage) to patch the new OTA.
+2. If Magisk or KernelSU is being updated, first install their new `.apk`. If you happen to open the app, make sure it **does not** flash the boot image. Cancel the boot image update prompts if needed.
 
 3. Reboot to recovery mode. If the screen is stuck at a `No command` message, press the volume up button once while holding down the power button.
 
 4. Sideload the patched OTA with `adb sideload`.
 
-5. That's it!
+5. Restart your phone. Note: the phone will likely take a long time to startup after an OS update (a few minutes in some cases).
 
 **Warning**: Due to how virtual A/B works, there is a snapshot merge operation that Android runs invisibly in the background after installing an OTA and rebooting. During the snapshot merge process, it's not possible to sideload another OTA from recovery mode. Avoid doing anything that could result in a boot loop (eg. installing modules) until this process is complete because there is no way to recover, aside from unlocking the bootloader (and wiping) again.
 
