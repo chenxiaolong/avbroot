@@ -51,7 +51,9 @@ avbroot applies the following patches to the partition images:
 
 3. Follow the steps to [generate signing keys](#generating-keys).
 
-4. Patch the OTA zip. The base command is:
+   Skip this step if you're updating Android, Magisk, or KernelSU after you've performed an [initial setup](#initial-setup). [Updates](#updates) do not require signing keys since you have already generated them in the initial setup!
+
+5. Patch the OTA zip. The base command is:
 
     ```bash
     avbroot ota patch \
@@ -94,7 +96,7 @@ avbroot applies the following patches to the partition images:
 
     If `--output` is not specified, then the output file is written to `<input>.patched`.
 
-5. The patched OTA is ready to go! To flash it for the first time, follow the steps in the [initial setup section](#initial-setup). For updates, follow the steps in the [updates section](#updates).
+6. The patched OTA is ready to go! To flash it for the first time, follow the steps in the [initial setup section](#initial-setup). For updates, follow the steps in the [updates section](#updates).
 
 ## Generating Keys
 
@@ -227,7 +229,7 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
 
 ## Updates
 
-Updates to Android, Magisk, and KernelSU are all done the same way by patching (or repatching) the OTA.
+Updates to Android, Magisk, and KernelSU are all done the same way - by patching (or repatching) the OTA.
 
 1. If Magisk or KernelSU is being updated, first install their new `.apk`. If you happen to open the app, make sure it **does not** flash the boot image. Cancel the boot image update prompts if needed.
 
