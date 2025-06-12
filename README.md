@@ -51,6 +51,8 @@ avbroot applies the following patches to the partition images:
 
 3. Follow the steps to [generate signing keys](#generating-keys).
 
+Skip this step if you're updating Android, Magisk, or KernelSU after you've performed an [initial setup](#initial-setup). [Updates](#updates) do not require signing keys since you have already generated them in the initial setup!
+
 4. Patch the OTA zip. The base command is:
 
     ```bash
