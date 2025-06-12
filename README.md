@@ -227,7 +227,7 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
 
 ## Updates
 
-Updates to Android, Magisk, and KernelSU are all done the same way by patching (or repatching) the OTA.
+Updates to Android, Magisk, and KernelSU are all done the same way: by patching (or repatching) the OTA.
 
 1. If Magisk or KernelSU is being updated, first install their new `.apk`. If you happen to open the app, make sure it **does not** flash the boot image. Cancel the boot image update prompts if needed.
 
