@@ -41,7 +41,7 @@ avbroot applies the following patches to the partition images:
 
     If the boot image is ever modified, **do not reboot**. [Open an issue](https://github.com/chenxiaolong/avbroot/issues/new) for support and be very clear about what steps were done that lead to the situation. If Android is still running and root access works, it might be possible to recover without wiping and starting over.
 
-## Usage
+## Usage (For updates, follow the steps in the [updates section](#updates)).
 
 1. Make sure the [caveats listed above](#warnings-and-caveats) are understood. It is possible to hard brick by doing the wrong thing!
 
@@ -94,7 +94,7 @@ avbroot applies the following patches to the partition images:
 
     If `--output` is not specified, then the output file is written to `<input>.patched`.
 
-5. The patched OTA is ready to go! To flash it for the first time, follow the steps in the [initial setup section](#initial-setup). For updates, follow the steps in the [updates section](#updates).
+5. The patched OTA is ready to go! To flash it for the first time, follow the steps in the [initial setup section](#initial-setup). For updates, return to the [updates section](#updates).
 
 ## Generating Keys
 
