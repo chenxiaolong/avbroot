@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use tracing::{debug, Level};
+use tracing::{Level, debug};
 use tracing_subscriber::fmt::{format::Writer, time::FormatTime};
 
 use crate::cli::{avb, boot, completion, cpio, fec, hashtree, key, lp, ota, payload, sparse};

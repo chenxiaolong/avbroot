@@ -10,7 +10,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions},
@@ -19,7 +19,7 @@ use clap::{Args, Parser, Subcommand};
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use rsa::RsaPublicKey;
 use serde::{Deserialize, Serialize};
-use tracing::{debug_span, info, warn, Span};
+use tracing::{Span, debug_span, info, warn};
 
 use crate::{
     crypto::{self, PassphraseSource, RsaSigningKey},
@@ -27,7 +27,7 @@ use crate::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
         HashTreeDescriptor, Header, KernelCmdlineDescriptor,
     },
-    stream::{self, check_cancel, PSeekFile, ReadFixedSizeExt, Reopen, ToWriter},
+    stream::{self, PSeekFile, ReadFixedSizeExt, Reopen, ToWriter, check_cancel},
     util,
 };
 

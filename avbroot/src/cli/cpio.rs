@@ -9,7 +9,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use bstr::ByteSlice;
 use cap_std::{ambient_authority, fs::Dir};
 use clap::{Parser, Subcommand};

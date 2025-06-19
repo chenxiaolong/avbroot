@@ -7,9 +7,9 @@ use std::{
     path::Path,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
-use toml_edit::{value, DocumentMut};
+use toml_edit::{DocumentMut, value};
 
 use crate::WORKSPACE_DIR;
 

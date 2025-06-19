@@ -11,10 +11,10 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use bzip2::write::BzDecoder;
-use flate2::{write::GzEncoder, Compression};
+use flate2::{Compression, write::GzEncoder};
 use liblzma::{
     stream::{Check, Stream},
     write::XzDecoder,
@@ -30,14 +30,14 @@ use ring::digest::{Context, Digest};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use x509_cert::Certificate;
-use zerocopy::{big_endian, FromBytes, IntoBytes};
+use zerocopy::{FromBytes, IntoBytes, big_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
     protobuf::chromeos_update_engine::{
-        install_operation::Type, signatures::Signature, DeltaArchiveManifest, Extent,
-        InstallOperation, PartitionInfo, PartitionUpdate, Signatures,
+        DeltaArchiveManifest, Extent, InstallOperation, PartitionInfo, PartitionUpdate, Signatures,
+        install_operation::Type, signatures::Signature,
     },
     stream::{
         self, CountingReader, FromReader, HashingWriter, ReadDiscardExt, ReadFixedSizeExt,
@@ -121,7 +121,9 @@ pub enum Error {
     DataWrite(&'static str, #[source] io::Error),
     #[error("Expected {expected} bytes, but only wrote {actual} bytes")]
     UnwrittenData { actual: u64, expected: u64 },
-    #[error("I/O error when applying {op_type:?} operation for {num_blocks} blocks starting at {start_block}")]
+    #[error(
+        "I/O error when applying {op_type:?} operation for {num_blocks} blocks starting at {start_block}"
+    )]
     OperationApply {
         op_type: Type,
         start_block: u64,

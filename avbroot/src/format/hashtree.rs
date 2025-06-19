@@ -16,7 +16,7 @@ use rayon::{
 };
 use ring::digest::{Algorithm, Context};
 use thiserror::Error;
-use zerocopy::{little_endian, FromBytes, IntoBytes};
+use zerocopy::{FromBytes, IntoBytes, little_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{

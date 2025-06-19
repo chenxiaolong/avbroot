@@ -9,7 +9,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use cap_std::{ambient_authority, fs::Dir};
 use clap::{CommandFactory, Parser, Subcommand};
 use rayon::iter::{

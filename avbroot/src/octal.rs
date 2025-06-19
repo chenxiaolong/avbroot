@@ -10,7 +10,7 @@ use std::{
 };
 
 use num_traits::{Num, PrimInt};
-use serde::{de::Visitor, Deserializer, Serializer};
+use serde::{Deserializer, Serializer, de::Visitor};
 
 pub fn serialize<S, T>(data: &T, serializer: S) -> Result<S::Ok, S::Error>
 where

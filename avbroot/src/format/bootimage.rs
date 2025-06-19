@@ -13,7 +13,7 @@ use num_traits::ToPrimitive;
 use ring::digest::Context;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use zerocopy::{little_endian, FromBytes, IntoBytes};
+use zerocopy::{FromBytes, IntoBytes, little_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
@@ -669,11 +669,7 @@ impl fmt::Display for BootImageV3Through4 {
 
 impl BootImageExt for BootImageV3Through4 {
     fn header_version(&self) -> u32 {
-        if self.v4_extra.is_some() {
-            4
-        } else {
-            3
-        }
+        if self.v4_extra.is_some() { 4 } else { 3 }
     }
 
     fn header_size(&self) -> u32 {
@@ -1094,11 +1090,7 @@ impl fmt::Display for VendorBootImageV3Through4 {
 
 impl BootImageExt for VendorBootImageV3Through4 {
     fn header_version(&self) -> u32 {
-        if self.v4_extra.is_some() {
-            4
-        } else {
-            3
-        }
+        if self.v4_extra.is_some() { 4 } else { 3 }
     }
 
     fn header_size(&self) -> u32 {

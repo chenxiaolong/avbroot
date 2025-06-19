@@ -5,8 +5,8 @@ use std::{
     fs::File,
     io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex, RwLock,
+        atomic::{AtomicBool, Ordering},
     },
 };
 

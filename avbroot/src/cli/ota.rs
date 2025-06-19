@@ -11,20 +11,20 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{atomic::AtomicBool, Mutex},
+    sync::{Mutex, atomic::AtomicBool},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use bitflags::bitflags;
 use cap_std::{ambient_authority, fs::Dir};
 use cap_tempfile::TempDir;
-use clap::{value_parser, ArgAction, Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand, value_parser};
 use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
 use tempfile::NamedTempFile;
 use topological_sort::TopologicalSort;
 use tracing::{debug_span, error, info, warn};
 use x509_cert::Certificate;
-use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
+use zip::{CompressionMethod, DateTime, ZipArchive, write::SimpleFileOptions};
 
 use crate::{
     cli,
@@ -34,6 +34,7 @@ use crate::{
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         padding,
         payload::{self, CowVersion, PayloadHeader, PayloadWriter, VabcAlgo, VabcParams},
+        zip::ZipWriterWrapper,
     },
     patch::{
         boot::{
@@ -495,7 +496,9 @@ fn update_security_descriptors(
                 *pd = cd.clone();
             }
             _ => {
-                bail!("{child_name} descriptor ({child_type}) does not match entry in {parent_name} ({parent_type})");
+                bail!(
+                    "{child_name} descriptor ({child_type}) does not match entry in {parent_name} ({parent_type})"
+                );
             }
         }
     } else {
@@ -505,7 +508,9 @@ fn update_security_descriptors(
                 child_header.public_key.clone_into(&mut pd.public_key);
             }
             _ => {
-                bail!("{child_name} descriptor ({parent_type}) in {parent_name} must be a chain descriptor");
+                bail!(
+                    "{child_name} descriptor ({parent_type}) in {parent_name} must be a chain descriptor"
+                );
             }
         }
     }
@@ -1111,7 +1116,7 @@ fn patch_ota_payload(
 fn patch_ota_zip(
     raw_reader: &PSeekFile,
     zip_reader: &mut ZipArchive<impl Read + Seek>,
-    mut zip_writer: &mut ZipWriter<impl Write>,
+    mut zip_writer: &mut ZipWriterWrapper<impl Write>,
     external_images: &HashMap<String, PathBuf>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     skip_system_ota_cert: bool,
@@ -1165,7 +1170,8 @@ fn patch_ota_zip(
         // threshold. This should be sufficient since the output file is likely
         // to be larger.
         let use_zip64 = reader.size() >= 0xffffffff;
-        let options = FileOptions::default()
+        let options = SimpleFileOptions::default()
+            .last_modified_time(DateTime::default())
             .compression_method(CompressionMethod::Stored)
             .large_file(use_zip64);
 
@@ -1202,12 +1208,9 @@ fn patch_ota_zip(
         }
 
         // All remaining entries are written immediately.
-        zip_writer
-            .start_file_with_extra_data(path, options)
-            .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
         let offset = zip_writer
-            .end_extra_data()
-            .with_context(|| format!("Failed to end new zip entry: {path}"))?;
+            .start_file(path, options)
+            .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
         let mut writer = CountingWriter::new(&mut zip_writer);
 
         match path.as_str() {
@@ -1540,11 +1543,11 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     let mut zip_writer = match cli.zip_mode {
         ZipMode::Streaming => {
             let signing_writer = SigningWriter::new_streaming(temp_writer);
-            ZipWriter::new_streaming(signing_writer)
+            ZipWriterWrapper::new_streaming(signing_writer)
         }
         ZipMode::Seekable => {
             let signing_writer = SigningWriter::new_seekable(temp_writer);
-            ZipWriter::new(signing_writer)
+            ZipWriterWrapper::new_seekable(signing_writer)
         }
     };
 

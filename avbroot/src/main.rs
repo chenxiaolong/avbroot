@@ -4,8 +4,8 @@
 use std::{
     process::ExitCode,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 

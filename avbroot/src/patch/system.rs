@@ -10,7 +10,7 @@ use std::{
 use memchr::memmem;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use thiserror::Error;
-use tracing::{debug, debug_span, trace, Span};
+use tracing::{Span, debug, debug_span, trace};
 use x509_cert::Certificate;
 use zip::ZipArchive;
 

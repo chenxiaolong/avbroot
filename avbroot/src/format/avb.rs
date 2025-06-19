@@ -14,10 +14,10 @@ use bstr::ByteSlice;
 use num_bigint_dig::{ModInverse, ToBigInt};
 use num_traits::{Pow, ToPrimitive};
 use ring::digest::{Algorithm, Context};
-use rsa::{traits::PublicKeyParts, BigUint, RsaPublicKey};
+use rsa::{BigUint, RsaPublicKey, traits::PublicKeyParts};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use zerocopy::{big_endian, FromBytes, IntoBytes};
+use zerocopy::{FromBytes, IntoBytes, big_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{

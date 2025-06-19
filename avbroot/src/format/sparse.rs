@@ -11,7 +11,7 @@ use std::{
 use crc32fast::Hasher;
 use dlv_list::{Index, VecList};
 use thiserror::Error;
-use zerocopy::{byteorder::little_endian, FromBytes, IntoBytes};
+use zerocopy::{FromBytes, IntoBytes, byteorder::little_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::stream::ReadDiscardExt;
@@ -225,7 +225,7 @@ impl RawChunk {
                 return Err(Error::InvalidChunkType {
                     index,
                     chunk_type: t,
-                })
+                });
             }
         };
 

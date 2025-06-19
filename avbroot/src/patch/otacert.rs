@@ -6,8 +6,8 @@ use std::{borrow::Cow, cmp::Ordering, io::Cursor, path::Path};
 use bitflags::bitflags;
 use thiserror::Error;
 use tracing::trace;
-use x509_cert::{der::asn1::BitString, Certificate};
-use zip::{result::ZipError, write::FileOptions, CompressionMethod, ZipWriter};
+use x509_cert::{Certificate, der::asn1::BitString};
+use zip::{CompressionMethod, DateTime, ZipWriter, result::ZipError, write::SimpleFileOptions};
 
 use crate::{crypto, format::ota};
 
@@ -79,7 +79,9 @@ pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8
         CompressionMethod::Stored
     };
 
-    let options = FileOptions::default().compression_method(compression_method);
+    let options = SimpleFileOptions::default()
+        .last_modified_time(DateTime::default())
+        .compression_method(compression_method);
     let name = "ota.x509.pem";
     writer.start_file(name, options).map_err(Error::ZipWrite)?;
 

@@ -10,10 +10,10 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 use crc32fast::Hasher;
-use zerocopy::{little_endian, IntoBytes};
+use zerocopy::{IntoBytes, little_endian};
 
 use crate::{
     format::{

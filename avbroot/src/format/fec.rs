@@ -16,7 +16,7 @@ use rayon::{
     slice::{ParallelSlice, ParallelSliceMut},
 };
 use thiserror::Error;
-use zerocopy::{little_endian, FromBytes, IntoBytes};
+use zerocopy::{FromBytes, IntoBytes, little_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
@@ -827,7 +827,7 @@ impl<W: Write> ToWriter<W> for FecImage {
 mod tests {
     use std::{
         io::{Cursor, Seek},
-        sync::{atomic::AtomicBool, Arc},
+        sync::{Arc, atomic::AtomicBool},
     };
 
     use assert_matches::assert_matches;

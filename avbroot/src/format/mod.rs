@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 pub mod avb;
@@ -13,3 +13,4 @@ pub mod padding;
 pub mod payload;
 pub mod sparse;
 pub mod verityrs;
+pub mod zip;

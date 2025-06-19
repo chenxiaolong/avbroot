@@ -14,12 +14,12 @@ use std::{
     path::{Path, PathBuf},
     slice,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use avbroot::{
     cli::ota::{ExtractCli, PatchCli, VerifyCli},
     crypto::{self, PassphraseSource, RsaSigningKey},
@@ -37,10 +37,11 @@ use avbroot::{
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         padding,
         payload::{self, CowVersion, PayloadHeader, PayloadWriter, VabcParams},
+        zip::ZipWriterWrapper,
     },
     patch::otacert::{self, OtaCertBuildFlags},
     protobuf::{
-        build::tools::releasetools::{ota_metadata::OtaType, DeviceState, OtaMetadata},
+        build::tools::releasetools::{DeviceState, OtaMetadata, ota_metadata::OtaType},
         chromeos_update_engine::{
             DeltaArchiveManifest, DynamicPartitionGroup, DynamicPartitionMetadata, PartitionUpdate,
         },
@@ -48,12 +49,12 @@ use avbroot::{
     stream::{self, CountingWriter, FromReader, HashingReader, PSeekFile, Reopen, ToWriter},
 };
 use clap::Parser;
-use rsa::{rand_core::OsRng, traits::PublicKeyParts, BigUint};
+use rsa::{BigUint, rand_core::OsRng, traits::PublicKeyParts};
 use tempfile::TempDir;
 use topological_sort::TopologicalSort;
 use tracing::{info, info_span};
 use x509_cert::Certificate;
-use zip::{write::FileOptions, CompressionMethod, ZipWriter};
+use zip::{CompressionMethod, DateTime, ZipWriter, write::SimpleFileOptions};
 
 use crate::{
     cli::{Cli, Command, HelperCli, ListCli, PassSource, ProfileGroup, TestCli},
@@ -374,7 +375,7 @@ fn create_boot_image(
                         .ramdisks
                         .iter()
                         .map(|c_list| {
-                            if c_list.iter().any(|c| *c == RamdiskContent::Dlkm) {
+                            if c_list.contains(&RamdiskContent::Dlkm) {
                                 RamdiskMeta {
                                     ramdisk_type: bootimage::VENDOR_RAMDISK_TYPE_DLKM,
                                     ramdisk_name: "dlkm".to_owned(),
@@ -741,14 +742,15 @@ fn create_ota(
     let mut zip_writer = match zip_mode {
         ZipMode::Streaming => {
             let signing_writer = SigningWriter::new_streaming(raw_writer);
-            ZipWriter::new_streaming(signing_writer)
+            ZipWriterWrapper::new_streaming(signing_writer)
         }
         ZipMode::Seekable => {
             let signing_writer = SigningWriter::new_seekable(raw_writer);
-            ZipWriter::new(signing_writer)
+            ZipWriterWrapper::new_seekable(signing_writer)
         }
     };
-    let options = FileOptions::default()
+    let options = SimpleFileOptions::default()
+        .last_modified_time(DateTime::default())
         .compression_method(CompressionMethod::Stored)
         .large_file(false);
 
@@ -758,12 +760,9 @@ fn create_ota(
 
     for path in [ota::PATH_OTACERT, ota::PATH_PAYLOAD, ota::PATH_PROPERTIES] {
         // All remaining entries are written immediately.
-        zip_writer
-            .start_file_with_extra_data(path, options)
-            .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
         let offset = zip_writer
-            .end_extra_data()
-            .with_context(|| format!("Failed to end new zip entry: {path}"))?;
+            .start_file(path, options)
+            .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
         let mut writer = CountingWriter::new(&mut zip_writer);
 
         match path {
@@ -864,6 +863,7 @@ fn create_fake_magisk(output: &Path) -> Result<()> {
     let raw_writer =
         File::create(output).with_context(|| format!("Failed to open for writing: {output:?}"))?;
     let mut zip_writer = ZipWriter::new(raw_writer);
+    let options = SimpleFileOptions::default().last_modified_time(DateTime::default());
 
     for path in [
         "assets/stub.apk",
@@ -880,12 +880,12 @@ fn create_fake_magisk(output: &Path) -> Result<()> {
         "lib/x86_64/libmagisk64.so",
         "lib/x86_64/libmagiskinit.so",
     ] {
-        zip_writer.start_file(path, FileOptions::default())?;
+        zip_writer.start_file(path, options)?;
         write!(zip_writer, "dummy contents for {path}")?;
     }
 
     // avbroot looks for the version number in this file.
-    zip_writer.start_file("assets/util_functions.sh", FileOptions::default())?;
+    zip_writer.start_file("assets/util_functions.sh", options)?;
     zip_writer.write_all(b"MAGISK_VER_CODE=27000\n")?;
 
     Ok(())
@@ -1140,7 +1140,7 @@ fn clean_boot_image_certs(path: &Path, cancel_signal: &AtomicBool) -> Result<()>
         .iter_mut()
         .find(|e| e.path == b"system/etc/security/otacerts.zip")
     {
-        let mut zip_writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let zip_writer = ZipWriter::new(Cursor::new(Vec::new()));
         let empty_zip = zip_writer.finish()?.into_inner();
 
         entry.data = CpioEntryData::Data(empty_zip);

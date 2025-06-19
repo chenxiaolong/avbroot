@@ -4,7 +4,7 @@
 use std::{fmt, marker::PhantomData};
 
 use bstr::{ByteSlice, ByteVec};
-use serde::{de::Visitor, Deserializer, Serializer};
+use serde::{Deserializer, Serializer, de::Visitor};
 use thiserror::Error;
 
 #[derive(Clone, Debug, Error)]

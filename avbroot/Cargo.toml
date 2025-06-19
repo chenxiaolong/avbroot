@@ -13,7 +13,7 @@ anyhow = "1.0.75"
 base64 = "0.22.1"
 bitflags = { version = "2.4.1", features = ["serde"] }
 bstr = "1.6.2"
-bzip2 = { version = "0.5.1", default-features = false, features = ["libbz2-rs-sys"] }
+bzip2 = "0.6.0"
 cap-std = "3.0.0"
 cap-tempfile = "3.0.0"
 clap = { version = "4.4.1", features = ["derive"] }
@@ -34,9 +34,9 @@ memchr = "2.6.0"
 num-bigint-dig = "0.8.4"
 num-traits = "0.2.16"
 passterm = "2.0.3"
-phf = { version = "0.11.2", features = ["macros"] }
+phf = { version = "0.12.1", features = ["macros"] }
 pkcs8 = { version = "0.10.2", features = ["encryption", "pem"] }
-prost = "0.13.1"
+prost = "0.14.1"
 # We can't upgrade to 0.9.0 until rsa updates its rand_core dependency.
 rand = "0.8.5"
 rayon = "1.7.0"
@@ -60,10 +60,12 @@ x509-cert = { version = "0.2.4", features = ["builder"] }
 zerocopy = { version = "0.8.10", features = ["std"] }
 zerocopy-derive = "0.8.5"
 
-# https://github.com/zip-rs/zip/pull/383
+# https://github.com/zip-rs/zip2/pull/367
+# https://github.com/zip-rs/zip2/pull/368
+# For getting the data offset when writing new zip entries.
 [dependencies.zip]
-git = "https://github.com/chenxiaolong/zip"
-rev = "989101f9384b9e94e36e6e9e0f51908fdf98bde6"
+git = "https://github.com/chenxiaolong/zip2"
+rev = "59685f4dadbfee8cb3ea74c8fbb402b60d8137e8"
 default-features = false
 features = ["deflate"]
 
@@ -73,8 +75,8 @@ rustix = { version = "1.0.3", default-features = false, features = ["process"] }
 
 [build-dependencies]
 constcat = "0.6.0"
-prost-build = "0.13.1"
-protox = "0.8.0"
+prost-build = "0.14.1"
+protox = "0.9.0"
 
 [dev-dependencies]
 assert_matches = "1.5.0"

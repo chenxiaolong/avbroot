@@ -24,9 +24,9 @@ use regex::bytes::Regex;
 use ring::digest::Context;
 use rsa::RsaPublicKey;
 use thiserror::Error;
-use tracing::{debug, debug_span, trace, warn, Span};
+use tracing::{Span, debug, debug_span, trace, warn};
 use x509_cert::Certificate;
-use zip::{result::ZipError, ZipArchive};
+use zip::{ZipArchive, result::ZipError};
 
 use crate::{
     crypto::{self, RsaSigningKey},

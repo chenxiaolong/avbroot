@@ -12,18 +12,21 @@ use std::{
 
 use clap::ValueEnum;
 use cms::signed_data::SignedData;
-use const_oid::{db::rfc5912, ObjectIdentifier};
+use const_oid::{ObjectIdentifier, db::rfc5912};
 use memchr::memmem;
 use prost::Message;
 use ring::digest::{Algorithm, Context};
 use thiserror::Error;
-use x509_cert::{der::Encode, Certificate};
-use zip::{result::ZipError, write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
+use x509_cert::{Certificate, der::Encode};
+use zip::{CompressionMethod, DateTime, ZipArchive, result::ZipError, write::SimpleFileOptions};
 
 use crate::{
     crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
-    format::payload::{self, PayloadHeader},
-    protobuf::build::tools::releasetools::{ota_metadata::OtaType, OtaMetadata},
+    format::{
+        payload::{self, PayloadHeader},
+        zip::ZipWriterWrapper,
+    },
+    protobuf::build::tools::releasetools::{OtaMetadata, ota_metadata::OtaType},
     stream::{self, FromReader, HashingReader, HashingWriter, ReadFixedSizeExt},
 };
 
@@ -435,14 +438,16 @@ impl fmt::Display for ZipMode {
 /// directory would start.
 pub fn add_metadata(
     zip_entries: &[ZipEntry],
-    zip_writer: &mut ZipWriter<impl Write>,
+    zip_writer: &mut ZipWriterWrapper<impl Write>,
     next_offset: u64,
     metadata: &OtaMetadata,
     payload_metadata_size: u64,
     zip_mode: ZipMode,
 ) -> Result<OtaMetadata> {
     let mut metadata = metadata.clone();
-    let options = FileOptions::default().compression_method(CompressionMethod::Stored);
+    let options = SimpleFileOptions::default()
+        .last_modified_time(DateTime::default())
+        .compression_method(CompressionMethod::Stored);
 
     let mut zip_entries = zip_entries.to_owned();
     add_payload_metadata_entry(&mut zip_entries, payload_metadata_size)?;
@@ -462,25 +467,19 @@ pub fn add_metadata(
         let (legacy_raw, modern_raw) = serialize_metadata(&metadata);
         let raw_writer = Cursor::new(Vec::new());
         let mut writer = match zip_mode {
-            ZipMode::Streaming => ZipWriter::new_streaming(raw_writer),
-            ZipMode::Seekable => ZipWriter::new(raw_writer),
+            ZipMode::Streaming => ZipWriterWrapper::new_streaming(raw_writer),
+            ZipMode::Seekable => ZipWriterWrapper::new_seekable(raw_writer),
         };
 
-        writer
-            .start_file_with_extra_data(PATH_METADATA, options)
-            .map_err(|e| Error::ZipEntryStart(PATH_METADATA, e))?;
         let legacy_offset = writer
-            .end_extra_data()
+            .start_file(PATH_METADATA, options)
             .map_err(|e| Error::ZipEntryStart(PATH_METADATA, e))?;
         writer
             .write_all(legacy_raw.as_bytes())
             .map_err(|e| Error::ZipEntryWrite(PATH_METADATA, e))?;
 
-        writer
-            .start_file_with_extra_data(PATH_METADATA_PB, options)
-            .map_err(|e| Error::ZipEntryStart(PATH_METADATA_PB, e))?;
         let modern_offset = writer
-            .end_extra_data()
+            .start_file(PATH_METADATA_PB, options)
             .map_err(|e| Error::ZipEntryStart(PATH_METADATA_PB, e))?;
         writer
             .write_all(&modern_raw)
@@ -509,21 +508,15 @@ pub fn add_metadata(
     {
         let (legacy_raw, modern_raw) = serialize_metadata(&metadata);
 
-        zip_writer
-            .start_file_with_extra_data(PATH_METADATA, options)
-            .map_err(|e| Error::ZipEntryStart(PATH_METADATA, e))?;
         let legacy_offset = zip_writer
-            .end_extra_data()
+            .start_file(PATH_METADATA, options)
             .map_err(|e| Error::ZipEntryStart(PATH_METADATA, e))?;
         zip_writer
             .write_all(legacy_raw.as_bytes())
             .map_err(|e| Error::ZipEntryWrite(PATH_METADATA, e))?;
 
-        zip_writer
-            .start_file_with_extra_data(PATH_METADATA_PB, options)
-            .map_err(|e| Error::ZipEntryStart(PATH_METADATA_PB, e))?;
         let modern_offset = zip_writer
-            .end_extra_data()
+            .start_file(PATH_METADATA_PB, options)
             .map_err(|e| Error::ZipEntryStart(PATH_METADATA_PB, e))?;
         zip_writer
             .write_all(&modern_raw)

@@ -13,7 +13,7 @@ use bitflags::bitflags;
 use bstr::ByteSlice;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use zerocopy::{byteorder::little_endian, FromBytes, FromZeros, Immutable, IntoBytes};
+use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, byteorder::little_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
@@ -21,7 +21,7 @@ use crate::{
     stream::{
         CountingReader, FromReader, ReadDiscardExt, ReadFixedSizeExt, ToWriter, WriteZerosExt,
     },
-    util::{self, is_zero, DebugString},
+    util::{self, DebugString, is_zero},
 };
 
 /// Magic value for [`RawGeometry::magic`].
@@ -812,7 +812,7 @@ impl RawExtent {
                 return Err(Error::ExtentInvalidType {
                     index,
                     extent_type: n,
-                })
+                });
             }
         }
 

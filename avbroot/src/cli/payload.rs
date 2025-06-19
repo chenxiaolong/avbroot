@@ -10,7 +10,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use cap_std::{ambient_authority, fs::Dir};
 use clap::{Args, Parser, Subcommand};
 use tracing::info;

@@ -771,11 +771,7 @@ pub fn sort(entries: &mut [CpioEntry]) {
 /// 300000.
 pub fn assign_inodes(entries: &mut [CpioEntry], missing_only: bool) -> Result<()> {
     fn next_non_zero(i: u32) -> u32 {
-        if i == u32::MAX {
-            1
-        } else {
-            i.wrapping_add(1)
-        }
+        if i == u32::MAX { 1 } else { i.wrapping_add(1) }
     }
 
     // (dev maj, dev min) -> (inode set, last assigned inode)
