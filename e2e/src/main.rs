@@ -1234,8 +1234,9 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
         ] {
             let _span = info_span!("profile", name, %zip_mode).entered();
 
-            // Can't used NamedTempFile because avbroot does atomic replaces.
-            let profile_dir = work_dir.join(name);
+            // Can't use NamedTempFile because avbroot does atomic replaces.
+            let mut profile_dir = work_dir.join(name);
+            profile_dir.push(zip_mode.to_string());
             let out_original = profile_dir.join("ota.zip");
             let out_magisk = profile_dir.join("ota_magisk.zip");
             let out_prepatched = profile_dir.join("ota_prepatched.zip");
