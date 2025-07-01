@@ -11,6 +11,7 @@
 
 * Update end-to-end tests to place streaming and seekable OTAs in separate directories for easier troubleshooting ([PR #463])
 * Update dependencies ([PR #464])
+* Add support for Magisk 30000 ([PR #467])
 
 ### Version 3.17.0
 
@@ -530,3 +531,4 @@ Behind-the-scenes changes:
 [PR #453]: https://github.com/chenxiaolong/avbroot/pull/453
 [PR #463]: https://github.com/chenxiaolong/avbroot/pull/463
 [PR #464]: https://github.com/chenxiaolong/avbroot/pull/464
+[PR #467]: https://github.com/chenxiaolong/avbroot/pull/467
