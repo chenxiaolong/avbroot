@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.17.1
 
 * Update end-to-end tests to place streaming and seekable OTAs in separate directories for easier troubleshooting ([PR #463])
 * Update dependencies ([PR #464])
