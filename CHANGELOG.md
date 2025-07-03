@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.17.2
 
 * Add support for Magisk 30100 ([PR #468])
 
