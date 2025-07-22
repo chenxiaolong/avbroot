@@ -1,9 +1,10 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
     cmp::Ordering,
-    fmt, mem,
+    fmt::{self, Display},
+    mem,
     ops::{
         Bound, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
     },
@@ -376,6 +377,28 @@ where
             }
         })
         .is_ok()
+}
+
+pub fn join(into_iter: impl IntoIterator<Item = impl Display>, sep: &str) -> String {
+    use std::fmt::Write;
+
+    let mut result = String::new();
+
+    for (i, item) in into_iter.into_iter().enumerate() {
+        if i > 0 {
+            result.push_str(sep);
+        }
+
+        write!(result, "{item}").expect("Failed to allocate");
+    }
+
+    result
+}
+
+pub fn sort<T: Ord>(iter: impl Iterator<Item = T>) -> Vec<T> {
+    let mut items = iter.collect::<Vec<_>>();
+    items.sort();
+    items
 }
 
 #[cfg(test)]

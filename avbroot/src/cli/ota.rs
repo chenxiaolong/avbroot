@@ -5,7 +5,6 @@ use std::{
     borrow::Cow,
     collections::{BTreeSet, HashMap, HashSet},
     ffi::{OsStr, OsString},
-    fmt::Display,
     fs::{self, File},
     io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     ops::Range,
@@ -52,28 +51,6 @@ use crate::{
     },
     util,
 };
-
-fn joined(into_iter: impl IntoIterator<Item = impl Display>) -> String {
-    use std::fmt::Write;
-
-    let mut result = String::new();
-
-    for (i, item) in into_iter.into_iter().enumerate() {
-        if i > 0 {
-            result.push_str(", ");
-        }
-
-        write!(result, "{item}").expect("Failed to allocate");
-    }
-
-    result
-}
-
-fn sorted<T: Ord>(iter: impl Iterator<Item = T>) -> Vec<T> {
-    let mut items = iter.collect::<Vec<_>>();
-    items.sort();
-    items
-}
 
 bitflags! {
     #[repr(transparent)]
@@ -226,7 +203,7 @@ fn patch_boot_images(
 
     info!(
         "Candidate boot images: {}",
-        joined(sorted(boot_partitions.iter())),
+        util::join(util::sort(boot_partitions.iter()), ", "),
     );
 
     boot::patch_boot_images(
@@ -249,7 +226,7 @@ fn patch_boot_images(
     .with_context(|| {
         format!(
             "Failed to patch boot images: {}",
-            joined(sorted(boot_partitions.iter())),
+            util::join(util::sort(boot_partitions.iter()), ", "),
         )
     })?;
 
@@ -369,7 +346,7 @@ fn ensure_partitions_protected(
     if !missing.is_empty() {
         bail!(
             "Found critical partitions that are not protected by AVB: {}",
-            joined(missing),
+            util::join(missing, ", "),
         );
     }
 
@@ -412,7 +389,10 @@ fn get_vbmeta_patch_order(
     }
 
     if !missing.is_empty() {
-        warn!("Partitions aren't protected by AVB: {}", joined(missing));
+        warn!(
+            "Partitions aren't protected by AVB: {}",
+            util::join(missing, ", "),
+        );
     }
 
     // Ensure that there's only a single root of trust. Otherwise, there could
@@ -428,7 +408,10 @@ fn get_vbmeta_patch_order(
 
     // For zero roots, let TopologicalSort report the cycle.
     if roots.len() > 1 {
-        bail!("Found multiple root vbmeta images: {}", joined(roots));
+        bail!(
+            "Found multiple root vbmeta images: {}",
+            util::join(roots, ", "),
+        );
     }
 
     // Compute the patching order. This only includes vbmeta images. All vbmeta
@@ -672,7 +655,7 @@ fn update_vbmeta_headers(
 ) -> Result<()> {
     info!(
         "Patching vbmeta images: {}",
-        joined(order.iter().map(|(n, _)| n)),
+        util::join(order.iter().map(|(n, _)| n), ", "),
     );
 
     for (name, deps) in order {
@@ -1142,7 +1125,7 @@ fn patch_ota_zip(
     }
 
     if !missing.is_empty() {
-        bail!("Missing entries in OTA zip: {}", joined(missing));
+        bail!("Missing entries in OTA zip: {}", util::join(missing, ", "));
     } else if !paths.contains(ota::PATH_METADATA) && !paths.contains(ota::PATH_METADATA_PB) {
         bail!(
             "Neither legacy nor protobuf OTA metadata files exist: {:?}, {:?}",
@@ -1274,7 +1257,7 @@ fn patch_ota_zip(
         let size = writer.stream_position()?;
 
         entries.push(ZipEntry {
-            name: path.clone(),
+            path: path.clone(),
             offset,
             size,
         });
@@ -1323,7 +1306,7 @@ pub fn extract_payload(
         }
     }
 
-    info!("Extracting from the payload: {}", joined(images));
+    info!("Extracting from the payload: {}", util::join(images, ", "));
 
     // Pre-open all output files.
     let output_files = images
@@ -1676,7 +1659,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
             .collect::<Vec<_>>();
 
         if !missing_images.is_empty() {
-            bail!("Invalid partitions: {}", joined(missing_images));
+            bail!("Invalid partitions: {}", util::join(missing_images, ", "));
         }
 
         unique_images.extend(cli.extract.partition.iter().cloned());
@@ -1936,7 +1919,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         .with_context(|| format!("Failed to parse property files: {}", ota::PF_NAME))?;
     let pf_payload = pfs
         .iter()
-        .find(|pf| pf.name == ota::PATH_PAYLOAD)
+        .find(|pf| pf.name() == ota::PATH_PAYLOAD)
         .ok_or_else(|| anyhow!("Missing property files entry: {}", ota::PATH_PAYLOAD))?;
 
     let section_reader = SectionReader::new(&mut reader, pf_payload.offset, pf_payload.size)

@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
+    cmp::Ordering,
     collections::BTreeMap,
-    fmt,
+    fmt::{self, Write as _},
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     iter,
     path::Path,
+    str::FromStr,
     sync::atomic::AtomicBool,
 };
 
@@ -28,6 +30,7 @@ use crate::{
     },
     protobuf::build::tools::releasetools::{OtaMetadata, ota_metadata::OtaType},
     stream::{self, FromReader, HashingReader, HashingWriter, ReadFixedSizeExt},
+    util,
 };
 
 pub const PATH_METADATA: &str = "META-INF/com/android/metadata";
@@ -73,8 +76,12 @@ pub enum Error {
     InvalidLegacyMetadataLine(String),
     #[error("Unsupported legacy metadata field: {key:?} = {value:?}")]
     UnsupportedLegacyMetadataField { key: String, value: String },
-    #[error("Expected entry offsets {expected:?}, but have {actual:?}")]
-    MismatchedPropertyFiles { expected: String, actual: String },
+    #[error("Mismatched {key:?} entry offsets: zip only: {zip_only:?}, prop only: {prop_only:?}")]
+    MismatchedPropertyFiles {
+        key: String,
+        zip_only: String,
+        prop_only: String,
+    },
     #[error("Property files {value:?} exceed {reserved} byte reserved space")]
     InsufficientReservedSpace { value: String, reserved: usize },
     #[error("Invalid property file entry: {0:?}")]
@@ -283,16 +290,48 @@ fn serialize_metadata(metadata: &OtaMetadata) -> (String, Vec<u8>) {
 
 #[derive(Clone, Debug)]
 pub struct ZipEntry {
-    pub name: String,
+    pub path: String,
     pub offset: u64,
     pub size: u64,
 }
 
-/// Parse OTA property files string.
-pub fn parse_property_files(data: &str) -> Result<Vec<ZipEntry>> {
-    let mut result = vec![];
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PropEntry {
+    name: String,
+    pub offset: u64,
+    pub size: u64,
+}
 
-    for entry in data.trim_end().split(',') {
+impl PropEntry {
+    pub fn new(path: &str, offset: u64, size: u64) -> Self {
+        Self {
+            name: property_file_name(path).to_owned(),
+            offset,
+            size,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl From<&ZipEntry> for PropEntry {
+    fn from(entry: &ZipEntry) -> Self {
+        Self::new(&entry.path, entry.offset, entry.size)
+    }
+}
+
+impl fmt::Display for PropEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.name, self.offset, self.size)
+    }
+}
+
+impl FromStr for PropEntry {
+    type Err = Error;
+
+    fn from_str(entry: &str) -> Result<Self> {
         let mut pieces = entry.split(':');
 
         let name = pieces
@@ -312,17 +351,31 @@ pub fn parse_property_files(data: &str) -> Result<Vec<ZipEntry>> {
             return Err(Error::InvalidPropertyFileEntry(entry.to_owned()));
         }
 
-        result.push(ZipEntry { name, offset, size });
+        Ok(Self { name, offset, size })
+    }
+}
+
+/// Parse OTA property files string.
+pub fn parse_property_files(data: &str) -> Result<Vec<PropEntry>> {
+    let mut result = vec![];
+
+    for entry in data.trim_end().split(',') {
+        result.push(entry.parse()?);
     }
 
     Ok(result)
+}
+
+/// Get the filename for use in property files entries.
+fn property_file_name(path: &str) -> &str {
+    path.rsplit_once('/').map_or(path, |p| p.1)
 }
 
 /// Compute the property files entries listing the offsets and sizes to every
 /// zip entry.
 fn compute_property_files(
     pf_name: &str,
-    entries: &[ZipEntry],
+    entries: &[PropEntry],
     max_length: Option<usize>,
     want_pb: bool,
 ) -> Result<String> {
@@ -335,24 +388,26 @@ fn compute_property_files(
     // writes, so we reserve an additional byte to allow offsets <100 GB.
     const RESERVATION_SIZE: usize = 16;
 
-    let compute = |path: &'static str| -> Result<String> {
+    let mut buf = String::new();
+
+    let mut append = |path: &'static str| -> Result<()> {
+        let name = property_file_name(path);
         let entry = entries
             .iter()
-            .find(|e| e.name == path)
+            .find(|e| e.name == name)
             .ok_or(Error::MissingZipEntry(path))?;
-        let name = path.rsplit_once('/').map_or(path, |p| p.1);
 
-        Ok(format!("{name}:{}:{}", entry.offset, entry.size))
+        let _ = write!(&mut buf, "{entry},");
+
+        Ok(())
     };
 
-    let mut tokens = vec![];
-
     if pf_name == PF_NAME {
-        tokens.push(compute(NAME_PAYLOAD_METADATA)?);
+        append(NAME_PAYLOAD_METADATA)?;
     }
 
     for path in [PATH_PAYLOAD, PATH_PROPERTIES] {
-        tokens.push(compute(path)?);
+        append(path)?;
     }
 
     for path in [
@@ -361,44 +416,51 @@ fn compute_property_files(
         "care_map.txt",
         "compatibility.zip",
     ] {
-        if let Ok(token) = compute(path) {
-            tokens.push(token);
-        }
+        // These are optional.
+        let _ = append(path);
     }
 
     if max_length.is_none() {
-        tokens.push(format!("metadata:{}", " ".repeat(RESERVATION_SIZE)));
+        buf.push_str(property_file_name(PATH_METADATA));
+        buf.push(':');
+        buf.extend(iter::repeat_n(' ', RESERVATION_SIZE));
+        buf.push(',');
+
         if want_pb {
-            tokens.push(format!("metadata.pb:{}", " ".repeat(RESERVATION_SIZE)));
+            buf.push_str(property_file_name(PATH_METADATA_PB));
+            buf.push(':');
+            buf.extend(iter::repeat_n(' ', RESERVATION_SIZE));
+            buf.push(',');
         }
     } else {
-        tokens.push(compute(PATH_METADATA)?);
+        append(PATH_METADATA)?;
         if want_pb {
-            tokens.push(compute(PATH_METADATA_PB)?);
+            append(PATH_METADATA_PB)?;
         }
     }
 
-    let mut joined = tokens.join(",");
+    // Strip final trailing comma.
+    buf.pop();
 
     if let Some(l) = max_length {
-        if joined.len() > l {
+        if buf.len() > l {
             return Err(Error::InsufficientReservedSpace {
-                value: joined,
+                value: buf,
                 reserved: l,
             });
         }
 
-        let remain = l - joined.len();
-        joined.extend(iter::repeat_n(' ', remain));
+        let remain = l - buf.len();
+        buf.extend(iter::repeat_n(' ', remain));
     }
 
-    Ok(joined)
+    Ok(buf)
 }
 
 // Add fake payload_metadata.bin entry, covering the header + header signature
 // regions of the payload.
 fn add_payload_metadata_entry(
-    entries: &mut Vec<ZipEntry>,
+    entries: &mut Vec<PropEntry>,
     payload_metadata_size: u64,
 ) -> Result<()> {
     let payload_offset = entries
@@ -406,11 +468,11 @@ fn add_payload_metadata_entry(
         .find(|e| e.name == PATH_PAYLOAD)
         .ok_or(Error::MissingZipEntry(PATH_PAYLOAD))?
         .offset;
-    entries.push(ZipEntry {
-        name: NAME_PAYLOAD_METADATA.to_owned(),
-        offset: payload_offset,
-        size: payload_metadata_size,
-    });
+    entries.push(PropEntry::new(
+        NAME_PAYLOAD_METADATA,
+        payload_offset,
+        payload_metadata_size,
+    ));
 
     Ok(())
 }
@@ -449,8 +511,8 @@ pub fn add_metadata(
         .last_modified_time(DateTime::default())
         .compression_method(CompressionMethod::Stored);
 
-    let mut zip_entries = zip_entries.to_owned();
-    add_payload_metadata_entry(&mut zip_entries, payload_metadata_size)?;
+    let mut prop_entries = zip_entries.iter().map(PropEntry::from).collect();
+    add_payload_metadata_entry(&mut prop_entries, payload_metadata_size)?;
 
     // Compute initial property files with reserved space as placeholders to
     // store the self-referential metadata entries later.
@@ -458,7 +520,7 @@ pub fn add_metadata(
     for pf in [PF_NAME, PF_STREAMING_NAME] {
         metadata.property_files.insert(
             pf.to_owned(),
-            compute_property_files(pf, &zip_entries, None, true)?,
+            compute_property_files(pf, &prop_entries, None, true)?,
         );
     }
 
@@ -485,23 +547,23 @@ pub fn add_metadata(
             .write_all(&modern_raw)
             .map_err(|e| Error::ZipEntryWrite(PATH_METADATA_PB, e))?;
 
-        zip_entries.push(ZipEntry {
-            name: PATH_METADATA.to_owned(),
-            offset: next_offset + legacy_offset,
-            size: legacy_raw.len() as u64,
-        });
-        zip_entries.push(ZipEntry {
-            name: PATH_METADATA_PB.to_owned(),
-            offset: next_offset + modern_offset,
-            size: modern_raw.len() as u64,
-        });
+        prop_entries.push(PropEntry::new(
+            PATH_METADATA,
+            next_offset + legacy_offset,
+            legacy_raw.len() as u64,
+        ));
+        prop_entries.push(PropEntry::new(
+            PATH_METADATA_PB,
+            next_offset + modern_offset,
+            modern_raw.len() as u64,
+        ));
 
         (next_offset + legacy_offset, next_offset + modern_offset)
     };
 
     // Compute the final property files using the offsets of the fake entries.
     for (key, value) in &mut metadata.property_files {
-        *value = compute_property_files(key, &zip_entries, Some(value.len()), true)?;
+        *value = compute_property_files(key, &prop_entries, Some(value.len()), true)?;
     }
 
     // Add the final metadata files to the real zip.
@@ -542,24 +604,73 @@ pub fn verify_metadata(
         let entry = zip_reader
             .by_index(i)
             .map_err(|e| Error::ZipIndexOpen(i, e))?;
-        zip_entries.push(ZipEntry {
-            name: entry.name().to_owned(),
-            offset: entry.data_start(),
-            size: entry.size(),
-        });
+
+        if entry.compression() != CompressionMethod::Stored {
+            continue;
+        }
+
+        zip_entries.push(PropEntry::new(
+            entry.name(),
+            entry.data_start(),
+            entry.size(),
+        ));
     }
 
     add_payload_metadata_entry(&mut zip_entries, payload_metadata_size)?;
 
-    let metadata_pb = zip_entries.iter().find(|e| e.name == PATH_METADATA_PB);
+    zip_entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     for (key, value) in &metadata.property_files {
-        let new_value =
-            compute_property_files(key, &zip_entries, Some(value.len()), metadata_pb.is_some())?;
-        if *value != new_value {
+        let mut prop_entries = parse_property_files(value)?;
+        prop_entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+        // Check that this is a subset of the actual entries.
+        let mut zip_iter = zip_entries.iter().peekable();
+        let mut prop_iter = prop_entries.iter().peekable();
+        let mut zip_only = vec![];
+        let mut prop_only = vec![];
+
+        loop {
+            match (zip_iter.peek(), prop_iter.peek()) {
+                (Some(&zip), Some(&prop)) => match zip.name.cmp(&prop.name) {
+                    Ordering::Less => {
+                        // Exists in zip, but not in property files.
+                        zip_iter.next();
+                    }
+                    Ordering::Equal => {
+                        // If the zip had multiple files with the same filename,
+                        // but in different directories, this will fail.
+                        if zip != prop {
+                            zip_only.push(zip);
+                            prop_only.push(prop);
+                        }
+                        zip_iter.next();
+                        prop_iter.next();
+                    }
+                    Ordering::Greater => {
+                        // Exists in property files, but not in zip.
+                        prop_only.push(prop);
+                        prop_iter.next();
+                    }
+                },
+                (Some(_), None) => {
+                    // Exists in zip, but not in property files.
+                    zip_iter.next();
+                }
+                (None, Some(prop)) => {
+                    // Exists in property files, but not in zip.
+                    prop_only.push(prop);
+                    prop_iter.next();
+                }
+                (None, None) => break,
+            }
+        }
+
+        if !zip_only.is_empty() || !prop_only.is_empty() {
             return Err(Error::MismatchedPropertyFiles {
-                expected: value.clone(),
-                actual: new_value,
+                key: key.clone(),
+                zip_only: util::join(zip_only.into_iter().map(|e| e.to_string()), ","),
+                prop_only: util::join(prop_only.into_iter().map(|e| e.to_string()), ","),
             });
         }
     }

@@ -797,7 +797,7 @@ fn create_ota(
         let size = writer.stream_position()?;
 
         entries.push(ZipEntry {
-            name: path.to_owned(),
+            path: path.to_owned(),
             offset,
             size,
         });
