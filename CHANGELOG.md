@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix output file corruption in `avbroot sparse unpack` when unpacking a sparse file with holes larger than 2^32 ([Issue #472], [PR #476])
+
 ### Version 3.18.0
 
 * Make OTA metadata property file field validation more lenient ([Issue #469], [PR #470])
@@ -381,6 +385,7 @@ Behind-the-scenes changes:
 [Issue #441]: https://github.com/chenxiaolong/avbroot/issues/441
 [Issue #451]: https://github.com/chenxiaolong/avbroot/issues/451
 [Issue #469]: https://github.com/chenxiaolong/avbroot/issues/469
+[Issue #472]: https://github.com/chenxiaolong/avbroot/issues/472
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -552,3 +557,4 @@ Behind-the-scenes changes:
 [PR #473]: https://github.com/chenxiaolong/avbroot/pull/473
 [PR #474]: https://github.com/chenxiaolong/avbroot/pull/474
 [PR #475]: https://github.com/chenxiaolong/avbroot/pull/475
+[PR #476]: https://github.com/chenxiaolong/avbroot/pull/476
