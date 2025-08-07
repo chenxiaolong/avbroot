@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.18.1
 
 * Fix output file corruption in `avbroot sparse unpack` when unpacking a sparse file with holes larger than 2^32 ([Issue #472], [PR #476])
 
