@@ -15,6 +15,7 @@
   * There are insecure devices that don't support SHA-256 and won't boot with it.
   * The original feature was a bandaid for OnePlus devices to make them a tiny bit more secure. They used SHA-256 for every partition except `system`. However, OnePlus no longer supports custom AVB keys anyway, so this feature is going away.
 * Add support for Magisk 30200 ([PR #474])
+* Update dependencies ([PR #475])
 
 ### Version 3.17.2
 
@@ -550,3 +551,4 @@ Behind-the-scenes changes:
 [PR #470]: https://github.com/chenxiaolong/avbroot/pull/470
 [PR #473]: https://github.com/chenxiaolong/avbroot/pull/473
 [PR #474]: https://github.com/chenxiaolong/avbroot/pull/474
+[PR #475]: https://github.com/chenxiaolong/avbroot/pull/475
