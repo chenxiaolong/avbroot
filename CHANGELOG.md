@@ -7,6 +7,11 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Make OTA metadata property file field validation more lenient ([Issue #469], [PR #470])
+  * Fixes `avbroot ota verify` for stock OTAs that include extra zip file entries in the metadata
+
 ### Version 3.17.2
 
 * Add support for Magisk 30100 ([PR #468])
@@ -370,6 +375,7 @@ Behind-the-scenes changes:
 [Issue #433]: https://github.com/chenxiaolong/avbroot/issues/433
 [Issue #441]: https://github.com/chenxiaolong/avbroot/issues/441
 [Issue #451]: https://github.com/chenxiaolong/avbroot/issues/451
+[Issue #469]: https://github.com/chenxiaolong/avbroot/issues/469
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -537,3 +543,4 @@ Behind-the-scenes changes:
 [PR #464]: https://github.com/chenxiaolong/avbroot/pull/464
 [PR #467]: https://github.com/chenxiaolong/avbroot/pull/467
 [PR #468]: https://github.com/chenxiaolong/avbroot/pull/468
+[PR #470]: https://github.com/chenxiaolong/avbroot/pull/470
