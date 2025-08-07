@@ -11,6 +11,9 @@
 
 * Make OTA metadata property file field validation more lenient ([Issue #469], [PR #470])
   * Fixes `avbroot ota verify` for stock OTAs that include extra zip file entries in the metadata
+* Remove automatic promotion of insecure SHA-1 AVB hash algorithm to SHA-256 ([Issue #366], [Issue #469], [PR #473])
+  * There are insecure devices that don't support SHA-256 and won't boot with it.
+  * The original feature was a bandaid for OnePlus devices to make them a tiny bit more secure. They used SHA-256 for every partition except `system`. However, OnePlus no longer supports custom AVB keys anyway, so this feature is going away.
 
 ### Version 3.17.2
 
@@ -544,3 +547,4 @@ Behind-the-scenes changes:
 [PR #467]: https://github.com/chenxiaolong/avbroot/pull/467
 [PR #468]: https://github.com/chenxiaolong/avbroot/pull/468
 [PR #470]: https://github.com/chenxiaolong/avbroot/pull/470
+[PR #473]: https://github.com/chenxiaolong/avbroot/pull/473
