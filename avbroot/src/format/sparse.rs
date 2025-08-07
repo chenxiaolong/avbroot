@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -374,6 +374,9 @@ impl fmt::Debug for ChunkData {
 /// metadata they contain.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Chunk {
+    /// When [`Self::data`] is [`ChunkData::Data`], this is guaranteed to not
+    /// exceed the bounds of [`u32`] when multiplied by [`Header::block_size`].
+    /// For other types of data, a 64-bit signed or unsigned integer is needed.
     pub bounds: ChunkBounds,
     pub data: ChunkData,
 }

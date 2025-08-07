@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -317,11 +317,11 @@ fn unpack_subcommand(
                 })?;
             }
             ChunkData::Hole => {
-                // This cannot overflow.
-                let to_skip = chunk.bounds.len() * metadata.header.block_size;
+                // Unlike ChunkData::Data, this can overflow a u32.
+                let to_skip = i64::from(chunk.bounds.len()) * i64::from(metadata.header.block_size);
 
                 writer
-                    .seek(SeekFrom::Current(to_skip.into()))
+                    .seek(SeekFrom::Current(to_skip))
                     .with_context(|| format!("Failed to seek file: {:?}", cli.output))?;
             }
             ChunkData::Crc32(_) => {}
