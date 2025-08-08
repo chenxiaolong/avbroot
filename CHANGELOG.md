@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Allow verifying hashes of unsigned images with `avbroot avb verify` ([PR #477])
+* Warn when verifying image containing insecure flags field with `avbroot avb verify` ([PR #478])
 
 ### Version 3.18.1
 
@@ -563,3 +564,4 @@ Behind-the-scenes changes:
 [PR #475]: https://github.com/chenxiaolong/avbroot/pull/475
 [PR #476]: https://github.com/chenxiaolong/avbroot/pull/476
 [PR #477]: https://github.com/chenxiaolong/avbroot/pull/477
+[PR #478]: https://github.com/chenxiaolong/avbroot/pull/478
