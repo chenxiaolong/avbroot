@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.19.0
 
 * Allow verifying hashes of unsigned images with `avbroot avb verify` ([PR #477])
 * Warn when verifying image containing insecure flags field with `avbroot avb verify` ([PR #478])

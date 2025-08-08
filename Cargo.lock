@@ -113,7 +113,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "avbroot"
-version = "3.18.1"
+version = "3.19.0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -567,7 +567,7 @@ checksum = "ecb08c4819242b1ec89b3d0c6affa229005bef46ae4f7eed8b80768187c10087"
 
 [[package]]
 name = "e2e"
-version = "3.18.1"
+version = "3.19.0"
 dependencies = [
  "anyhow",
  "avbroot",
@@ -662,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "fuzz"
-version = "3.18.1"
+version = "3.19.0"
 dependencies = [
  "avbroot",
  "honggfuzz",
@@ -2226,7 +2226,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "3.18.1"
+version = "3.19.0"
 dependencies = [
  "anyhow",
  "clap",
