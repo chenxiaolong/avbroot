@@ -1758,15 +1758,19 @@ impl Header {
     /// and return the public key. If the header is not signed, then `None` is
     /// returned.
     pub fn verify(&self) -> Result<Option<RsaPublicKey>> {
-        // Reconstruct the public key.
-        let public_key = decode_public_key(&self.public_key)?;
-
         if self.public_key.len() != self.algorithm_type.public_key_len() {
             return Err(Error::IncorrectKeySize(
-                public_key.size(),
+                self.public_key.len(),
                 self.algorithm_type,
             ));
         }
+
+        if self.algorithm_type == AlgorithmType::None {
+            return Ok(None);
+        }
+
+        // Reconstruct the public key.
+        let public_key = decode_public_key(&self.public_key)?;
 
         let mut without_auth_writer = Cursor::new(Vec::new());
         self.to_writer_internal(&mut without_auth_writer, true)?;
