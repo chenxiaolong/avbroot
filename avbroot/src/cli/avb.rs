@@ -331,7 +331,7 @@ fn sign_or_clear(info: &mut AvbInfo, orig_header: &Header, key_group: &KeyGroup)
         } else {
             SignAction::Clear
         }
-    } else if originally_signed && &info.header != orig_header {
+    } else if originally_signed && (&info.header != orig_header || info.header.verify().is_err()) {
         SignAction::Sign
     } else {
         // If the original image was signed, we can preserve the existing
