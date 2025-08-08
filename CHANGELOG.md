@@ -11,6 +11,7 @@
 
 * Allow verifying hashes of unsigned images with `avbroot avb verify` ([PR #477])
 * Warn when verifying image containing insecure flags field with `avbroot avb verify` ([PR #478])
+* Force re-signing of signed images in `avbroot avb pack` when fields were changed externally ([PR #479])
 
 ### Version 3.18.1
 
@@ -565,3 +566,4 @@ Behind-the-scenes changes:
 [PR #476]: https://github.com/chenxiaolong/avbroot/pull/476
 [PR #477]: https://github.com/chenxiaolong/avbroot/pull/477
 [PR #478]: https://github.com/chenxiaolong/avbroot/pull/478
+[PR #479]: https://github.com/chenxiaolong/avbroot/pull/479
