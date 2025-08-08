@@ -463,6 +463,10 @@ pub fn verify_headers(
         info!("{name} has an unsigned vbmeta header");
     }
 
+    if header.flags != 0 {
+        warn!("{name} has insecure flags: {:#x}", header.flags);
+    }
+
     for descriptor in &header.descriptors {
         let Some(target_name) = descriptor.partition_name() else {
             continue;
