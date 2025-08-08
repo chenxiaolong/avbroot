@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Allow verifying hashes of unsigned images with `avbroot avb verify` ([PR #477])
+
 ### Version 3.18.1
 
 * Fix output file corruption in `avbroot sparse unpack` when unpacking a sparse file with holes larger than 2^32 ([Issue #472], [PR #476])
@@ -558,3 +562,4 @@ Behind-the-scenes changes:
 [PR #474]: https://github.com/chenxiaolong/avbroot/pull/474
 [PR #475]: https://github.com/chenxiaolong/avbroot/pull/475
 [PR #476]: https://github.com/chenxiaolong/avbroot/pull/476
+[PR #477]: https://github.com/chenxiaolong/avbroot/pull/477
