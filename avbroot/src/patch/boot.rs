@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2022-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2022-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -15,10 +15,7 @@ use std::{
 };
 
 use bstr::ByteSlice;
-use liblzma::{
-    stream::{Check, Stream},
-    write::XzEncoder,
-};
+use lzma_rust2::{CheckType, XZOptions, XZWriter};
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use regex::bytes::Regex;
 use ring::digest::Context;
@@ -83,7 +80,7 @@ pub enum Error {
     #[error("Failed to generate replacement otacerts zip")]
     OtaCertZip(#[source] otacert::Error),
     #[error("Failed to initialize XZ encoder")]
-    XzInit(#[source] liblzma::stream::Error),
+    XzInit(#[source] io::Error),
     #[error("Failed to XZ compress entry: {:?}", .0.as_bstr())]
     XzCompress(Vec<u8>, #[source] io::Error),
     #[error("Failed to open zip file: {0:?}")]
@@ -288,9 +285,11 @@ impl MagiskRootPatcher {
     }
 
     fn xz_compress(name: &[u8], reader: impl Read, cancel_signal: &AtomicBool) -> Result<Vec<u8>> {
-        let stream = Stream::new_easy_encoder(9, Check::Crc32).map_err(Error::XzInit)?;
+        let mut options = XZOptions::with_preset(9);
+        options.set_check_sum_type(CheckType::None);
+
         let raw_writer = Cursor::new(Vec::new());
-        let mut writer = XzEncoder::new_stream(raw_writer, stream);
+        let mut writer = XZWriter::new(raw_writer, options).map_err(Error::XzInit)?;
 
         let raw_writer = stream::copy(reader, &mut writer, cancel_signal)
             .and_then(|_| writer.finish())

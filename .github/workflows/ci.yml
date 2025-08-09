@@ -92,7 +92,7 @@ jobs:
         run: |
           for target in ${TARGETS}; do
               cargo android \
-                  clippy --release --workspace --features static \
+                  clippy --release --workspace \
                   --target "${target}"
           done
 
@@ -101,7 +101,7 @@ jobs:
         run: |
           for target in ${TARGETS}; do
               cargo android \
-                  build --release --workspace --features static \
+                  build --release --workspace \
                   --target "${target}"
           done
 
@@ -110,7 +110,7 @@ jobs:
         run: |
           for target in ${TARGETS}; do
               cargo android \
-                  test --release --workspace --features static \
+                  test --release --workspace \
                   --target "${target}"
           done
 
@@ -119,7 +119,7 @@ jobs:
         run: |
           for target in ${TARGETS}; do
               cargo android \
-                  run --release -p e2e --features static \
+                  run --release -p e2e \
                   --target "${target}" \
                   -- test -a -c e2e/e2e.toml
           done

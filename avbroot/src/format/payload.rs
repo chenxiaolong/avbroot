@@ -15,11 +15,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use bzip2::write::BzDecoder;
 use flate2::{Compression, write::GzEncoder};
-use liblzma::{
-    stream::{Check, Stream},
-    write::XzDecoder,
-    write::XzEncoder,
-};
+use lzma_rust2::{CheckType, XZOptions, XZReader, XZWriter};
 use num_traits::CheckedAdd;
 use prost::Message;
 use rayon::{
@@ -40,8 +36,8 @@ use crate::{
         install_operation::Type, signatures::Signature,
     },
     stream::{
-        self, CountingReader, FromReader, HashingWriter, ReadDiscardExt, ReadFixedSizeExt,
-        ReadSeekReopen, WriteSeek, WriteSeekReopen,
+        self, CountingReader, FromReader, HashingReader, HashingWriter, ReadDiscardExt,
+        ReadFixedSizeExt, ReadSeekReopen, WriteSeek, WriteSeekReopen,
     },
     util::{self, OutOfBoundsError},
 };
@@ -139,7 +135,7 @@ pub enum Error {
     #[error("Failed to GZ compress partition image chunk")]
     GzCompress(#[source] io::Error),
     #[error("Failed to initialize XZ encoder")]
-    XzInit(#[source] liblzma::stream::Error),
+    XzInit(#[source] io::Error),
     #[error("Failed to XZ compress partition image chunk")]
     XzCompress(#[source] io::Error),
     #[error("Failed to read uncompressed input partition image chunk")]
@@ -818,16 +814,14 @@ pub fn apply_operation(
                         .map_err(error_fn)?;
                     }
                     Type::ReplaceXz => {
-                        let mut decoder = XzDecoder::new(&mut writer);
-                        stream::copy_n_inspect(
-                            &mut reader,
-                            &mut decoder,
-                            data_length,
-                            |data| hasher.update(data),
-                            cancel_signal,
-                        )
-                        .and_then(|()| decoder.finish())
-                        .map_err(error_fn)?;
+                        // lzma_rust2 does not have a Write API, so we limit the
+                        // reader and read till EOF.
+                        let limited_reader = (&mut reader).take(data_length);
+                        let hashing_reader = HashingReader::new(limited_reader, hasher);
+                        let mut decoder = XZReader::new(hashing_reader, false);
+                        stream::copy(&mut decoder, &mut writer, cancel_signal).map_err(error_fn)?;
+
+                        (_, hasher) = decoder.into_inner().finish();
                     }
                     _ => return Err(Error::UnsupportedOperation(op.r#type())),
                 }
@@ -947,8 +941,9 @@ fn compress_chunk(raw_data: &[u8], cancel_signal: &AtomicBool) -> Result<(Vec<u8
     // decompression. Also, we intentionally pick the lowest compression level
     // since we primarily care about squishing zeros. The non-zero portions of
     // boot images are usually already-compressed kernels and ramdisks.
-    let stream = Stream::new_easy_encoder(0, Check::None).map_err(Error::XzInit)?;
-    let mut xz_writer = XzEncoder::new_stream(hashing_writer, stream);
+    let mut options = XZOptions::with_preset(0);
+    options.set_check_sum_type(CheckType::None);
+    let mut xz_writer = XZWriter::new(hashing_writer, options).map_err(Error::XzInit)?;
 
     stream::copy_n(reader, &mut xz_writer, raw_data.len() as u64, cancel_signal)
         .map_err(Error::XzCompress)?;

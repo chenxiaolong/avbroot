@@ -32,8 +32,5 @@ git = "https://github.com/chenxiaolong/zip2"
 rev = "59685f4dadbfee8cb3ea74c8fbb402b60d8137e8"
 default-features = false
 
-[features]
-static = ["avbroot/static"]
-
 [lints]
 workspace = true

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -603,12 +603,14 @@ pub fn copy_n(
     copy_n_inspect(reader, writer, size, |_| {}, cancel_signal)
 }
 
-/// Copy data from `reader` to `writer` until `reader` reaches EOF. If `writer`
-/// reaches EOF before `reader` does, an error is returned. The operation is
-/// cancelled on the next loop iteration if `cancel_signal` is set to `true`.
-pub fn copy(
+/// Copy data from `reader` to `writer` until `reader` reaches EOF, invoking
+/// `inspect` after every buffer read iteration. If `writer` reaches EOF before
+/// `reader` does, an error is returned. The operation is cancelled on the next
+/// loop iteration if `cancel_signal` is set to `true`.
+pub fn copy_inspect(
     mut reader: impl Read,
     mut writer: impl Write,
+    mut inspect: impl FnMut(&[u8]),
     cancel_signal: &AtomicBool,
 ) -> io::Result<u64> {
     let mut buf = [0u8; 16384];
@@ -622,12 +624,19 @@ pub fn copy(
             break;
         }
 
+        inspect(&buf[..n]);
+
         writer.write_all(&buf[..n])?;
 
         copied += n as u64;
     }
 
     Ok(copied)
+}
+
+/// Copy data from `reader` to `writer` until `reader` reaches EOF.
+pub fn copy(reader: impl Read, writer: impl Write, cancel_signal: &AtomicBool) -> io::Result<u64> {
+    copy_inspect(reader, writer, |_| {}, cancel_signal)
 }
 
 #[cfg(test)]
@@ -822,21 +831,19 @@ mod tests {
         let mut reader = Cursor::new(b"foobar");
         let mut writer = Cursor::new([0u8; 6]);
 
-        super::copy_n_inspect(&mut reader, &mut writer, 6, |_| {}, &cancel_signal).unwrap();
+        super::copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap();
         assert_eq!(writer.get_ref(), b"foobar");
 
         // Reader early EOF.
         reader.seek(SeekFrom::Start(3)).unwrap();
         writer.rewind().unwrap();
-        let err =
-            super::copy_n_inspect(&mut reader, &mut writer, 6, |_| {}, &cancel_signal).unwrap_err();
+        let err = super::copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 
         // Writer early EOF.
         reader.rewind().unwrap();
         writer.seek(SeekFrom::Start(3)).unwrap();
-        let err =
-            super::copy_n_inspect(&mut reader, &mut writer, 6, |_| {}, &cancel_signal).unwrap_err();
+        let err = super::copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::WriteZero);
 
         reader.rewind().unwrap();
@@ -860,8 +867,7 @@ mod tests {
         reader.rewind().unwrap();
         writer.rewind().unwrap();
         cancel_signal.store(true, Ordering::SeqCst);
-        let err =
-            super::copy_n_inspect(&mut reader, &mut writer, 6, |_| {}, &cancel_signal).unwrap_err();
+        let err = super::copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Interrupted);
         let err = super::copy(&mut reader, &mut writer, &cancel_signal).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Interrupted);

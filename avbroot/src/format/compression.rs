@@ -1,15 +1,11 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::io::{self, Read, Seek, Write};
 
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-use liblzma::{
-    read::XzDecoder,
-    stream::{Check, Stream},
-    write::XzEncoder,
-};
 use lz4_flex::frame::FrameDecoder;
+use lzma_rust2::{CheckType, XZOptions, XZReader, XZWriter};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -28,7 +24,7 @@ pub enum Error {
     #[error("Failed to initialize legacy LZ4 encoder")]
     Lz4Init(#[source] io::Error),
     #[error("Failed to initialize XZ encoder")]
-    XzInit(#[source] liblzma::stream::Error),
+    XzInit(#[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -114,14 +110,14 @@ pub enum CompressedFormat {
     Xz,
 }
 
-pub enum CompressedReader<R: Read> {
+pub enum CompressedReader<'reader, R: Read> {
     None(R),
     Gzip(GzDecoder<R>),
     Lz4(FrameDecoder<R>),
-    Xz(XzDecoder<R>),
+    Xz(XZReader<'reader, R>),
 }
 
-impl<R: Read + Seek> CompressedReader<R> {
+impl<'reader, R: Read + Seek + 'reader> CompressedReader<'reader, R> {
     pub fn new(mut reader: R, raw_if_unknown: bool) -> Result<Self> {
         let magic = reader.read_array_exact::<6>().map_err(Error::AutoDetect)?;
 
@@ -132,7 +128,7 @@ impl<R: Read + Seek> CompressedReader<R> {
         } else if &magic[0..4] == LZ4_LEGACY_MAGIC {
             Ok(Self::Lz4(FrameDecoder::new(reader)))
         } else if &magic == XZ_MAGIC {
-            Ok(Self::Xz(XzDecoder::new(reader)))
+            Ok(Self::Xz(XZReader::new(reader, false)))
         } else if raw_if_unknown {
             Ok(Self::None(reader))
         } else {
@@ -159,7 +155,7 @@ impl<R: Read + Seek> CompressedReader<R> {
     }
 }
 
-impl<R: Read> Read for CompressedReader<R> {
+impl<'reader, R: Read + 'reader> Read for CompressedReader<'reader, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Self::None(r) => r.read(buf),
@@ -170,14 +166,15 @@ impl<R: Read> Read for CompressedReader<R> {
     }
 }
 
-pub enum CompressedWriter<W: Write> {
+#[allow(clippy::large_enum_variant)]
+pub enum CompressedWriter<'writer, W: Write> {
     None(W),
     Gzip(GzEncoder<W>),
     Lz4Legacy(Lz4LegacyEncoder<W>),
-    Xz(XzEncoder<W>),
+    Xz(XZWriter<'writer, W>),
 }
 
-impl<W: Write> CompressedWriter<W> {
+impl<'writer, W: Write + 'writer> CompressedWriter<'writer, W> {
     pub fn new(writer: W, format: CompressedFormat) -> Result<Self> {
         match format {
             CompressedFormat::None => Ok(Self::None(writer)),
@@ -190,8 +187,11 @@ impl<W: Write> CompressedWriter<W> {
             }
             CompressedFormat::Xz => {
                 // Some kernels are compiled without support for the default CRC64.
-                let stream = Stream::new_easy_encoder(6, Check::Crc32).map_err(Error::XzInit)?;
-                Ok(Self::Xz(XzEncoder::new_stream(writer, stream)))
+                let mut options = XZOptions::with_preset(6);
+                options.set_check_sum_type(CheckType::Crc32);
+
+                let xz_writer = XZWriter::new(writer, options).map_err(Error::XzInit)?;
+                Ok(Self::Xz(xz_writer))
             }
         }
     }
@@ -215,7 +215,7 @@ impl<W: Write> CompressedWriter<W> {
     }
 }
 
-impl<W: Write> Write for CompressedWriter<W> {
+impl<'writer, W: Write + 'writer> Write for CompressedWriter<'writer, W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Self::None(w) => w.write(buf),

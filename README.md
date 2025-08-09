@@ -588,8 +588,6 @@ The output binary is written to `target/release/avbroot`.
 
 Debug builds work too, but they will run significantly slower (in the sha256 computations) due to compiler optimizations being turned off.
 
-By default, the executable links to the system's bzip2 and liblzma libraries, which are the only external libraries avbroot depends on. To compile and statically link these two libraries, pass in `--features static`.
-
 ### Android cross-compilation
 
 To cross-compile for Android, install [cargo-android](https://github.com/chenxiaolong/cargo-android) and use the `cargo android` wrapper. To make a release build for aarch64, run:
