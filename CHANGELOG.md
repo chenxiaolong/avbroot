@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Switch to using lzma-rust2 for XZ compression and decompression ([PR #483])
+
 ### Version 3.19.0
 
 * Allow verifying hashes of unsigned images with `avbroot avb verify` ([PR #477])
@@ -567,3 +571,4 @@ Behind-the-scenes changes:
 [PR #477]: https://github.com/chenxiaolong/avbroot/pull/477
 [PR #478]: https://github.com/chenxiaolong/avbroot/pull/478
 [PR #479]: https://github.com/chenxiaolong/avbroot/pull/479
+[PR #483]: https://github.com/chenxiaolong/avbroot/pull/483
