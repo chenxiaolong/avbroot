@@ -1,20 +1,16 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
     collections::{HashMap, HashSet},
-    ffi::{OsStr, OsString},
-    fs::{self, File},
+    ffi::OsString,
+    fs::{self, File, OpenOptions},
     io::{self, BufReader, BufWriter, Cursor, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use cap_std::{
-    ambient_authority,
-    fs::{Dir, OpenOptions},
-};
 use clap::{Args, Parser, Subcommand};
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use rsa::RsaPublicKey;
@@ -410,20 +406,11 @@ fn display_info(display: &DisplayGroup, info: &AvbInfo) {
     }
 }
 
-/// Ensure that the partition name won't cause directory traversals.
-fn ensure_name_is_safe(name: &str) -> Result<()> {
-    if Path::new(name).file_name() != Some(OsStr::new(name)) {
-        bail!("Unsafe partition name: {name}");
-    }
-
-    Ok(())
-}
-
 /// Recursively verify an image's vbmeta header and all of the chained images.
 /// `seen` is used to prevent cycles. `descriptors` will contain all of the hash
 /// and hash tree descriptors that need to be verified.
 pub fn verify_headers(
-    directory: &Dir,
+    directory: &Path,
     name: &str,
     expected_key: Option<&RsaPublicKey>,
     seen: &mut HashSet<String>,
@@ -433,12 +420,9 @@ pub fn verify_headers(
         return Ok(());
     }
 
-    ensure_name_is_safe(name)?;
-
-    let path = format!("{name}.img");
-    let raw_reader = directory
-        .open(&path)
-        .with_context(|| format!("Failed to open for reading: {path:?}"))?;
+    let path = util::path_join_single(directory, format!("{name}.img"))?;
+    let raw_reader =
+        File::open(&path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
     let (header, _, _) = avb::load_image(BufReader::new(raw_reader))
         .with_context(|| format!("Failed to load vbmeta structures: {path:?}"))?;
 
@@ -545,7 +529,7 @@ fn verify_and_repair(
 /// Verify hash and hash tree descriptor digests and FEC data against their
 /// corresponding input files.
 pub fn verify_descriptors(
-    directory: &Dir,
+    directory: &Path,
     descriptors: &HashMap<String, Descriptor>,
     repair: bool,
     cancel_signal: &AtomicBool,
@@ -557,10 +541,12 @@ pub fn verify_descriptors(
         .map(|(name, descriptor)| {
             let _span = parent_span.enter();
 
-            let path = format!("{name}.img");
-            let file = match directory
-                .open_with(&path, OpenOptions::new().read(true).write(repair))
-                .map(|f| PSeekFile::new(f.into_std()))
+            let path = util::path_join_single(directory, format!("{name}.img"))?;
+            let file = match OpenOptions::new()
+                .read(true)
+                .write(repair)
+                .open(&path)
+                .map(PSeekFile::new)
             {
                 Ok(f) => f,
                 // Some devices, like bluejay, have vbmeta descriptors that
@@ -587,7 +573,7 @@ pub fn verify_descriptors(
 }
 
 fn compute_digest_recursive(
-    directory: &Dir,
+    directory: &Path,
     name: &str,
     context: &mut ring::digest::Context,
     max_depth: u8,
@@ -602,11 +588,8 @@ fn compute_digest_recursive(
 
     seen.insert(name.to_owned());
 
-    ensure_name_is_safe(name)?;
-
-    let path = format!("{name}.img");
-    let mut raw_reader = directory
-        .open(&path)
+    let path = util::path_join_single(directory, format!("{name}.img"))?;
+    let mut raw_reader = File::open(&path)
         .map(BufReader::new)
         .with_context(|| format!("Failed to open for reading: {path:?}"))?;
     let (header, footer, _) = avb::load_image(&mut raw_reader)
@@ -658,7 +641,11 @@ fn compute_digest_recursive(
 /// the root vbmeta image, followed by the headers in the immediate chained
 /// partitions. This digest is not defined to be recursive, so headers of
 /// chained partitions more than one level deep are ignored.
-pub fn compute_digest(directory: &Dir, name: &str, cancel_signal: &AtomicBool) -> Result<[u8; 32]> {
+pub fn compute_digest(
+    directory: &Path,
+    name: &str,
+    cancel_signal: &AtomicBool,
+) -> Result<[u8; 32]> {
     let mut seen = HashSet::<String>::new();
     let mut context = ring::digest::Context::new(&ring::digest::SHA256);
 
@@ -776,10 +763,7 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
         None
     };
 
-    let authority = ambient_authority();
-    let parent_path = util::parent_path(&cli.input);
-    let directory = Dir::open_ambient_dir(parent_path, authority)
-        .with_context(|| format!("Failed to open directory: {parent_path:?}"))?;
+    let directory = util::parent_path(&cli.input);
     let name = cli
         .input
         .file_stem()
@@ -791,13 +775,13 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
     let mut descriptors = HashMap::<String, Descriptor>::new();
 
     verify_headers(
-        &directory,
+        directory,
         name,
         public_key.as_ref(),
         &mut seen,
         &mut descriptors,
     )?;
-    verify_descriptors(&directory, &descriptors, cli.repair, cancel_signal)?;
+    verify_descriptors(directory, &descriptors, cli.repair, cancel_signal)?;
 
     info!("Successfully verified all vbmeta signatures and hashes");
 
@@ -805,10 +789,7 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
 }
 
 fn digest_subcommand(cli: &DigestCli, cancel_signal: &AtomicBool) -> Result<()> {
-    let authority = ambient_authority();
-    let parent_path = util::parent_path(&cli.input);
-    let directory = Dir::open_ambient_dir(parent_path, authority)
-        .with_context(|| format!("Failed to open directory: {parent_path:?}"))?;
+    let directory = util::parent_path(&cli.input);
     let name = cli
         .input
         .file_stem()
@@ -816,7 +797,7 @@ fn digest_subcommand(cli: &DigestCli, cancel_signal: &AtomicBool) -> Result<()> 
         .to_str()
         .ok_or_else(|| anyhow!("Invalid UTF-8: {:?}", cli.input))?;
 
-    let digest = compute_digest(&directory, name, cancel_signal)?;
+    let digest = compute_digest(directory, name, cancel_signal)?;
 
     println!("{}", hex::encode(digest));
 

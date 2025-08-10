@@ -47,6 +47,7 @@ use avbroot::{
         },
     },
     stream::{self, CountingWriter, FromReader, HashingReader, PSeekFile, Reopen, ToWriter},
+    util,
 };
 use clap::Parser;
 use rsa::{BigUint, rand_core::OsRng, traits::PublicKeyParts};
@@ -1222,10 +1223,6 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
     ];
 
     for name in profiles {
-        if Path::new(name).file_name() != Some(OsStr::new(name)) {
-            bail!("Unsafe profile name: {name}");
-        }
-
         let profile = &config.profile[name];
 
         for (zip_mode, hashes) in [
@@ -1235,7 +1232,7 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
             let _span = info_span!("profile", name, %zip_mode).entered();
 
             // Can't use NamedTempFile because avbroot does atomic replaces.
-            let mut profile_dir = work_dir.join(name);
+            let mut profile_dir = util::path_join_single(work_dir, name)?;
             profile_dir.push(zip_mode.to_string());
             let out_original = profile_dir.join("ota.zip");
             let out_magisk = profile_dir.join("ota_magisk.zip");

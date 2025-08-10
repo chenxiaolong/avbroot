@@ -35,6 +35,7 @@ use crate::{
     },
     patch::otacert::{self, OtaCertBuildFlags},
     stream::{self, FromReader, HashingWriter, ReadSeek, SectionReader, ToWriter, WriteSeek},
+    util,
 };
 
 #[derive(Debug, Error)]
@@ -929,16 +930,17 @@ impl PrepatchedImagePatcher {
             return Ok(None);
         };
 
-        let kmi_version = captures
-            .iter()
-            // Capture #0 is the entire match.
-            .skip(1)
-            .flatten()
-            .map(|c| c.as_bytes())
-            // Our regex only matches ASCII bytes.
-            .map(|c| std::str::from_utf8(c).unwrap())
-            .collect::<Vec<_>>()
-            .join("-");
+        let kmi_version = util::join(
+            captures
+                .iter()
+                // Capture #0 is the entire match.
+                .skip(1)
+                .flatten()
+                .map(|c| c.as_bytes())
+                // Our regex only matches ASCII bytes.
+                .map(|c| std::str::from_utf8(c).unwrap()),
+            "-",
+        );
 
         Ok(Some(kmi_version))
     }

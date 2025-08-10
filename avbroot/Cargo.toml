@@ -14,8 +14,6 @@ base64 = "0.22.1"
 bitflags = { version = "2.4.1", features = ["serde"] }
 bstr = "1.6.2"
 bzip2 = "0.6.0"
-cap-std = "3.0.0"
-cap-tempfile = "3.0.0"
 clap = { version = "4.4.1", features = ["derive"] }
 clap_complete = "4.4.0"
 cms = { version = "0.2.2", features = ["std"] }

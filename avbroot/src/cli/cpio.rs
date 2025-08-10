@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -11,7 +11,6 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use bstr::ByteSlice;
-use cap_std::{ambient_authority, fs::Dir};
 use clap::{Parser, Subcommand};
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
@@ -91,17 +90,17 @@ fn write_info(path: &Path, info: &CpioInfo) -> Result<()> {
 
 /// Open reader to the corresponding file inside the tree if the entry is a
 /// regular file. Unsafe paths will result in an error.
-fn open_tree_file(tree: &Dir, entry: &CpioEntry) -> Result<Option<(BufReader<File>, u32)>> {
+fn open_tree_file(tree: &Path, entry: &CpioEntry) -> Result<Option<(BufReader<File>, u32)>> {
     if entry.file_type == CpioEntryType::Regular {
-        let path = entry
+        let sub_path = entry
             .path
             .as_bstr()
             .to_path()
             .with_context(|| format!("Invalid entry path: {:?}", entry.path.as_bstr()))?;
+        let path = util::path_join(tree, sub_path)?;
 
-        let mut reader = tree
-            .open(path)
-            .map(|f| BufReader::new(f.into_std()))
+        let mut reader = File::open(&path)
+            .map(BufReader::new)
             .with_context(|| format!("Failed to open for reading: {path:?}"))?;
 
         let file_size = reader
@@ -122,21 +121,21 @@ fn open_tree_file(tree: &Dir, entry: &CpioEntry) -> Result<Option<(BufReader<Fil
 /// Open writer to the corresponding file inside the tree if the entry is a
 /// regular file. Intermediate directories are automatically created as needed.
 /// Unsafe paths will result in an error.
-fn create_tree_file(tree: &Dir, entry: &CpioEntry) -> Result<Option<BufWriter<File>>> {
+fn create_tree_file(tree: &Path, entry: &CpioEntry) -> Result<Option<BufWriter<File>>> {
     if entry.file_type == CpioEntryType::Regular {
-        let path = entry
+        let sub_path = entry
             .path
             .as_bstr()
             .to_path()
             .with_context(|| format!("Invalid entry path: {:?}", entry.path.as_bstr()))?;
-        let parent = util::parent_path(path);
+        let path = util::path_join(tree, sub_path)?;
+        let parent = util::parent_path(&path);
 
-        tree.create_dir_all(parent)
+        fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create directory: {parent:?}"))?;
 
-        let writer = tree
-            .create(path)
-            .map(|f| BufWriter::new(f.into_std()))
+        let writer = File::create(&path)
+            .map(BufWriter::new)
             .with_context(|| format!("Failed to open for writing: {path:?}"))?;
 
         Ok(Some(writer))
@@ -171,16 +170,13 @@ fn unpack_subcommand(
 
     display_format(cpio_cli, format);
 
-    let authority = ambient_authority();
-    Dir::create_ambient_dir_all(&cli.output_tree, authority)
+    fs::create_dir_all(&cli.output_tree)
         .with_context(|| format!("Failed to create directory: {:?}", cli.output_tree))?;
-    let tree = Dir::open_ambient_dir(&cli.output_tree, authority)
-        .with_context(|| format!("Failed to open directory: {:?}", cli.output_tree))?;
 
     while let Some(entry) = reader.next_entry().context("Failed to read cpio entry")? {
         display_entry(cpio_cli, &entry);
 
-        if let Some(mut writer) = create_tree_file(&tree, &entry)? {
+        if let Some(mut writer) = create_tree_file(&cli.output_tree, &entry)? {
             let file_size = entry.data.size()?;
 
             stream::copy_n(&mut reader, &mut writer, file_size.into(), cancel_signal)
@@ -209,12 +205,8 @@ fn pack_subcommand(cpio_cli: &CpioCli, cli: &PackCli, cancel_signal: &AtomicBool
 
     cpio::assign_inodes(&mut info.entries, true)?;
 
-    let authority = ambient_authority();
-    let tree = Dir::open_ambient_dir(&cli.input_tree, authority)
-        .with_context(|| format!("Failed to open directory: {:?}", cli.input_tree))?;
-
     for entry in &mut info.entries {
-        let out = open_tree_file(&tree, entry)?;
+        let out = open_tree_file(&cli.input_tree, entry)?;
 
         if let Some((_, file_size)) = &out {
             entry.data = CpioEntryData::Size(*file_size);

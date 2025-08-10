@@ -1,9 +1,9 @@
-// SPDX-FileCopyrightText: 2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
     collections::HashMap,
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     fs::{self, File},
     io::{BufReader, BufWriter, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -11,7 +11,6 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use cap_std::{ambient_authority, fs::Dir};
 use clap::{Args, Parser, Subcommand};
 use tracing::info;
 
@@ -20,6 +19,7 @@ use crate::{
     crypto::{self, PassphraseSource, RsaSigningKey},
     format::payload::{PayloadHeader, PayloadWriter},
     stream::{self, FromReader, PSeekFile},
+    util,
 };
 
 fn open_reader(path: &Path, allow_delta: bool) -> Result<(BufReader<File>, PayloadHeader)> {
@@ -113,15 +113,12 @@ fn unpack_subcommand(
 
     write_info(&cli.output_info, &header)?;
 
-    let authority = ambient_authority();
-    Dir::create_ambient_dir_all(&cli.output_images, authority)
+    fs::create_dir_all(&cli.output_images)
         .with_context(|| format!("Failed to create directory: {:?}", cli.output_images))?;
-    let directory = Dir::open_ambient_dir(&cli.output_images, authority)
-        .with_context(|| format!("Failed to open directory: {:?}", cli.output_images))?;
 
     ota::extract_payload(
         &PSeekFile::new(reader.into_inner()),
-        &directory,
+        &cli.output_images,
         0,
         payload_size,
         &header,
@@ -147,28 +144,16 @@ fn pack_subcommand(
 
     let mut header = read_info(&cli.input_info)?;
 
-    let authority = ambient_authority();
-    let directory = Dir::open_ambient_dir(&cli.input_images, authority)
-        .with_context(|| format!("Failed to open directory: {:?}", cli.input_images))?;
-
-    for p in &header.manifest.partitions {
-        let name = &p.partition_name;
-
-        if Path::new(name).file_name() != Some(OsStr::new(name)) {
-            bail!("Unsafe partition name: {name}");
-        }
-    }
-
     // Pre-open all of the image files.
     let input_files = header
         .manifest
         .partitions
         .iter()
         .map(|p| {
-            let path = format!("{}.img", p.partition_name);
-            let file = directory
-                .open(&path)
-                .map(|f| PSeekFile::new(f.into_std()))
+            let path =
+                util::path_join_single(&cli.input_images, format!("{}.img", p.partition_name))?;
+            let file = File::open(&path)
+                .map(PSeekFile::new)
                 .with_context(|| format!("Failed to open file: {path:?}"))?;
 
             Ok((p.partition_name.clone(), file))

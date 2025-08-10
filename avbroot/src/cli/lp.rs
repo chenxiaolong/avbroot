@@ -1,8 +1,7 @@
-// SPDX-FileCopyrightText: 2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
-    ffi::OsStr,
     fs::{self, File},
     io::{Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -10,7 +9,6 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use cap_std::{ambient_authority, fs::Dir};
 use clap::{CommandFactory, Parser, Subcommand};
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
@@ -19,6 +17,7 @@ use rayon::iter::{
 use crate::{
     format::lp::{Extent, ExtentType, ImageType, Metadata, SECTOR_SIZE},
     stream::{self, FromReader, PSeekFile, Reopen, ToWriter},
+    util,
 };
 
 fn open_lp_inputs(paths: &[impl AsRef<Path>]) -> Result<(Vec<PSeekFile>, Metadata)> {
@@ -190,11 +189,8 @@ fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool
         return Ok(());
     }
 
-    let authority = ambient_authority();
-    Dir::create_ambient_dir_all(&cli.output_images, authority)
+    fs::create_dir_all(&cli.output_images)
         .with_context(|| format!("Failed to create directory: {:?}", cli.output_images))?;
-    let directory = Dir::open_ambient_dir(&cli.output_images, authority)
-        .with_context(|| format!("Failed to open directory: {:?}", cli.output_images))?;
 
     let slot = &metadata.slots[0];
 
@@ -216,11 +212,11 @@ fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool
 
         for partition in &group.partitions {
             // A partition name with unsafe characters fails during parsing.
-            let path = format!("{}.img", partition.name);
+            let path =
+                util::path_join_single(&cli.output_images, format!("{}.img", partition.name))?;
 
-            let file = directory
-                .create(&path)
-                .map(|f| PSeekFile::new(f.into_std()))
+            let file = File::create(&path)
+                .map(PSeekFile::new)
                 .with_context(|| format!("Failed to open for writing: {path:?}"))?;
 
             file.set_len(partition.size()?)
@@ -303,35 +299,21 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
         }
     }
 
-    for group in &slot.groups {
-        for partition in &group.partitions {
-            let name = &partition.name;
-
-            if Path::new(name).file_name() != Some(OsStr::new(name)) {
-                bail!("Unsafe partition name: {name}");
-            }
-        }
-    }
-
     // Preopen all image input files.
     let mut paths = vec![];
     let mut files = vec![];
 
     if metadata.image_type == ImageType::Normal {
-        let authority = ambient_authority();
-        let directory = Dir::open_ambient_dir(&cli.input_images, authority)
-            .with_context(|| format!("Failed to open directory: {:?}", cli.input_images))?;
-
         for group in &mut slot.groups {
             let mut group_paths = vec![];
             let mut group_files = vec![];
 
             for partition in &mut group.partitions {
-                let path = format!("{}.img", partition.name);
+                let path =
+                    util::path_join_single(&cli.input_images, format!("{}.img", partition.name))?;
 
-                let mut file = directory
-                    .open(&path)
-                    .map(|f| PSeekFile::new(f.into_std()))
+                let mut file = File::open(&path)
+                    .map(PSeekFile::new)
                     .with_context(|| format!("Failed to open for reading: {path:?}"))?;
 
                 let size = file

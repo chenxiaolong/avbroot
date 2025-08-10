@@ -15,11 +15,9 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use bitflags::bitflags;
-use cap_std::{ambient_authority, fs::Dir};
-use cap_tempfile::TempDir;
 use clap::{ArgAction, Args, Parser, Subcommand, value_parser};
 use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 use topological_sort::TopologicalSort;
 use tracing::{debug_span, error, info, warn};
 use x509_cert::Certificate;
@@ -1293,29 +1291,22 @@ fn patch_ota_zip(
 
 pub fn extract_payload(
     raw_reader: &PSeekFile,
-    directory: &Dir,
+    directory: &Path,
     payload_offset: u64,
     payload_size: u64,
     header: &PayloadHeader,
     images: &BTreeSet<String>,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    for name in images {
-        if Path::new(name).file_name() != Some(OsStr::new(name)) {
-            bail!("Unsafe partition name: {name}");
-        }
-    }
-
     info!("Extracting from the payload: {}", util::join(images, ", "));
 
     // Pre-open all output files.
     let output_files = images
         .iter()
         .map(|name| {
-            let path = format!("{name}.img");
-            let file = directory
-                .create(&path)
-                .map(|f| PSeekFile::new(f.into_std()))
+            let path = util::path_join_single(directory, format!("{name}.img"))?;
+            let file = File::create(&path)
+                .map(PSeekFile::new)
                 .with_context(|| format!("Failed to open for writing: {path:?}"))?;
             Ok((name.as_str(), file))
         })
@@ -1345,7 +1336,7 @@ pub fn extract_payload(
 }
 
 fn verify_partition_hashes(
-    directory: &Dir,
+    directory: &Path,
     header: &PayloadHeader,
     images: &BTreeSet<String>,
     cancel_signal: &AtomicBool,
@@ -1365,9 +1356,8 @@ fn verify_partition_hashes(
                 .and_then(|info| info.hash.as_ref())
                 .ok_or_else(|| anyhow!("Hash not found for partition: {name}"))?;
 
-            let path = format!("{name}.img");
-            let file = directory
-                .open(&path)
+            let path = util::path_join_single(directory, format!("{name}.img"))?;
+            let file = File::open(&path)
                 .with_context(|| format!("Failed to open for reading: {path:?}"))?;
 
             let mut writer = HashingWriter::new(
@@ -1702,15 +1692,12 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         return Ok(());
     }
 
-    let authority = ambient_authority();
-    Dir::create_ambient_dir_all(&cli.directory, authority)
+    fs::create_dir_all(&cli.directory)
         .with_context(|| format!("Failed to create directory: {:?}", cli.directory))?;
-    let directory = Dir::open_ambient_dir(&cli.directory, authority)
-        .with_context(|| format!("Failed to open directory: {:?}", cli.directory))?;
 
     extract_payload(
         &raw_reader,
-        &directory,
+        &cli.directory,
         payload_offset,
         payload_size,
         &header,
@@ -1742,9 +1729,9 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
             .and_then(|p| p.device.first())
             .ok_or_else(|| anyhow!("Device codename not found in OTA metadata"))?;
 
-        directory
-            .write(ANDROID_INFO, format!("require board={device}\n"))
-            .with_context(|| format!("Failed to write file: {ANDROID_INFO}"))?;
+        let android_info_path = util::path_join_single(&cli.directory, ANDROID_INFO)?;
+        fs::write(&android_info_path, format!("require board={device}\n"))
+            .with_context(|| format!("Failed to write file: {android_info_path:?}"))?;
 
         // Find out which images can be flashed with fastboot. The bootloader
         // (and potentially modem) partitions need to be flashed as a whole and
@@ -1753,9 +1740,9 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         let mut flashable_images = BTreeSet::new();
 
         for name in &unique_images {
-            let file = directory
-                .open(format!("{name}.img"))
-                .with_context(|| format!("Failed to open image for reading: {name}"))?;
+            let path = util::path_join_single(&cli.directory, format!("{name}.img"))?;
+            let file = File::open(&path)
+                .with_context(|| format!("Failed to open image for reading: {path:?}"))?;
 
             match avb::load_image(file) {
                 Ok(_) => {
@@ -1763,7 +1750,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
                 }
                 // Treat images without AVB metadata as bootloader partitions.
                 Err(avb::Error::InvalidHeaderMagic(_)) => continue,
-                Err(e) => return Err(e).with_context(|| format!("Failed to load image: {name}")),
+                Err(e) => return Err(e).with_context(|| format!("Failed to load image: {path:?}")),
             }
         }
 
@@ -1851,9 +1838,9 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         fastboot_info.push_str("if-wipe erase userdata\n");
         fastboot_info.push_str("if-wipe erase metadata\n");
 
-        directory
-            .write(FASTBOOT_INFO, fastboot_info)
-            .with_context(|| format!("Failed to write file: {FASTBOOT_INFO}"))?;
+        let fastboot_info_path = util::path_join_single(&cli.directory, FASTBOOT_INFO)?;
+        fs::write(&fastboot_info_path, fastboot_info)
+            .with_context(|| format!("Failed to write file: {fastboot_info_path:?}"))?;
     }
 
     Ok(())
@@ -1934,8 +1921,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     info!("Extracting partition images to temporary directory");
 
-    let authority = ambient_authority();
-    let temp_dir = TempDir::new(authority).context("Failed to create temporary directory")?;
+    let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
     let raw_reader = reader.into_inner();
     let unique_images = header
         .manifest
@@ -1947,7 +1933,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     extract_payload(
         &raw_reader,
-        &temp_dir,
+        temp_dir.path(),
         pf_payload.offset,
         pf_payload.size,
         &header,
@@ -1957,7 +1943,8 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     info!("Verifying partition hashes");
 
-    if let Err(e) = verify_partition_hashes(&temp_dir, &header, &unique_images, cancel_signal) {
+    if let Err(e) = verify_partition_hashes(temp_dir.path(), &header, &unique_images, cancel_signal)
+    {
         fail_later!("{e:?}");
     }
 
@@ -1977,7 +1964,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     let mut descriptors = HashMap::<String, Descriptor>::new();
 
     if let Err(e) = cli::avb::verify_headers(
-        &temp_dir,
+        temp_dir.path(),
         "vbmeta",
         public_key.as_ref(),
         &mut seen,
@@ -1988,8 +1975,9 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         fail_later!("{e:?}");
     }
 
-    if let Err(e) = cli::avb::verify_descriptors(&temp_dir, &descriptors, false, cancel_signal)
-        .context("Failed to verify images against AVB descriptors")
+    if let Err(e) =
+        cli::avb::verify_descriptors(temp_dir.path(), &descriptors, false, cancel_signal)
+            .context("Failed to verify images against AVB descriptors")
     {
         fail_later!("{e:?}");
     }
@@ -2003,11 +1991,10 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         .map(|(name, _)| name.as_str())
         .collect::<Vec<_>>();
     let boot_images = boot::load_boot_images(&boot_image_names, |name| {
-        Ok(Box::new(
-            temp_dir
-                .open(format!("{name}.img"))
-                .map(|f| PSeekFile::new(f.into_std()))?,
-        ))
+        let path = util::path_join_single(temp_dir.path(), format!("{name}.img"))
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+        Ok(Box::new(File::open(path).map(PSeekFile::new)?))
     })
     .context("Failed to load all boot images")?;
     let targets = OtaCertPatcher::new(ota_cert.clone())

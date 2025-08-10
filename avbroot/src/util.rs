@@ -8,7 +8,7 @@ use std::{
     ops::{
         Bound, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
     },
-    path::Path,
+    path::{Component, Path, PathBuf},
 };
 
 use num_traits::{NumCast, PrimInt};
@@ -313,6 +313,67 @@ pub fn parent_path(path: &Path) -> &Path {
     Path::new(".")
 }
 
+/// Path safety-related errors.
+#[derive(Clone, Debug, Error)]
+pub enum PathSafetyError {
+    #[error("Path contains multiple components: {0:?}")]
+    NotSingle(PathBuf),
+    #[error("Path contains '..': {0:?}")]
+    HasDotDot(PathBuf),
+}
+
+/// Join `parent` with `child`, disallowing unsafe child paths. Absolute child
+/// paths are converted into relative paths and `..` components result in an
+/// error.
+pub fn path_join(
+    parent: impl AsRef<Path>,
+    child: impl AsRef<Path>,
+) -> Result<PathBuf, PathSafetyError> {
+    fn inner(parent: &Path, child: &Path) -> Result<PathBuf, PathSafetyError> {
+        let mut result = parent.to_owned();
+
+        for component in child.components() {
+            match component {
+                // Make absolute paths relative.
+                Component::Prefix(_) | Component::RootDir | Component::CurDir => continue,
+                // Unsafe path. We block this even if it wouldn't escape the parent.
+                Component::ParentDir => {
+                    return Err(PathSafetyError::HasDotDot(child.to_path_buf()));
+                }
+                Component::Normal(os_str) => result.push(os_str),
+            }
+        }
+
+        Ok(result)
+    }
+
+    inner(parent.as_ref(), child.as_ref())
+}
+
+/// Ensure that the path has no directory components.
+pub fn path_ensure_single(name: impl AsRef<Path>) -> Result<(), PathSafetyError> {
+    fn inner(name: &Path) -> Result<(), PathSafetyError> {
+        // Path::file_name() already checks for `.` and `..`.
+        if name.file_name() != Some(name.as_os_str()) {
+            return Err(PathSafetyError::NotSingle(name.to_path_buf()));
+        }
+
+        Ok(())
+    }
+
+    inner(name.as_ref())
+}
+
+/// Like [`path_join`], but ensures that the child path contains no directory
+/// components with [`path_ensure_single`].
+pub fn path_join_single(
+    parent: impl AsRef<Path>,
+    child: impl AsRef<Path>,
+) -> Result<PathBuf, PathSafetyError> {
+    path_ensure_single(child.as_ref())?;
+    path_join(parent.as_ref(), child.as_ref())
+}
+
 /// Sort and merge overlapping intervals.
 pub fn merge_overlapping<T>(sections: &[Range<T>]) -> Vec<Range<T>>
 where
@@ -379,6 +440,7 @@ where
         .is_ok()
 }
 
+/// Join arbitrary displayable items with a separator.
 pub fn join(into_iter: impl IntoIterator<Item = impl Display>, sep: &str) -> String {
     use std::fmt::Write;
 
@@ -395,6 +457,7 @@ pub fn join(into_iter: impl IntoIterator<Item = impl Display>, sep: &str) -> Str
     result
 }
 
+/// Sort arbitrary sequence of sortable items.
 pub fn sort<T: Ord>(iter: impl Iterator<Item = T>) -> Vec<T> {
     let mut items = iter.collect::<Vec<_>>();
     items.sort();
