@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Switch to using lzma-rust2 for XZ compression and decompression ([PR #483])
+* Remove cap-std and cap-tempfile dependencies ([PR #484])
 
 ### Version 3.19.0
 
@@ -572,3 +573,4 @@ Behind-the-scenes changes:
 [PR #478]: https://github.com/chenxiaolong/avbroot/pull/478
 [PR #479]: https://github.com/chenxiaolong/avbroot/pull/479
 [PR #483]: https://github.com/chenxiaolong/avbroot/pull/483
+[PR #484]: https://github.com/chenxiaolong/avbroot/pull/484
