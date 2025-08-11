@@ -11,6 +11,8 @@
 
 * Switch to using lzma-rust2 for XZ compression and decompression ([PR #483])
 * Remove cap-std and cap-tempfile dependencies ([PR #484])
+* Add new `avbroot avb verify-device` command to verify the signatures on the actual device ([PR #485])
+  * This is only available in the Android build of avbroot.
 
 ### Version 3.19.0
 
