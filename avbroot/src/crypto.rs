@@ -160,10 +160,10 @@ impl PassphraseSource {
             Err(e) => {
                 #[cfg(unix)]
                 if let PromptError::IOError(io_e) = e {
-                    if let Some(errno) = io_e.raw_os_error() {
-                        if errno == libc::ENXIO || errno == libc::ENOTTY {
-                            return Err(Error::NotInteractive(io_e));
-                        }
+                    if let Some(errno) = io_e.raw_os_error()
+                        && (errno == libc::ENXIO || errno == libc::ENOTTY)
+                    {
+                        return Err(Error::NotInteractive(io_e));
                     }
 
                     return Err(Error::PassphrasePrompt(PromptError::IOError(io_e)));

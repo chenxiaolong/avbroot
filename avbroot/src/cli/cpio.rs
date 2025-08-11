@@ -33,7 +33,7 @@ fn open_reader(
     path: &Path,
     include_trailer: bool,
 ) -> Result<(
-    CpioReader<CompressedReader<BufReader<File>>>,
+    CpioReader<CompressedReader<'_, BufReader<File>>>,
     CompressedFormat,
 )> {
     let file =
@@ -49,7 +49,7 @@ fn open_reader(
 fn open_writer(
     path: &Path,
     format: CompressedFormat,
-) -> Result<CpioWriter<CompressedWriter<BufWriter<File>>>> {
+) -> Result<CpioWriter<CompressedWriter<'_, BufWriter<File>>>> {
     let file =
         File::create(path).with_context(|| format!("Failed to open cpio for writing: {path:?}"))?;
     let writer = CompressedWriter::new(BufWriter::new(file), format)

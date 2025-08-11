@@ -522,11 +522,11 @@ impl ChunkList {
         // entire list every time.
         let mut insert_before = self.chunks.front_index();
 
-        if let Some(last_used) = self.last_used {
-            if chunk.bounds.start >= self.chunks.get(last_used).unwrap().bounds.start {
-                // The new chunk starts after the last used chunk.
-                insert_before = Some(last_used);
-            }
+        if let Some(last_used) = self.last_used
+            && chunk.bounds.start >= self.chunks.get(last_used).unwrap().bounds.start
+        {
+            // The new chunk starts after the last used chunk.
+            insert_before = Some(last_used);
         }
 
         while let Some(index) = insert_before {

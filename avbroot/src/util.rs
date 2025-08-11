@@ -304,10 +304,10 @@ pub fn is_zero(mut buf: &[u8]) -> bool {
 /// Get the non-empty parent of a path. If the path has no parent in the string,
 /// then `.` is returned. This does not perform any filesystem operations.
 pub fn parent_path(path: &Path) -> &Path {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            return parent;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        return parent;
     }
 
     Path::new(".")
@@ -387,11 +387,11 @@ where
     for section in sections {
         if section.start >= section.end {
             continue;
-        } else if let Some(last) = result.last_mut() {
-            if section.start <= last.end {
-                last.end = last.end.max(section.end);
-                continue;
-            }
+        } else if let Some(last) = result.last_mut()
+            && section.start <= last.end
+        {
+            last.end = last.end.max(section.end);
+            continue;
         }
 
         result.push(section);

@@ -95,10 +95,10 @@ pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8
             modified.signature =
                 BitString::from_bytes(&[]).expect("Empty ASN.1 bit string was invalid");
         }
-        if flags.contains(OtaCertBuildFlags::REMOVE_EXTENSIONS) {
-            if let Some(extensions) = &mut modified.tbs_certificate.extensions {
-                extensions.clear();
-            }
+        if flags.contains(OtaCertBuildFlags::REMOVE_EXTENSIONS)
+            && let Some(extensions) = &mut modified.tbs_certificate.extensions
+        {
+            extensions.clear();
         }
         if flags.contains(OtaCertBuildFlags::REMOVE_ISSUER) {
             modified.tbs_certificate.issuer.0.clear();

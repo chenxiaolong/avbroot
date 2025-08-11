@@ -296,14 +296,13 @@ fn update_dm_verity_cmdline(info: &mut AvbInfo) -> Result<bool> {
     };
 
     for d in &mut info.header.descriptors {
-        if let Descriptor::KernelCmdline(d) = d {
-            if d.flags & KernelCmdlineDescriptor::FLAG_USE_ONLY_IF_HASHTREE_NOT_DISABLED != 0
-                && d.cmdline.starts_with("dm=")
-                && d.cmdline != new_cmdline
-            {
-                d.cmdline = new_cmdline;
-                return Ok(true);
-            }
+        if let Descriptor::KernelCmdline(d) = d
+            && d.flags & KernelCmdlineDescriptor::FLAG_USE_ONLY_IF_HASHTREE_NOT_DISABLED != 0
+            && d.cmdline.starts_with("dm=")
+            && d.cmdline != new_cmdline
+        {
+            d.cmdline = new_cmdline;
+            return Ok(true);
         }
     }
 
@@ -420,14 +419,14 @@ impl fmt::Display for SearchPath {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ImageOpener {
     search: Vec<SearchPath>,
 }
 
 impl ImageOpener {
     pub fn new() -> Self {
-        Self { search: Vec::new() }
+        Self::default()
     }
 
     pub fn with_dir(dir: impl Into<PathBuf>) -> Self {
@@ -491,7 +490,7 @@ pub fn verify_headers(
         return Ok(());
     }
 
-    let (path, raw_reader) = opener.open(name, &OpenOptions::new().read(true))?;
+    let (path, raw_reader) = opener.open(name, OpenOptions::new().read(true))?;
     let (header, _, _) = avb::load_image(BufReader::new(raw_reader))
         .with_context(|| format!("Failed to load vbmeta structures: {path:?}"))?;
 
@@ -856,8 +855,8 @@ fn verify_internal(
     let mut seen = HashSet::<String>::new();
     let mut descriptors = HashMap::<String, Descriptor>::new();
 
-    verify_headers(&opener, name, &trust_method, &mut seen, &mut descriptors)?;
-    verify_descriptors(&opener, &descriptors, repair, allow_missing, cancel_signal)?;
+    verify_headers(opener, name, &trust_method, &mut seen, &mut descriptors)?;
+    verify_descriptors(opener, &descriptors, repair, allow_missing, cancel_signal)?;
 
     info!("Successfully verified all vbmeta signatures and hashes");
 
@@ -879,7 +878,7 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
         cli.public_key.as_deref(),
         None,
         &opener,
-        &name,
+        name,
         cli.repair,
         !cli.fail_if_missing,
         cancel_signal,

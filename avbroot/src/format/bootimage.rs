@@ -387,14 +387,13 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
             None
         };
 
-        if let Some(v1) = &v1_data {
-            if reader
+        if let Some(v1) = &v1_data
+            && reader
                 .stream_position()
                 .map_err(|e| Error::DataRead("Boot::V1::header_size", e))?
                 != u64::from(v1.header_size)
-            {
-                return Err(Error::InvalidHeaderSize(v1.header_size));
-            }
+        {
+            return Err(Error::InvalidHeaderSize(v1.header_size));
         }
 
         padding::read_discard(&mut reader, page_size.into())
@@ -870,14 +869,12 @@ impl BootImageV3Through4 {
         padding::write_zeros(&mut writer, PAGE_SIZE.into())
             .map_err(|e| Error::DataWrite("Boot::V3::ramdisk_padding", e))?;
 
-        if !skip_v4_sig {
-            if let Some(sig) = v4_signature {
-                writer
-                    .write_all(&sig)
-                    .map_err(|e| Error::DataWrite("Boot::V4::signature", e))?;
-                padding::write_zeros(&mut writer, PAGE_SIZE.into())
-                    .map_err(|e| Error::DataWrite("Boot::V4::signature_padding", e))?;
-            }
+        if !skip_v4_sig && let Some(sig) = v4_signature {
+            writer
+                .write_all(&sig)
+                .map_err(|e| Error::DataWrite("Boot::V4::signature", e))?;
+            padding::write_zeros(&mut writer, PAGE_SIZE.into())
+                .map_err(|e| Error::DataWrite("Boot::V4::signature_padding", e))?;
         }
 
         Ok(())

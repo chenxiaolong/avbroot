@@ -378,14 +378,12 @@ impl MagiskRootPatcher {
 
             let mut new_data = None;
 
-            if xz_compress {
-                if let CpioEntryData::Data(data) = &old_entry.data {
-                    new_path.extend(b".xz");
+            if xz_compress && let CpioEntryData::Data(data) = &old_entry.data {
+                new_path.extend(b".xz");
 
-                    let reader = Cursor::new(data);
-                    let buf = Self::xz_compress(&new_path, reader, cancel_signal)?;
-                    new_data = Some(CpioEntryData::Data(buf));
-                }
+                let reader = Cursor::new(data);
+                let buf = Self::xz_compress(&new_path, reader, cancel_signal)?;
+                new_data = Some(CpioEntryData::Data(buf));
             }
 
             new_entries.push(CpioEntry {
@@ -544,10 +542,10 @@ impl BootImagePatch for MagiskRootPatcher {
 
         magisk_config.push_str("RECOVERYMODE=false\n");
 
-        if Self::VER_PREINIT_DEVICE.contains(&self.version) {
-            if let Some(device) = &self.preinit_device {
-                writeln!(&mut magisk_config, "PREINITDEVICE={device}").unwrap();
-            }
+        if Self::VER_PREINIT_DEVICE.contains(&self.version)
+            && let Some(device) = &self.preinit_device
+        {
+            writeln!(&mut magisk_config, "PREINITDEVICE={device}").unwrap();
         }
 
         // Magisk normally saves the original SHA1 digest in its config file. It

@@ -1657,7 +1657,7 @@ impl Header {
 
     /// Get the first hash or hash tree descriptor if there is only one. This is
     /// the case for appended AVB images.
-    pub fn appended_descriptor(&self) -> Result<AppendedDescriptorRef> {
+    pub fn appended_descriptor(&self) -> Result<AppendedDescriptorRef<'_>> {
         let mut result = None;
 
         for descriptor in &self.descriptors {
@@ -1683,7 +1683,7 @@ impl Header {
 
     /// Get the first hash or hash tree descriptor if there is only one. This is
     /// the case for appended AVB images.
-    pub fn appended_descriptor_mut(&mut self) -> Result<AppendedDescriptorMut> {
+    pub fn appended_descriptor_mut(&mut self) -> Result<AppendedDescriptorMut<'_>> {
         let mut result = None;
 
         for descriptor in &mut self.descriptors {
@@ -2178,10 +2178,10 @@ pub fn write_appended_image(
         .and_then(|s| s.checked_add(header_padding))
         .ok_or(Error::IntOverflow("Appended::header_end_padded"))?;
 
-    if let Some(s) = image_size {
-        if header_end_padded > s {
-            return Err(Error::TooSmallForHeader(s));
-        }
+    if let Some(s) = image_size
+        && header_end_padded > s
+    {
+        return Err(Error::TooSmallForHeader(s));
     }
 
     writer

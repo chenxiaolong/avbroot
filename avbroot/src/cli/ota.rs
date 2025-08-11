@@ -901,10 +901,10 @@ fn patch_ota_payload(
     if !skip_system_ota_cert {
         required_flags |= RequiredFlags::SYSTEM;
     }
-    if let Some(vabc_algo) = vabc_algo_override {
-        if set_vabc_algo(&mut header, vabc_algo)? {
-            required_flags |= RequiredFlags::ALL_COW;
-        }
+    if let Some(vabc_algo) = vabc_algo_override
+        && set_vabc_algo(&mut header, vabc_algo)?
+    {
+        required_flags |= RequiredFlags::ALL_COW;
     }
 
     let all_partitions = header
@@ -1052,23 +1052,23 @@ fn patch_ota_payload(
         // Try to copy from our replacement image. The compressed chunks are
         // laid out sequentially and data_offset is set to the offset within
         // that file.
-        if let Some((input_file, modified_operations)) = compressed_files.get_mut(&name) {
-            if util::ranges_contains(modified_operations, &oi) {
-                input_file
-                    .file
-                    .seek(SeekFrom::Start(data_offset))
-                    .with_context(|| format!("Failed to seek image: {name}"))?;
+        if let Some((input_file, modified_operations)) = compressed_files.get_mut(&name)
+            && util::ranges_contains(modified_operations, &oi)
+        {
+            input_file
+                .file
+                .seek(SeekFrom::Start(data_offset))
+                .with_context(|| format!("Failed to seek image: {name}"))?;
 
-                stream::copy_n(
-                    &mut input_file.file,
-                    &mut payload_writer,
-                    data_length,
-                    cancel_signal,
-                )
-                .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
+            stream::copy_n(
+                &mut input_file.file,
+                &mut payload_writer,
+                data_length,
+                cancel_signal,
+            )
+            .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
 
-                continue;
-            }
+            continue;
         }
 
         // Otherwise, copy from the original payload.
