@@ -68,10 +68,12 @@ By default, this command will not write to any file and fails if an image is cor
 
 ```bash
 # Run from a root adb shell:
-avbroot avb verify-device -p <public key>
+avbroot avb verify-device [-p <public key>]
 ```
 
 This subcommand is like `avbroot avb verify`, except that it verifies the actual partitions on the device instead of a directory of image files. This is only available in the Android build of avbroot.
+
+If `-p` is omitted, the signatures are verified against the public key SHA-256 digest reported by the bootloader. This is the same digest shown on screen every time the device boots.
 
 ### Computing vbmeta digest
 

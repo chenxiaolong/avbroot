@@ -24,7 +24,10 @@ use x509_cert::Certificate;
 use zip::{CompressionMethod, DateTime, ZipArchive, write::SimpleFileOptions};
 
 use crate::{
-    cli::{self, avb::ImageOpener},
+    cli::{
+        self,
+        avb::{ImageOpener, TrustMethod},
+    },
     crypto::{self, PassphraseSource, RsaSigningKey},
     format::{
         avb::{self, Descriptor, Header},
@@ -1950,14 +1953,14 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     info!("Verifying AVB signatures");
 
-    let public_key = if let Some(p) = &cli.public_key_avb {
+    let trust_method = if let Some(p) = &cli.public_key_avb {
         let data = fs::read(p).with_context(|| format!("Failed to read file: {p:?}"))?;
         let key = avb::decode_public_key(&data)
             .with_context(|| format!("Failed to decode public key: {p:?}"))?;
 
-        Some(key)
+        TrustMethod::Key(key)
     } else {
-        None
+        TrustMethod::Anything
     };
 
     let opener = ImageOpener::with_dir(temp_dir.path());
@@ -1967,7 +1970,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     if let Err(e) = cli::avb::verify_headers(
         &opener,
         "vbmeta",
-        public_key.as_ref(),
+        &trust_method,
         &mut seen,
         &mut descriptors,
     )

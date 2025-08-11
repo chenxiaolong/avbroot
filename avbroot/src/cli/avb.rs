@@ -16,6 +16,7 @@ use clap::{Args, Parser, Subcommand};
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use rsa::RsaPublicKey;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::{Span, debug_span, info, warn};
 
 use crate::{
@@ -469,13 +470,20 @@ impl ImageOpener {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum TrustMethod {
+    Key(RsaPublicKey),
+    KeyDigest([u8; 32]),
+    Anything,
+}
+
 /// Recursively verify an image's vbmeta header and all of the chained images.
 /// `seen` is used to prevent cycles. `descriptors` will contain all of the hash
 /// and hash tree descriptors that need to be verified.
 pub fn verify_headers(
     opener: &ImageOpener,
     name: &str,
-    expected_key: Option<&RsaPublicKey>,
+    trust_method: &TrustMethod,
     seen: &mut HashSet<String>,
     descriptors: &mut HashMap<String, Descriptor>,
 ) -> Result<()> {
@@ -495,14 +503,27 @@ pub fn verify_headers(
     if let Some(k) = &public_key {
         let prefix = format!("{name} has a signed vbmeta header");
 
-        if let Some(e) = expected_key {
-            if k == e {
-                info!("{prefix}");
-            } else {
-                bail!("{prefix}, but is signed by an untrusted key");
+        match trust_method {
+            TrustMethod::Key(expected) => {
+                if k == expected {
+                    info!("{prefix}");
+                } else {
+                    bail!("{prefix}, but is signed by an untrusted key");
+                }
             }
-        } else {
-            warn!("{prefix}, but parent does not list a trusted key");
+            TrustMethod::KeyDigest(expected_sha256) => {
+                let encoded = avb::encode_public_key(k)?;
+                let digest = Sha256::digest(&encoded);
+
+                if digest.as_slice() == expected_sha256 {
+                    info!("{prefix}");
+                } else {
+                    bail!("{prefix}, but is signed by an untrusted key");
+                }
+            }
+            TrustMethod::Anything => {
+                warn!("{prefix}, but parent does not list a trusted key");
+            }
         }
     } else {
         info!("{name} has an unsigned vbmeta header");
@@ -531,8 +552,9 @@ pub fn verify_headers(
                 let target_key = avb::decode_public_key(&d.public_key).with_context(|| {
                     format!("Failed to decode chained public key for: {target_name}")
                 })?;
+                let target_trust = TrustMethod::Key(target_key);
 
-                verify_headers(opener, target_name, Some(&target_key), seen, descriptors)?;
+                verify_headers(opener, target_name, &target_trust, seen, descriptors)?;
             }
             _ => {}
         }
@@ -812,32 +834,29 @@ fn info_subcommand(cli: &InfoCli) -> Result<()> {
 
 fn verify_internal(
     public_key_path: Option<&Path>,
+    public_key_digest: Option<[u8; 32]>,
     opener: &ImageOpener,
     name: &str,
     repair: bool,
     allow_missing: bool,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let public_key = if let Some(p) = public_key_path {
+    let trust_method = if let Some(p) = public_key_path {
         let data = fs::read(p).with_context(|| format!("Failed to read file: {p:?}"))?;
         let key = avb::decode_public_key(&data)
             .with_context(|| format!("Failed to decode public key: {p:?}"))?;
 
-        Some(key)
+        TrustMethod::Key(key)
+    } else if let Some(d) = public_key_digest {
+        TrustMethod::KeyDigest(d)
     } else {
-        None
+        TrustMethod::Anything
     };
 
     let mut seen = HashSet::<String>::new();
     let mut descriptors = HashMap::<String, Descriptor>::new();
 
-    verify_headers(
-        &opener,
-        name,
-        public_key.as_ref(),
-        &mut seen,
-        &mut descriptors,
-    )?;
+    verify_headers(&opener, name, &trust_method, &mut seen, &mut descriptors)?;
     verify_descriptors(&opener, &descriptors, repair, allow_missing, cancel_signal)?;
 
     info!("Successfully verified all vbmeta signatures and hashes");
@@ -858,6 +877,7 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
 
     verify_internal(
         cli.public_key.as_deref(),
+        None,
         &opener,
         &name,
         cli.repair,
@@ -867,12 +887,31 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
 }
 
 #[cfg(target_os = "android")]
-fn verify_device_subcommand(cli: &VerifyDeviceCli, cancel_signal: &AtomicBool) -> Result<()> {
-    const SLOT_SUFFIX: &str = "ro.boot.slot_suffix";
+fn get_required_property(name: &str) -> Result<String> {
+    system_properties::read(name)
+        .with_context(|| format!("Failed to query property: {name}"))?
+        .ok_or_else(|| anyhow!("Property is not set: {name}"))
+}
 
-    let slot_suffix = system_properties::read(SLOT_SUFFIX)
-        .with_context(|| format!("Failed to query property: {SLOT_SUFFIX}"))?
-        .ok_or_else(|| anyhow!("Property is not set: {SLOT_SUFFIX}"))?;
+#[cfg(target_os = "android")]
+fn verify_device_subcommand(cli: &VerifyDeviceCli, cancel_signal: &AtomicBool) -> Result<()> {
+    let slot_suffix = get_required_property("ro.boot.slot_suffix")?;
+
+    // Use the bootloader's public key digest if no key is specified. This is
+    // what the user flashed for avb_custom_key.
+    let public_key_digest = if cli.public_key.is_none() {
+        let hex_digest = get_required_property("ro.boot.vbmeta.public_key_digest")?;
+        let mut digest = [0u8; 32];
+
+        hex::decode_to_slice(&hex_digest, &mut digest)
+            .with_context(|| format!("Invalid public key digest: {hex_digest}"))?;
+
+        info!("Verifying against bootloader public key digest: {hex_digest}");
+
+        Some(digest)
+    } else {
+        None
+    };
 
     let mut opener = ImageOpener::new();
     opener.add_dir("/dev/block/by-name", &slot_suffix);
@@ -880,6 +919,7 @@ fn verify_device_subcommand(cli: &VerifyDeviceCli, cancel_signal: &AtomicBool) -
 
     verify_internal(
         cli.public_key.as_deref(),
+        public_key_digest,
         &opener,
         &cli.partition,
         false,
