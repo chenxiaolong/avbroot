@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.20.0
 
 * Switch to using lzma-rust2 for XZ compression and decompression ([PR #483])
 * Remove cap-std and cap-tempfile dependencies ([PR #484])
