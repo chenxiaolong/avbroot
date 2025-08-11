@@ -63,11 +63,14 @@ include-workspace = true
 bypass = [
     # Copies of unmodified crashwrangler objects for old macOS versions.
     { name = "honggfuzz", allow-globs = ["honggfuzz/third_party/mac/CrashReport_*.o"] },
+    # Only used in tests.
+    { name = "libloading", allow-globs = ["tests/nagisa*.dll"] },
 ]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
+    "https://github.com/chenxiaolong/system-properties",
     "https://github.com/chenxiaolong/zip2",
 ]

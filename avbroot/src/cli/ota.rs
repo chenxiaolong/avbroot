@@ -24,7 +24,7 @@ use x509_cert::Certificate;
 use zip::{CompressionMethod, DateTime, ZipArchive, write::SimpleFileOptions};
 
 use crate::{
-    cli,
+    cli::{self, avb::ImageOpener},
     crypto::{self, PassphraseSource, RsaSigningKey},
     format::{
         avb::{self, Descriptor, Header},
@@ -1960,11 +1960,12 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         None
     };
 
+    let opener = ImageOpener::with_dir(temp_dir.path());
     let mut seen = HashSet::<String>::new();
     let mut descriptors = HashMap::<String, Descriptor>::new();
 
     if let Err(e) = cli::avb::verify_headers(
-        temp_dir.path(),
+        &opener,
         "vbmeta",
         public_key.as_ref(),
         &mut seen,
@@ -1975,9 +1976,14 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         fail_later!("{e:?}");
     }
 
-    if let Err(e) =
-        cli::avb::verify_descriptors(temp_dir.path(), &descriptors, false, cancel_signal)
-            .context("Failed to verify images against AVB descriptors")
+    if let Err(e) = cli::avb::verify_descriptors(
+        &opener,
+        &descriptors,
+        false,
+        !cli.fail_if_missing,
+        cancel_signal,
+    )
+    .context("Failed to verify images against AVB descriptors")
     {
         fail_later!("{e:?}");
     }
@@ -2374,6 +2380,13 @@ pub struct VerifyCli {
     /// same key.
     #[arg(long, help_heading = HEADING_OTHER)]
     pub skip_recovery_ota_cert: bool,
+
+    /// Fail if a referenced image is missing.
+    ///
+    /// Missing images are ignored by default because some OTAs contain vbmeta
+    /// images referencing partitions that only exist on the real device.
+    #[arg(long)]
+    fail_if_missing: bool,
 }
 
 #[allow(clippy::large_enum_variant)]

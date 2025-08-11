@@ -58,11 +58,20 @@ This subcommand shows all of the vbmeta header and footer fields. `vbmeta` parti
 avbroot avb verify -i <root vbmeta image> -p <public key>
 ```
 
-This subcommand verifies the vbmeta header signature and the hashes for all vbmeta descriptors (including hash tree descriptors). If the vbmeta image has a chain descriptor for another partition, that partition image will be verified as well (recursively). All partitions are expected to be in the same directory as the vbmeta image being verified.
+This subcommand verifies the vbmeta header signature and the hashes for all vbmeta descriptors (including hash tree descriptors). If the vbmeta image has a chain descriptor for another partition, that partition image will be verified as well (recursively). All images are expected to be in the same directory as the vbmeta image being verified. Missing images are ignored by default because the vbmeta images in some OTAs reference partitions that only exist on a real device. `--fail-if-missing` can be used to override this.
 
 If `-p` is omitted, the signatures and hashes are checked only for validity, not that they are trusted.
 
 By default, this command will not write to any file and fails if an image is corrupt or invalid. To attempt to repair corrupted dm-verity images, pass in `--repair`.
+
+### Verifying AVB hashes and signatures on device
+
+```bash
+# Run from a root adb shell:
+avbroot avb verify-device -p <public key>
+```
+
+This subcommand is like `avbroot avb verify`, except that it verifies the actual partitions on the device instead of a directory of image files. This is only available in the Android build of avbroot.
 
 ### Computing vbmeta digest
 

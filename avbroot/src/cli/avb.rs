@@ -4,6 +4,7 @@
 use std::{
     collections::{HashMap, HashSet},
     ffi::OsString,
+    fmt,
     fs::{self, File, OpenOptions},
     io::{self, BufReader, BufWriter, Cursor, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -406,11 +407,73 @@ fn display_info(display: &DisplayGroup, info: &AvbInfo) {
     }
 }
 
+#[derive(Debug, Clone)]
+struct SearchPath {
+    dir: PathBuf,
+    suffix: String,
+}
+
+impl fmt::Display for SearchPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?} (suffix: {:?})", self.dir, self.suffix)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ImageOpener {
+    search: Vec<SearchPath>,
+}
+
+impl ImageOpener {
+    pub fn new() -> Self {
+        Self { search: Vec::new() }
+    }
+
+    pub fn with_dir(dir: impl Into<PathBuf>) -> Self {
+        let mut result = Self::new();
+        result.add_dir(dir, ".img");
+        result
+    }
+
+    pub fn add_dir(&mut self, dir: impl Into<PathBuf>, suffix: impl Into<String>) {
+        self.search.push(SearchPath {
+            dir: dir.into(),
+            suffix: suffix.into(),
+        });
+    }
+
+    fn open(&self, name: &str, options: &OpenOptions) -> io::Result<(PathBuf, File)> {
+        for search in &self.search {
+            let path = util::path_join_single(&search.dir, format!("{name}{}", search.suffix))
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+            match options.open(&path) {
+                Ok(f) => return Ok((path, f)),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    return Err(io::Error::new(
+                        e.kind(),
+                        format!("Failed to open for reading: {path:?}: {e}"),
+                    ));
+                }
+            }
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "Failed to find {name:?} image in: {}",
+                util::join(&self.search, ", "),
+            ),
+        ))
+    }
+}
+
 /// Recursively verify an image's vbmeta header and all of the chained images.
 /// `seen` is used to prevent cycles. `descriptors` will contain all of the hash
 /// and hash tree descriptors that need to be verified.
 pub fn verify_headers(
-    directory: &Path,
+    opener: &ImageOpener,
     name: &str,
     expected_key: Option<&RsaPublicKey>,
     seen: &mut HashSet<String>,
@@ -420,9 +483,7 @@ pub fn verify_headers(
         return Ok(());
     }
 
-    let path = util::path_join_single(directory, format!("{name}.img"))?;
-    let raw_reader =
-        File::open(&path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
+    let (path, raw_reader) = opener.open(name, &OpenOptions::new().read(true))?;
     let (header, _, _) = avb::load_image(BufReader::new(raw_reader))
         .with_context(|| format!("Failed to load vbmeta structures: {path:?}"))?;
 
@@ -471,7 +532,7 @@ pub fn verify_headers(
                     format!("Failed to decode chained public key for: {target_name}")
                 })?;
 
-                verify_headers(directory, target_name, Some(&target_key), seen, descriptors)?;
+                verify_headers(opener, target_name, Some(&target_key), seen, descriptors)?;
             }
             _ => {}
         }
@@ -529,36 +590,33 @@ fn verify_and_repair(
 /// Verify hash and hash tree descriptor digests and FEC data against their
 /// corresponding input files.
 pub fn verify_descriptors(
-    directory: &Path,
+    opener: &ImageOpener,
     descriptors: &HashMap<String, Descriptor>,
     repair: bool,
+    allow_missing: bool,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let parent_span = Span::current();
+
+    let mut options = OpenOptions::new();
+    options.read(true);
+    options.write(repair);
 
     descriptors
         .par_iter()
         .map(|(name, descriptor)| {
             let _span = parent_span.enter();
 
-            let path = util::path_join_single(directory, format!("{name}.img"))?;
-            let file = match OpenOptions::new()
-                .read(true)
-                .write(repair)
-                .open(&path)
-                .map(PSeekFile::new)
-            {
-                Ok(f) => f,
+            let file = match opener.open(name, &options) {
+                Ok((_, f)) => PSeekFile::new(f),
                 // Some devices, like bluejay, have vbmeta descriptors that
                 // refer to partitions that exist on the device, but not in the
                 // OTA.
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                    warn!("Partition image does not exist: {path:?}");
+                Err(e) if e.kind() == io::ErrorKind::NotFound && allow_missing => {
+                    warn!("{e}");
                     return Ok(());
                 }
-                Err(e) => {
-                    Err(e).with_context(|| format!("Failed to open for reading: {path:?}"))?
-                }
+                Err(e) => return Err(e.into()),
             };
 
             verify_and_repair(
@@ -752,8 +810,15 @@ fn info_subcommand(cli: &InfoCli) -> Result<()> {
     Ok(())
 }
 
-fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> {
-    let public_key = if let Some(p) = &cli.public_key {
+fn verify_internal(
+    public_key_path: Option<&Path>,
+    opener: &ImageOpener,
+    name: &str,
+    repair: bool,
+    allow_missing: bool,
+    cancel_signal: &AtomicBool,
+) -> Result<()> {
+    let public_key = if let Some(p) = public_key_path {
         let data = fs::read(p).with_context(|| format!("Failed to read file: {p:?}"))?;
         let key = avb::decode_public_key(&data)
             .with_context(|| format!("Failed to decode public key: {p:?}"))?;
@@ -763,6 +828,24 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
         None
     };
 
+    let mut seen = HashSet::<String>::new();
+    let mut descriptors = HashMap::<String, Descriptor>::new();
+
+    verify_headers(
+        &opener,
+        name,
+        public_key.as_ref(),
+        &mut seen,
+        &mut descriptors,
+    )?;
+    verify_descriptors(&opener, &descriptors, repair, allow_missing, cancel_signal)?;
+
+    info!("Successfully verified all vbmeta signatures and hashes");
+
+    Ok(())
+}
+
+fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> {
     let directory = util::parent_path(&cli.input);
     let name = cli
         .input
@@ -771,21 +854,38 @@ fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> 
         .to_str()
         .ok_or_else(|| anyhow!("Invalid UTF-8: {:?}", cli.input))?;
 
-    let mut seen = HashSet::<String>::new();
-    let mut descriptors = HashMap::<String, Descriptor>::new();
+    let opener = ImageOpener::with_dir(directory);
 
-    verify_headers(
-        directory,
-        name,
-        public_key.as_ref(),
-        &mut seen,
-        &mut descriptors,
-    )?;
-    verify_descriptors(directory, &descriptors, cli.repair, cancel_signal)?;
+    verify_internal(
+        cli.public_key.as_deref(),
+        &opener,
+        &name,
+        cli.repair,
+        !cli.fail_if_missing,
+        cancel_signal,
+    )
+}
 
-    info!("Successfully verified all vbmeta signatures and hashes");
+#[cfg(target_os = "android")]
+fn verify_device_subcommand(cli: &VerifyDeviceCli, cancel_signal: &AtomicBool) -> Result<()> {
+    const SLOT_SUFFIX: &str = "ro.boot.slot_suffix";
 
-    Ok(())
+    let slot_suffix = system_properties::read(SLOT_SUFFIX)
+        .with_context(|| format!("Failed to query property: {SLOT_SUFFIX}"))?
+        .ok_or_else(|| anyhow!("Property is not set: {SLOT_SUFFIX}"))?;
+
+    let mut opener = ImageOpener::new();
+    opener.add_dir("/dev/block/by-name", &slot_suffix);
+    opener.add_dir("/dev/block/mapper", &slot_suffix);
+
+    verify_internal(
+        cli.public_key.as_deref(),
+        &opener,
+        &cli.partition,
+        false,
+        false,
+        cancel_signal,
+    )
 }
 
 fn digest_subcommand(cli: &DigestCli, cancel_signal: &AtomicBool) -> Result<()> {
@@ -811,6 +911,8 @@ pub fn avb_main(cli: &AvbCli, cancel_signal: &AtomicBool) -> Result<()> {
         AvbCommand::Repack(c) => repack_subcommand(c, cancel_signal),
         AvbCommand::Info(c) => info_subcommand(c),
         AvbCommand::Verify(c) => verify_subcommand(c, cancel_signal),
+        #[cfg(target_os = "android")]
+        AvbCommand::VerifyDevice(c) => verify_device_subcommand(c, cancel_signal),
         AvbCommand::Digest(c) => digest_subcommand(c, cancel_signal),
     }
 }
@@ -1014,6 +1116,32 @@ struct VerifyCli {
     /// Only images with hash tree descriptors can contain FEC data.
     #[arg(short, long)]
     repair: bool,
+
+    /// Fail if a referenced image is missing.
+    ///
+    /// Missing images are ignored by default because some OTAs contain vbmeta
+    /// images referencing partitions that only exist on the real device.
+    #[arg(long)]
+    fail_if_missing: bool,
+}
+
+/// Verify vbmeta signatures for the currently booted system.
+///
+/// This behaves like the `verify` subcommand, except that it checks the actual
+/// partitions that this device is currently booted from.
+#[cfg(target_os = "android")]
+#[derive(Debug, Parser)]
+struct VerifyDeviceCli {
+    /// Path to public key in AVB binary format.
+    ///
+    /// If this is not specified, the signatures can only be checked for
+    /// validity, not whether they are trusted.
+    #[arg(short, long, value_name = "FILE", value_parser)]
+    public_key: Option<PathBuf>,
+
+    /// Partition to recursively verify.
+    #[arg(short = 'P', long, value_name = "NAME", default_value = "vbmeta")]
+    partition: String,
 }
 
 /// Compute the vbmeta digest.
@@ -1035,6 +1163,8 @@ enum AvbCommand {
     #[command(alias = "dump")]
     Info(InfoCli),
     Verify(VerifyCli),
+    #[cfg(target_os = "android")]
+    VerifyDevice(VerifyDeviceCli),
     Digest(DigestCli),
 }
 

@@ -213,6 +213,8 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
     init: [libfs_avb]Returning avb_handle with status: Success
     ```
 
+    Alternatively, the Android build of avbroot can also be used to [verify the partitions on the device](./README.extra.md#verifying-avb-hashes-and-signatures-on-device).
+
 9. Reboot back into fastboot and lock the bootloader. This will trigger a data wipe again.
 
     ```bash

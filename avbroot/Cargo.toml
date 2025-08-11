@@ -71,6 +71,9 @@ features = ["deflate"]
 libc = "0.2.158"
 rustix = { version = "1.0.3", default-features = false, features = ["process"] }
 
+[target.'cfg(target_os = "android")'.dependencies]
+system-properties = { git = "https://github.com/chenxiaolong/system-properties", tag = "v0.2.1" }
+
 [build-dependencies]
 constcat = "0.6.0"
 prost-build = "0.14.1"
