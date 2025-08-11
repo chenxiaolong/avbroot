@@ -13,6 +13,7 @@
 * Remove cap-std and cap-tempfile dependencies ([PR #484])
 * Add new `avbroot avb verify-device` command to verify the signatures on the actual device ([Issue #482], [PR #485], [PR #486])
   * This is only available in the Android build of avbroot.
+* Update dependencies and fix new Rust 1.89 clippy lints ([PR #487])
 
 ### Version 3.19.0
 
@@ -579,3 +580,4 @@ Behind-the-scenes changes:
 [PR #484]: https://github.com/chenxiaolong/avbroot/pull/484
 [PR #485]: https://github.com/chenxiaolong/avbroot/pull/485
 [PR #486]: https://github.com/chenxiaolong/avbroot/pull/486
+[PR #487]: https://github.com/chenxiaolong/avbroot/pull/487
