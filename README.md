@@ -51,7 +51,7 @@ avbroot applies the following patches to the partition images:
 
 3. Follow the steps to [generate signing keys](#generating-keys).
 
-    Skip this step if you're updating Android, Magisk, or KernelSU after you've performed an [initial setup](#initial-setup). [Updates](#updates) do not require signing keys since you have already generated them in the initial setup.
+    Skip this step if you're updating Android, Magisk, or KernelSU after you've already performed an [initial setup](#initial-setup). There's no need to generate new signing keys for [updates](#updates): any further updates must use the keys that were created during the initial setup.
 
 4. Patch the OTA zip. The base command is:
 
@@ -241,9 +241,9 @@ Updates to Android, Magisk, and KernelSU are all done the same way: by patching 
 
 4. Sideload the patched OTA with `adb sideload`.
 
-5. Restart your phone. Note: the phone will likely take a long time to startup after an OS update (a few minutes in some cases).
+5. Restart your device. Note that the device will likely take longer than usual to start on the first boot after an OS update (a few minutes in some cases).
 
-**Warning**: Due to how virtual A/B works, there is a snapshot merge operation that Android runs invisibly in the background after installing an OTA and rebooting. During the snapshot merge process, it's not possible to sideload another OTA from recovery mode. Avoid doing anything that could result in a boot loop (eg. installing modules) until this process is complete because there is no way to recover, aside from unlocking the bootloader (and wiping) again.
+**WARNING**: Due to how virtual A/B works, there is a snapshot merge operation that Android runs invisibly in the background after installing an OTA and rebooting. During the snapshot merge process, it's not possible to sideload another OTA from recovery mode. Avoid doing anything that could result in a boot loop (eg. installing modules) until this process is complete because there is no way to recover, aside from unlocking the bootloader (and wiping) again.
 
 The status can be found by running `adb logcat -v color -s update_engine`. Alternatively, if [Custota](https://github.com/chenxiaolong/Custota) is installed (even if it's not configured to point to a custom OTA server), it will show a notification until the snapshot merge operation completes.
 
