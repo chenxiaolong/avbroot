@@ -3,7 +3,7 @@
 
 use std::{
     borrow::Cow,
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     ffi::{OsStr, OsString},
     fs::{self, File},
     io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
@@ -16,12 +16,15 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use bitflags::bitflags;
 use clap::{ArgAction, Args, Parser, Subcommand, value_parser};
+use rawzip::{
+    CompressionMethod, RECOMMENDED_BUFFER_SIZE, ZipArchive, ZipArchiveEntryWayfinder,
+    ZipArchiveWriter, ZipDataWriter, extra_fields::ExtraFieldId,
+};
 use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
 use tempfile::{NamedTempFile, TempDir};
 use topological_sort::TopologicalSort;
 use tracing::{debug_span, error, info, warn};
 use x509_cert::Certificate;
-use zip::{CompressionMethod, DateTime, ZipArchive, write::SimpleFileOptions};
 
 use crate::{
     cli::{
@@ -34,7 +37,7 @@ use crate::{
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         padding,
         payload::{self, CowVersion, PayloadHeader, PayloadWriter, VabcAlgo, VabcParams},
-        zip::ZipWriterWrapper,
+        zip::{self, ZipArchivePSeekExt, ZipEntriesSafeExt, ZipFileHeaderRecordExt},
     },
     patch::{
         boot::{
@@ -47,8 +50,8 @@ use crate::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
     },
     stream::{
-        self, CountingWriter, FromReader, HashingWriter, PSeekFile, ReadSeekReopen, Reopen,
-        SectionReader, SharedCursor, ToWriter, WriteSeekReopen,
+        self, FromReader, HashingWriter, PSeekFile, ReadSeekReopen, Reopen, SectionReader,
+        SharedCursor, ToWriter, WriteSeekReopen,
     },
     util,
 };
@@ -1099,8 +1102,8 @@ fn patch_ota_payload(
 #[allow(clippy::too_many_arguments)]
 fn patch_ota_zip(
     raw_reader: &PSeekFile,
-    zip_reader: &mut ZipArchive<impl Read + Seek>,
-    mut zip_writer: &mut ZipWriterWrapper<impl Write>,
+    zip_reader: &ZipArchive<PSeekFile>,
+    zip_writer: &mut ZipArchiveWriter<impl Write>,
     external_images: &HashMap<String, PathBuf>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     skip_system_ota_cert: bool,
@@ -1112,22 +1115,50 @@ fn patch_ota_zip(
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<(OtaMetadata, u64)> {
-    let mut missing = BTreeSet::from([ota::PATH_OTACERT, ota::PATH_PAYLOAD, ota::PATH_PROPERTIES]);
+    struct InputEntry {
+        compression_method: CompressionMethod,
+        is_zip64: bool,
+        // We can't store the rawzip::ZipEntry directly because of the lifetime
+        // generic parameter. We'll need to read the
+        wayfinder: ZipArchiveEntryWayfinder,
+    }
 
+    let mut missing = BTreeSet::from([ota::PATH_OTACERT, ota::PATH_PAYLOAD, ota::PATH_PROPERTIES]);
+    let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
+    let mut input_entries_iter = zip_reader.entries_safe(&mut buffer);
     // Keep in sorted order for reproducibility and to guarantee that the
     // payload is processed before its properties file.
-    let paths = zip_reader
-        .file_names()
-        .map(|p| p.to_owned())
-        .collect::<BTreeSet<_>>();
+    let mut input_entries = BTreeMap::new();
 
-    for path in &paths {
-        missing.remove(path.as_str());
+    while let Some((cd_entry, _)) = input_entries_iter
+        .next_entry()
+        .context("Failed to list zip entries")?
+    {
+        let path = cd_entry
+            .file_path_utf8()
+            .context("Zip contains non-UTF-8 paths")?;
+
+        missing.remove(path);
+
+        input_entries.insert(
+            path.to_owned(),
+            InputEntry {
+                compression_method: cd_entry.compression_method(),
+                // We only check for the sizes here instead of the presence of
+                // the ZIP64 extra field. The central header's extra fields may
+                // have ZIP64 only for the local header offset.
+                is_zip64: cd_entry.compressed_size_hint() >= 0xffffffff
+                    || cd_entry.uncompressed_size_hint() >= 0xffffffff,
+                wayfinder: cd_entry.wayfinder(),
+            },
+        );
     }
 
     if !missing.is_empty() {
         bail!("Missing entries in OTA zip: {}", util::join(missing, ", "));
-    } else if !paths.contains(ota::PATH_METADATA) && !paths.contains(ota::PATH_METADATA_PB) {
+    } else if !input_entries.contains_key(ota::PATH_METADATA)
+        && !input_entries.contains_key(ota::PATH_METADATA_PB)
+    {
         bail!(
             "Neither legacy nor protobuf OTA metadata files exist: {:?}, {:?}",
             ota::PATH_METADATA,
@@ -1138,26 +1169,16 @@ fn patch_ota_zip(
     let mut metadata = None;
     let mut properties = None;
     let mut payload_metadata_size = None;
-    let mut entries = vec![];
-    let mut last_entry_used_zip64 = false;
+    let mut metadata_entries = vec![];
 
-    for path in &paths {
+    for (path, input_entry) in &input_entries {
         let _span = debug_span!("zip", entry = path).entered();
 
-        let mut reader = zip_reader
-            .by_name(path)
+        let entry = zip_reader
+            .get_entry(input_entry.wayfinder)
             .with_context(|| format!("Failed to open zip entry: {path}"))?;
-
-        // Android's libarchive parser is broken and only reads data descriptor
-        // size fields as 64-bit integers if the central directory says the file
-        // size is >= 2^32 - 1. We'll turn on zip64 if the input is above this
-        // threshold. This should be sufficient since the output file is likely
-        // to be larger.
-        let use_zip64 = reader.size() >= 0xffffffff;
-        let options = SimpleFileOptions::default()
-            .last_modified_time(DateTime::default())
-            .compression_method(CompressionMethod::Stored)
-            .large_file(use_zip64);
+        let mut reader = zip::verifying_reader(&entry, input_entry.compression_method)
+            .with_context(|| format!("Failed to open zip entry: {path}"))?;
 
         // Processed at the end after all other entries are written.
         match path.as_str() {
@@ -1191,38 +1212,64 @@ fn patch_ota_zip(
             _ => {}
         }
 
-        // All remaining entries are written immediately.
-        let offset = zip_writer
-            .start_file(path, options)
-            .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
-        let mut writer = CountingWriter::new(&mut zip_writer);
+        // Android's libziparchive parser is broken and only reads data
+        // descriptor size fields as 64-bit integers if the central directory
+        // says the file size is >= 2^32 - 1. APPNOTE 4.3.9.2 mentions that the
+        // parser should be reading 64-bit integers from the data descriptor if
+        // the ZIP64 extra field is present. Luckily, we don't have to do
+        // anything to work around this because rawzip's threshold when writing
+        // is the same as what libziparchive expects.
+        let mut builder = zip_writer
+            .new_file(path)
+            .compression_method(input_entry.compression_method);
 
+        if zip_mode == ZipMode::Seekable && input_entry.is_zip64 {
+            // We need to reserve space for the ZIP64 extra field when doing the
+            // post-processing to convert a streaming zip to a seekable one.
+            builder = builder.extra_field(
+                ExtraFieldId::ANDROID_ZIP_ALIGNMENT,
+                &[0u8; 16],
+                rawzip::Header::LOCAL,
+            )?;
+        }
+
+        let entry_writer = builder
+            .create()
+            .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
+        let offset = entry_writer.stream_offset();
+        let compressed_writer =
+            zip::compressed_writer(entry_writer, input_entry.compression_method)
+                .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
+        let mut data_writer = ZipDataWriter::new(compressed_writer);
+
+        // All remaining entries are written immediately.
         match path.as_str() {
             ota::PATH_OTACERT => {
                 // Use the user's certificate
                 info!("Replacing zip entry: {path}");
 
-                crypto::write_pem_cert(Path::new(path), &mut writer, cert_ota)
+                crypto::write_pem_cert(Path::new(path), &mut data_writer, cert_ota)
                     .with_context(|| format!("Failed to write entry: {path}"))?;
             }
             ota::PATH_PAYLOAD => {
                 info!("Patching zip entry: {path}");
 
-                if reader.compression() != CompressionMethod::Stored {
+                if input_entry.compression_method != CompressionMethod::Store {
                     bail!("{path} is not stored uncompressed");
                 }
 
                 // The zip library doesn't provide us with a seekable reader, so
                 // we make our own from the underlying file.
+                let payload_range = entry.compressed_data_range();
                 let payload_reader = SectionReader::new(
                     BufReader::new(raw_reader.reopen()?),
-                    reader.data_start(),
-                    reader.size(),
+                    payload_range.0,
+                    payload_range.1 - payload_range.0,
                 )?;
 
                 let (p, m) = patch_ota_payload(
                     &payload_reader,
-                    &mut writer,
+                    &mut data_writer,
                     external_images,
                     boot_patchers,
                     skip_system_ota_cert,
@@ -1242,50 +1289,39 @@ fn patch_ota_zip(
                 info!("Patching zip entry: {path}");
 
                 // payload.bin is guaranteed to be patched first.
-                writer
+                data_writer
                     .write_all(properties.as_ref().unwrap().as_bytes())
                     .with_context(|| format!("Failed to write payload properties: {path}"))?;
             }
             _ => {
                 info!("Copying zip entry: {path}");
 
-                stream::copy(&mut reader, &mut writer, cancel_signal)
+                stream::copy(&mut reader, &mut data_writer, cancel_signal)
                     .with_context(|| format!("Failed to copy zip entry: {path}"))?;
             }
         }
 
-        // Cannot fail.
-        let size = writer.stream_position()?;
+        let size = data_writer
+            .finish()
+            .and_then(|(w, d)| w.finish()?.finish(d))
+            .with_context(|| format!("Failed to finalize zip entry: {path}"))?;
 
-        entries.push(ZipEntry {
+        metadata_entries.push(ZipEntry {
             path: path.clone(),
             offset,
             size,
         });
-
-        last_entry_used_zip64 = use_zip64;
     }
 
     info!("Generating new OTA metadata");
 
-    let data_descriptor_size = match zip_mode {
-        ZipMode::Streaming => {
-            if last_entry_used_zip64 {
-                24
-            } else {
-                16
-            }
-        }
-        ZipMode::Seekable => 0,
-    };
     let metadata = ota::add_metadata(
-        &entries,
+        &metadata_entries,
         zip_writer,
         // Offset where next entry would begin.
-        entries.last().map(|e| e.offset + e.size).unwrap() + data_descriptor_size,
+        zip_writer.stream_offset(),
         &metadata.unwrap(),
         payload_metadata_size.unwrap(),
-        zip_mode,
     )
     .context("Failed to write new OTA metadata")?;
 
@@ -1504,7 +1540,8 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     let raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
-    let mut zip_reader = ZipArchive::new(BufReader::new(raw_reader.reopen()?))
+    let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
+    let zip_reader = ZipArchive::from_pseekfile(raw_reader.reopen()?, &mut buffer)
         .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
 
     // Open the output file for reading too, so we can verify offsets later.
@@ -1516,20 +1553,15 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     )
     .context("Failed to open temporary output file")?;
     let temp_path = temp_writer.path().to_owned();
-    let mut zip_writer = match cli.zip_mode {
-        ZipMode::Streaming => {
-            let signing_writer = SigningWriter::new_streaming(temp_writer);
-            ZipWriterWrapper::new_streaming(signing_writer)
-        }
-        ZipMode::Seekable => {
-            let signing_writer = SigningWriter::new_seekable(temp_writer);
-            ZipWriterWrapper::new_seekable(signing_writer)
-        }
+    let signing_writer = match cli.zip_mode {
+        ZipMode::Streaming => SigningWriter::new_streaming(temp_writer),
+        ZipMode::Seekable => SigningWriter::new_seekable(temp_writer),
     };
+    let mut zip_writer = ZipArchiveWriter::new(signing_writer);
 
     let (metadata, payload_metadata_size) = patch_ota_zip(
         &raw_reader,
-        &mut zip_reader,
+        &zip_reader,
         &mut zip_writer,
         &external_images,
         &boot_patchers,
@@ -1601,13 +1633,40 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
     let mut raw_reader = File::open(&cli.input)
         .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
-    let mut zip = ZipArchive::new(BufReader::new(raw_reader.reopen()?))
+    let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
+    let zip = ZipArchive::from_pseekfile(raw_reader.reopen()?, &mut buffer)
         .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
+
+    let mut entry_payload = None;
+    let mut entry_metadata_pb = None;
+
+    {
+        let mut entries = zip.entries_safe(&mut buffer);
+
+        while let Some((cd_entry, _)) =
+            entries.next_entry().context("Failed to list zip entries")?
+        {
+            let path = cd_entry
+                .file_path_utf8()
+                .context("Zip contains non-UTF-8 paths")?;
+
+            if path == ota::PATH_PAYLOAD {
+                entry_payload = Some((cd_entry.wayfinder(), cd_entry.compression_method()));
+            } else if path == ota::PATH_METADATA_PB {
+                entry_metadata_pb = Some((cd_entry.wayfinder(), cd_entry.compression_method()));
+            }
+        }
+    }
+
     let (payload_offset, payload_size) = {
+        let (wf, _) = entry_payload
+            .ok_or_else(|| anyhow!("Failed to find zip entry: {}", ota::PATH_PAYLOAD))?;
         let entry = zip
-            .by_name(ota::PATH_PAYLOAD)
+            .get_entry(wf)
             .with_context(|| format!("Failed to open zip entry: {}", ota::PATH_PAYLOAD))?;
-        (entry.data_start(), entry.size())
+        let range = entry.compressed_data_range();
+
+        (range.0, range.1 - range.0)
     };
 
     // Open the payload data directly.
@@ -1716,15 +1775,25 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         // flashall subcommand. We only add a basic device check to avoid
         // accidental flashes on the wrong device.
 
-        let mut metadata_entry = zip
-            .by_name(ota::PATH_METADATA_PB)
-            .with_context(|| format!("Failed to open zip entry: {:?}", ota::PATH_METADATA_PB))?;
-        let mut metadata_raw = vec![];
-        metadata_entry
-            .read_to_end(&mut metadata_raw)
-            .with_context(|| format!("Failed to read OTA metadata: {}", ota::PATH_METADATA_PB))?;
-        let metadata = ota::parse_protobuf_metadata(&metadata_raw)
-            .with_context(|| format!("Failed to parse OTA metadata: {}", ota::PATH_METADATA_PB))?;
+        let metadata = {
+            let (wf, cm) = entry_metadata_pb
+                .ok_or_else(|| anyhow!("Failed to find zip entry: {}", ota::PATH_METADATA_PB))?;
+            let mut metadata_reader = zip
+                .get_entry(wf)
+                .and_then(|e| zip::verifying_reader(&e, cm))
+                .with_context(|| format!("Failed to open zip entry: {}", ota::PATH_METADATA_PB))?;
+
+            let mut metadata_raw = vec![];
+            metadata_reader
+                .read_to_end(&mut metadata_raw)
+                .with_context(|| {
+                    format!("Failed to read OTA metadata: {}", ota::PATH_METADATA_PB)
+                })?;
+
+            ota::parse_protobuf_metadata(&metadata_raw).with_context(|| {
+                format!("Failed to parse OTA metadata: {}", ota::PATH_METADATA_PB)
+            })?
+        };
 
         let device = metadata
             .precondition

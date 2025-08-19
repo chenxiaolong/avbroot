@@ -3,7 +3,11 @@
 
 use std::io::{self, Read, Seek, Write};
 
-use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use flate2::{
+    Compression,
+    read::{DeflateDecoder, GzDecoder},
+    write::{DeflateEncoder, GzEncoder},
+};
 use lz4_flex::frame::FrameDecoder;
 use lzma_rust2::{CheckType, XZOptions, XZReader, XZWriter};
 use serde::{Deserialize, Serialize};
@@ -105,6 +109,7 @@ impl<W: Write> Write for Lz4LegacyEncoder<W> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum CompressedFormat {
     None,
+    Deflate,
     Gzip,
     Lz4Legacy,
     Xz,
@@ -112,9 +117,43 @@ pub enum CompressedFormat {
 
 pub enum CompressedReader<'reader, R: Read> {
     None(R),
+    /// Not autodetected.
+    Deflate(DeflateDecoder<R>),
     Gzip(GzDecoder<R>),
     Lz4(FrameDecoder<R>),
     Xz(XZReader<'reader, R>),
+}
+
+impl<'reader, R: Read + 'reader> CompressedReader<'reader, R> {
+    pub fn with_format(reader: R, format: CompressedFormat) -> Self {
+        match format {
+            CompressedFormat::None => Self::None(reader),
+            CompressedFormat::Deflate => Self::Deflate(DeflateDecoder::new(reader)),
+            CompressedFormat::Gzip => Self::Gzip(GzDecoder::new(reader)),
+            CompressedFormat::Lz4Legacy => Self::Lz4(FrameDecoder::new(reader)),
+            CompressedFormat::Xz => Self::Xz(XZReader::new(reader, false)),
+        }
+    }
+
+    pub fn format(&self) -> CompressedFormat {
+        match self {
+            Self::None(_) => CompressedFormat::None,
+            Self::Deflate(_) => CompressedFormat::Deflate,
+            Self::Gzip(_) => CompressedFormat::Gzip,
+            Self::Lz4(_) => CompressedFormat::Lz4Legacy,
+            Self::Xz(_) => CompressedFormat::Xz,
+        }
+    }
+
+    pub fn into_inner(self) -> R {
+        match self {
+            Self::None(r) => r,
+            Self::Deflate(r) => r.into_inner(),
+            Self::Gzip(r) => r.into_inner(),
+            Self::Lz4(r) => r.into_inner(),
+            Self::Xz(r) => r.into_inner(),
+        }
+    }
 }
 
 impl<'reader, R: Read + Seek + 'reader> CompressedReader<'reader, R> {
@@ -135,30 +174,13 @@ impl<'reader, R: Read + Seek + 'reader> CompressedReader<'reader, R> {
             Err(Error::UnknownFormat)
         }
     }
-
-    pub fn format(&self) -> CompressedFormat {
-        match self {
-            Self::None(_) => CompressedFormat::None,
-            Self::Gzip(_) => CompressedFormat::Gzip,
-            Self::Lz4(_) => CompressedFormat::Lz4Legacy,
-            Self::Xz(_) => CompressedFormat::Xz,
-        }
-    }
-
-    pub fn into_inner(self) -> R {
-        match self {
-            Self::None(r) => r,
-            Self::Gzip(r) => r.into_inner(),
-            Self::Lz4(r) => r.into_inner(),
-            Self::Xz(r) => r.into_inner(),
-        }
-    }
 }
 
 impl<'reader, R: Read + 'reader> Read for CompressedReader<'reader, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Self::None(r) => r.read(buf),
+            Self::Deflate(r) => r.read(buf),
             Self::Gzip(r) => r.read(buf),
             Self::Lz4(r) => r.read(buf),
             Self::Xz(r) => r.read(buf),
@@ -169,6 +191,7 @@ impl<'reader, R: Read + 'reader> Read for CompressedReader<'reader, R> {
 #[allow(clippy::large_enum_variant)]
 pub enum CompressedWriter<'writer, W: Write> {
     None(W),
+    Deflate(DeflateEncoder<W>),
     Gzip(GzEncoder<W>),
     Lz4Legacy(Lz4LegacyEncoder<W>),
     Xz(XZWriter<'writer, W>),
@@ -178,6 +201,10 @@ impl<'writer, W: Write + 'writer> CompressedWriter<'writer, W> {
     pub fn new(writer: W, format: CompressedFormat) -> Result<Self> {
         match format {
             CompressedFormat::None => Ok(Self::None(writer)),
+            CompressedFormat::Deflate => Ok(Self::Deflate(DeflateEncoder::new(
+                writer,
+                Compression::default(),
+            ))),
             CompressedFormat::Gzip => {
                 Ok(Self::Gzip(GzEncoder::new(writer, Compression::default())))
             }
@@ -199,6 +226,7 @@ impl<'writer, W: Write + 'writer> CompressedWriter<'writer, W> {
     pub fn format(&self) -> CompressedFormat {
         match self {
             Self::None(_) => CompressedFormat::None,
+            Self::Deflate(_) => CompressedFormat::Deflate,
             Self::Gzip(_) => CompressedFormat::Gzip,
             Self::Lz4Legacy(_) => CompressedFormat::Lz4Legacy,
             Self::Xz(_) => CompressedFormat::Xz,
@@ -208,6 +236,7 @@ impl<'writer, W: Write + 'writer> CompressedWriter<'writer, W> {
     pub fn finish(self) -> io::Result<W> {
         match self {
             Self::None(w) => Ok(w),
+            Self::Deflate(w) => w.finish(),
             Self::Gzip(w) => w.finish(),
             Self::Lz4Legacy(w) => w.finish(),
             Self::Xz(w) => w.finish(),
@@ -219,6 +248,7 @@ impl<'writer, W: Write + 'writer> Write for CompressedWriter<'writer, W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Self::None(w) => w.write(buf),
+            Self::Deflate(w) => w.write(buf),
             Self::Gzip(w) => w.write(buf),
             Self::Lz4Legacy(w) => w.write(buf),
             Self::Xz(w) => w.write(buf),
@@ -228,6 +258,7 @@ impl<'writer, W: Write + 'writer> Write for CompressedWriter<'writer, W> {
     fn flush(&mut self) -> io::Result<()> {
         match self {
             Self::None(w) => w.flush(),
+            Self::Deflate(w) => w.flush(),
             Self::Gzip(w) => w.flush(),
             Self::Lz4Legacy(w) => w.flush(),
             Self::Xz(w) => w.flush(),

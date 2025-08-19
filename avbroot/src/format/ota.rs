@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     collections::BTreeMap,
     fmt::{self, Write as _},
@@ -17,16 +18,18 @@ use cms::signed_data::SignedData;
 use const_oid::{ObjectIdentifier, db::rfc5912};
 use memchr::memmem;
 use prost::Message;
+use rawzip::{
+    CompressionMethod, RECOMMENDED_BUFFER_SIZE, ZipArchive, ZipArchiveWriter, ZipDataWriter,
+};
 use ring::digest::{Algorithm, Context};
 use thiserror::Error;
 use x509_cert::{Certificate, der::Encode};
-use zip::{CompressionMethod, DateTime, ZipArchive, result::ZipError, write::SimpleFileOptions};
 
 use crate::{
     crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
     format::{
         payload::{self, PayloadHeader},
-        zip::ZipWriterWrapper,
+        zip::{self, ZipEntriesSafeExt, ZipFileHeaderRecordExt},
     },
     protobuf::build::tools::releasetools::{OtaMetadata, ota_metadata::OtaType},
     stream::{self, FromReader, HashingReader, HashingWriter, ReadFixedSizeExt},
@@ -91,17 +94,21 @@ pub enum Error {
     #[error("Failed to decode OTA metadata protobuf message")]
     MetadataDecode(#[source] prost::DecodeError),
     #[error("Failed to open zip file")]
-    ZipOpen(#[source] ZipError),
+    ZipOpen(#[source] rawzip::Error),
+    #[error("Failed to list zip entries")]
+    ZipEntryList(#[source] rawzip::Error),
+    #[error("Missing zip entry: {0:?}")]
+    ZipEntryMissing(Cow<'static, str>),
     #[error("Failed to open zip entry: {0:?}")]
-    ZipEntryOpen(&'static str, #[source] ZipError),
+    ZipEntryOpen(Cow<'static, str>, #[source] rawzip::Error),
     #[error("Failed to start new zip entry: {0:?}")]
-    ZipEntryStart(&'static str, #[source] ZipError),
+    ZipEntryStart(Cow<'static, str>, #[source] rawzip::Error),
     #[error("Failed to read zip entry: {0:?}")]
-    ZipEntryRead(&'static str, #[source] io::Error),
+    ZipEntryRead(Cow<'static, str>, #[source] io::Error),
     #[error("Failed to write zip entry: {0:?}")]
-    ZipEntryWrite(&'static str, #[source] io::Error),
-    #[error("Failed to open zip entry #{0}")]
-    ZipIndexOpen(usize, #[source] ZipError),
+    ZipEntryWrite(Cow<'static, str>, #[source] io::Error),
+    #[error("Failed to finalize zip entry: {0:?}")]
+    ZipEntryFinish(Cow<'static, str>, #[source] rawzip::Error),
     #[error("Failed to load OTA certificate")]
     OtaCertLoad(#[source] crypto::Error),
     #[error("Failed to extract public key from OTA certificate")]
@@ -120,6 +127,8 @@ pub enum Error {
     DataRead(&'static str, #[source] io::Error),
     #[error("Failed to write OTA data: {0}")]
     DataWrite(&'static str, #[source] io::Error),
+    #[error("Failed to convert to non-streaming zip")]
+    MakeNonStreaming(#[source] rawzip::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -500,16 +509,36 @@ impl fmt::Display for ZipMode {
 /// directory would start.
 pub fn add_metadata(
     zip_entries: &[ZipEntry],
-    zip_writer: &mut ZipWriterWrapper<impl Write>,
+    zip_writer: &mut ZipArchiveWriter<impl Write>,
     next_offset: u64,
     metadata: &OtaMetadata,
     payload_metadata_size: u64,
-    zip_mode: ZipMode,
 ) -> Result<OtaMetadata> {
+    fn write_entry(
+        archive: &mut ZipArchiveWriter<impl Write>,
+        path: &'static str,
+        data: &[u8],
+    ) -> Result<(u64, u64)> {
+        let entry_writer = archive
+            .new_file(path)
+            .create()
+            .map_err(|e| Error::ZipEntryStart(path.into(), e))?;
+        let data_offset = entry_writer.stream_offset();
+        let mut data_writer = ZipDataWriter::new(entry_writer);
+
+        data_writer
+            .write_all(data)
+            .map_err(|e| Error::ZipEntryWrite(path.into(), e))?;
+
+        let data_size = data_writer
+            .finish()
+            .and_then(|(w, d)| w.finish(d))
+            .map_err(|e| Error::ZipEntryFinish(path.into(), e))?;
+
+        Ok((data_offset, data_size))
+    }
+
     let mut metadata = metadata.clone();
-    let options = SimpleFileOptions::default()
-        .last_modified_time(DateTime::default())
-        .compression_method(CompressionMethod::Stored);
 
     let mut prop_entries = zip_entries.iter().map(PropEntry::from).collect();
     add_payload_metadata_entry(&mut prop_entries, payload_metadata_size)?;
@@ -528,34 +557,25 @@ pub fn add_metadata(
     let (temp_legacy_offset, temp_modern_offset) = {
         let (legacy_raw, modern_raw) = serialize_metadata(&metadata);
         let raw_writer = Cursor::new(Vec::new());
-        let mut writer = match zip_mode {
-            ZipMode::Streaming => ZipWriterWrapper::new_streaming(raw_writer),
-            ZipMode::Seekable => ZipWriterWrapper::new_seekable(raw_writer),
-        };
+        // Note that we don't need to worry about the offsets changing based on
+        // the zip writing mode (streaming vs. seekable). Currently, we always
+        // include data descriptors and do post-processing to copy the fields
+        // into the local header without shifting the data.
+        let mut writer = ZipArchiveWriter::new(raw_writer);
 
-        let legacy_offset = writer
-            .start_file(PATH_METADATA, options)
-            .map_err(|e| Error::ZipEntryStart(PATH_METADATA, e))?;
-        writer
-            .write_all(legacy_raw.as_bytes())
-            .map_err(|e| Error::ZipEntryWrite(PATH_METADATA, e))?;
-
-        let modern_offset = writer
-            .start_file(PATH_METADATA_PB, options)
-            .map_err(|e| Error::ZipEntryStart(PATH_METADATA_PB, e))?;
-        writer
-            .write_all(&modern_raw)
-            .map_err(|e| Error::ZipEntryWrite(PATH_METADATA_PB, e))?;
+        let (legacy_offset, legacy_size) =
+            write_entry(&mut writer, PATH_METADATA, legacy_raw.as_bytes())?;
+        let (modern_offset, modern_size) = write_entry(&mut writer, PATH_METADATA_PB, &modern_raw)?;
 
         prop_entries.push(PropEntry::new(
             PATH_METADATA,
             next_offset + legacy_offset,
-            legacy_raw.len() as u64,
+            legacy_size,
         ));
         prop_entries.push(PropEntry::new(
             PATH_METADATA_PB,
             next_offset + modern_offset,
-            modern_raw.len() as u64,
+            modern_size,
         ));
 
         (next_offset + legacy_offset, next_offset + modern_offset)
@@ -570,19 +590,8 @@ pub fn add_metadata(
     {
         let (legacy_raw, modern_raw) = serialize_metadata(&metadata);
 
-        let legacy_offset = zip_writer
-            .start_file(PATH_METADATA, options)
-            .map_err(|e| Error::ZipEntryStart(PATH_METADATA, e))?;
-        zip_writer
-            .write_all(legacy_raw.as_bytes())
-            .map_err(|e| Error::ZipEntryWrite(PATH_METADATA, e))?;
-
-        let modern_offset = zip_writer
-            .start_file(PATH_METADATA_PB, options)
-            .map_err(|e| Error::ZipEntryStart(PATH_METADATA_PB, e))?;
-        zip_writer
-            .write_all(&modern_raw)
-            .map_err(|e| Error::ZipEntryWrite(PATH_METADATA_PB, e))?;
+        let (legacy_offset, _) = write_entry(zip_writer, PATH_METADATA, legacy_raw.as_bytes())?;
+        let (modern_offset, _) = write_entry(zip_writer, PATH_METADATA_PB, &modern_raw)?;
 
         assert_eq!(legacy_offset, temp_legacy_offset);
         assert_eq!(modern_offset, temp_modern_offset);
@@ -597,23 +606,24 @@ pub fn verify_metadata(
     metadata: &OtaMetadata,
     payload_metadata_size: u64,
 ) -> Result<()> {
-    let mut zip_reader = ZipArchive::new(reader).map_err(Error::ZipOpen)?;
+    let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
+    let archive = ZipArchive::from_seekable(reader, &mut buffer).map_err(Error::ZipOpen)?;
     let mut zip_entries = vec![];
 
-    for i in 0..zip_reader.len() {
-        let entry = zip_reader
-            .by_index(i)
-            .map_err(|e| Error::ZipIndexOpen(i, e))?;
+    let mut entries = archive.entries_safe(&mut buffer);
 
-        if entry.compression() != CompressionMethod::Stored {
+    while let Some((cd_entry, entry)) = entries.next_entry().map_err(Error::ZipEntryList)? {
+        if cd_entry.compression_method() != CompressionMethod::Store {
             continue;
         }
 
-        zip_entries.push(PropEntry::new(
-            entry.name(),
-            entry.data_start(),
-            entry.size(),
-        ));
+        let Ok(path) = cd_entry.file_path_utf8() else {
+            continue;
+        };
+
+        let range = entry.compressed_data_range();
+
+        zip_entries.push(PropEntry::new(path, range.0, range.1 - range.0));
     }
 
     add_payload_metadata_entry(&mut zip_entries, payload_metadata_size)?;
@@ -870,54 +880,73 @@ pub fn parse_ota_sig(reader: impl Read + Seek) -> Result<OtaSignature> {
 pub fn parse_zip_ota_info(
     reader: impl Read + Seek,
 ) -> Result<(OtaMetadata, Certificate, PayloadHeader, String)> {
-    let mut zip = ZipArchive::new(reader).map_err(Error::ZipOpen)?;
+    let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
+    let archive = ZipArchive::from_seekable(reader, &mut buffer).map_err(Error::ZipOpen)?;
 
-    let metadata = match zip.by_name(PATH_METADATA_PB) {
-        Ok(mut entry) => {
+    let mut metadata_modern = None;
+    let mut metadata_legacy = None;
+    let mut certificate = None;
+    let mut header = None;
+    let mut properties = None;
+
+    let mut entries = archive.entries_safe(&mut buffer);
+
+    while let Some((cd_entry, entry)) = entries.next_entry().map_err(Error::ZipEntryList)? {
+        let path = cd_entry.file_path_utf8().map_err(Error::ZipEntryList)?;
+
+        if path == PATH_METADATA_PB {
+            let mut reader = zip::verifying_reader(&entry, cd_entry.compression_method())
+                .map_err(|e| Error::ZipEntryOpen(PATH_METADATA_PB.into(), e))?;
             let mut buf = Vec::new();
-            entry
+
+            reader
                 .read_to_end(&mut buf)
-                .map_err(|e| Error::ZipEntryRead(PATH_METADATA_PB, e))?;
-            parse_protobuf_metadata(&buf)?
-        }
-        e @ Err(ZipError::FileNotFound) => {
-            drop(e);
-            let mut entry = zip
-                .by_name(PATH_METADATA)
-                .map_err(|e| Error::ZipEntryOpen(PATH_METADATA, e))?;
+                .map_err(|e| Error::ZipEntryRead(PATH_METADATA_PB.into(), e))?;
+
+            metadata_modern = Some(parse_protobuf_metadata(&buf)?);
+        } else if path == PATH_METADATA {
+            let mut reader = zip::verifying_reader(&entry, cd_entry.compression_method())
+                .map_err(|e| Error::ZipEntryOpen(PATH_METADATA.into(), e))?;
             let mut buf = String::new();
-            entry
+
+            reader
                 .read_to_string(&mut buf)
-                .map_err(|e| Error::ZipEntryRead(PATH_METADATA, e))?;
-            parse_legacy_metadata(&buf)?
+                .map_err(|e| Error::ZipEntryRead(PATH_METADATA.into(), e))?;
+
+            metadata_legacy = Some(parse_legacy_metadata(&buf)?);
+        } else if path == PATH_OTACERT {
+            let reader = zip::verifying_reader(&entry, cd_entry.compression_method())
+                .map_err(|e| Error::ZipEntryOpen(PATH_OTACERT.into(), e))?;
+
+            certificate = Some(
+                crypto::read_pem_cert(Path::new(PATH_OTACERT), reader)
+                    .map_err(Error::OtaCertLoad)?,
+            );
+        } else if path == PATH_PAYLOAD {
+            // No CRC validation because we only read the header.
+            let reader = zip::compressed_reader(&entry, cd_entry.compression_method())
+                .map_err(|e| Error::ZipEntryOpen(PATH_PAYLOAD.into(), e))?;
+
+            header = Some(PayloadHeader::from_reader(reader).map_err(Error::PayloadLoad)?);
+        } else if path == PATH_PROPERTIES {
+            let mut reader = zip::verifying_reader(&entry, cd_entry.compression_method())
+                .map_err(|e| Error::ZipEntryOpen(PATH_PROPERTIES.into(), e))?;
+            let mut buf = String::new();
+
+            reader
+                .read_to_string(&mut buf)
+                .map_err(|e| Error::ZipEntryRead(PATH_PROPERTIES.into(), e))?;
+
+            properties = Some(buf);
         }
-        Err(e) => return Err(Error::ZipEntryOpen(PATH_METADATA_PB, e)),
-    };
+    }
 
-    let certificate = {
-        let entry = zip
-            .by_name(PATH_OTACERT)
-            .map_err(|e| Error::ZipEntryOpen(PATH_OTACERT, e))?;
-        crypto::read_pem_cert(Path::new(PATH_OTACERT), entry).map_err(Error::OtaCertLoad)?
-    };
-
-    let header = {
-        let entry = zip
-            .by_name(PATH_PAYLOAD)
-            .map_err(|e| Error::ZipEntryOpen(PATH_PAYLOAD, e))?;
-        PayloadHeader::from_reader(entry).map_err(Error::PayloadLoad)?
-    };
-
-    let properties = {
-        let mut entry = zip
-            .by_name(PATH_PROPERTIES)
-            .map_err(|e| Error::ZipEntryOpen(PATH_PROPERTIES, e))?;
-        let mut buf = String::new();
-        entry
-            .read_to_string(&mut buf)
-            .map_err(|e| Error::ZipEntryRead(PATH_PROPERTIES, e))?;
-        buf
-    };
+    let metadata = metadata_modern
+        .or(metadata_legacy)
+        .ok_or_else(|| Error::ZipEntryMissing(PATH_METADATA_PB.into()))?;
+    let certificate = certificate.ok_or_else(|| Error::ZipEntryMissing(PATH_OTACERT.into()))?;
+    let header = header.ok_or_else(|| Error::ZipEntryMissing(PATH_PAYLOAD.into()))?;
+    let properties = properties.ok_or_else(|| Error::ZipEntryMissing(PATH_PROPERTIES.into()))?;
 
     Ok((metadata, certificate, header, properties))
 }
@@ -1077,6 +1106,11 @@ impl<W: Read + Write + Seek> SeekableSigningWriter<W> {
         cert: &Certificate,
         cancel_signal: &AtomicBool,
     ) -> Result<W> {
+        // We always write a streaming zip because that is what rawzip supports.
+        // Convert it to not be streaming. This will leave the data descriptors
+        // behind, but that is fine.
+        zip::make_non_streaming(&mut self.inner).map_err(Error::MakeNonStreaming)?;
+
         let file_size = self
             .seek(SeekFrom::End(0))
             .map_err(|e| Error::DataRead("file_size", e))?;

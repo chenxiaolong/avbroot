@@ -395,30 +395,30 @@ impl PSeekFile {
 
     /// Read data from offset. The kernel's file position *will* be changed.
     #[cfg(windows)]
-    fn read_at(&self, buf: &mut [u8]) -> io::Result<usize> {
+    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
         use std::os::windows::fs::FileExt;
-        self.file.read().unwrap().seek_read(buf, self.offset)
+        self.file.read().unwrap().seek_read(buf, offset)
     }
 
     /// Read data from offset. The kernel's file position will *not* be changed.
     #[cfg(unix)]
-    fn read_at(&self, buf: &mut [u8]) -> io::Result<usize> {
+    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
         use std::os::unix::fs::FileExt;
-        self.file.read().unwrap().read_at(buf, self.offset)
+        self.file.read().unwrap().read_at(buf, offset)
     }
 
     /// Write data to offset. The kernel's file position *will* be changed.
     #[cfg(windows)]
-    fn write_at(&self, buf: &[u8]) -> io::Result<usize> {
+    pub fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
         use std::os::windows::fs::FileExt;
-        self.file.read().unwrap().seek_write(buf, self.offset)
+        self.file.read().unwrap().seek_write(buf, offset)
     }
 
     /// Write data to offset. The kernel's file position will *not* be changed.
     #[cfg(unix)]
-    fn write_at(&self, buf: &[u8]) -> io::Result<usize> {
+    pub fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
         use std::os::unix::fs::FileExt;
-        self.file.read().unwrap().write_at(buf, self.offset)
+        self.file.read().unwrap().write_at(buf, offset)
     }
 }
 
@@ -433,7 +433,7 @@ impl Reopen for PSeekFile {
 
 impl Read for PSeekFile {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.read_at(buf)?;
+        let n = self.read_at(buf, self.offset)?;
         self.offset += n as u64;
         Ok(n)
     }
@@ -441,7 +441,7 @@ impl Read for PSeekFile {
 
 impl Write for PSeekFile {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let n = self.write_at(buf)?;
+        let n = self.write_at(buf, self.offset)?;
         self.offset += n as u64;
         Ok(n)
     }

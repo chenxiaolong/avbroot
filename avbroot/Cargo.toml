@@ -58,14 +58,9 @@ x509-cert = { version = "0.2.4", features = ["builder"] }
 zerocopy = { version = "0.8.10", features = ["std"] }
 zerocopy-derive = "0.8.5"
 
-# https://github.com/zip-rs/zip2/pull/367
-# https://github.com/zip-rs/zip2/pull/368
-# For getting the data offset when writing new zip entries.
-[dependencies.zip]
-git = "https://github.com/chenxiaolong/zip2"
-rev = "59685f4dadbfee8cb3ea74c8fbb402b60d8137e8"
-default-features = false
-features = ["deflate"]
+[dependencies.rawzip]
+git = "https://github.com/nickbabcock/rawzip"
+rev = "562b92b73df135829b593abd29892ca73fa7b51a"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.158"

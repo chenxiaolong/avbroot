@@ -89,9 +89,6 @@ name = "arbitrary"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dde20b3d026af13f561bdd0f15edf01fc734f0dafcedbaf42bba506a9517f223"
-dependencies = [
- "derive_arbitrary",
-]
 
 [[package]]
 name = "assert_matches"
@@ -139,6 +136,7 @@ dependencies = [
  "prost-build",
  "protox",
  "rand",
+ "rawzip",
  "rayon",
  "regex",
  "ring",
@@ -157,7 +155,6 @@ dependencies = [
  "x509-cert",
  "zerocopy",
  "zerocopy-derive",
- "zip",
 ]
 
 [[package]]
@@ -235,12 +232,6 @@ dependencies = [
  "regex-automata",
  "serde",
 ]
-
-[[package]]
-name = "bumpalo"
-version = "3.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
 
 [[package]]
 name = "byteorder"
@@ -540,17 +531,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive_arbitrary"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30542c1ad912e0e3d22a1935c290e12e8a29d704a420177a31faad4a601a0800"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.104",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -577,6 +557,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "hex",
+ "rawzip",
  "ring",
  "rsa",
  "serde",
@@ -586,7 +567,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "x509-cert",
- "zip",
 ]
 
 [[package]]
@@ -1372,6 +1352,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "rawzip"
+version = "0.3.1"
+source = "git+https://github.com/nickbabcock/rawzip?rev=562b92b73df135829b593abd29892ca73fa7b51a#562b92b73df135829b593abd29892ca73fa7b51a"
+
+[[package]]
 name = "rayon"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1585,12 +1570,6 @@ dependencies = [
  "digest",
  "rand_core",
 ]
-
-[[package]]
-name = "simd-adler32"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d66dc143e6b11c1eddc06d5c423cfc97062865baf299914ab64caa38182078fe"
 
 [[package]]
 name = "siphasher"
@@ -2175,32 +2154,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zip"
-version = "4.1.0"
-source = "git+https://github.com/chenxiaolong/zip2?rev=59685f4dadbfee8cb3ea74c8fbb402b60d8137e8#59685f4dadbfee8cb3ea74c8fbb402b60d8137e8"
-dependencies = [
- "arbitrary",
- "crc32fast",
- "flate2",
- "indexmap",
- "memchr",
- "zopfli",
-]
-
-[[package]]
 name = "zlib-rs"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "626bd9fa9734751fc50d6060752170984d7053f5a39061f524cda68023d4db8a"
-
-[[package]]
-name = "zopfli"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edfc5ee405f504cd4984ecc6f14d02d55cfda60fa4b689434ef4102aae150cd7"
-dependencies = [
- "bumpalo",
- "crc32fast",
- "log",
- "simd-adler32",
-]

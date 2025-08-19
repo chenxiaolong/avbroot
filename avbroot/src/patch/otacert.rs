@@ -1,15 +1,18 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{borrow::Cow, cmp::Ordering, io::Cursor, path::Path};
 
 use bitflags::bitflags;
+use rawzip::{CompressionMethod, ZipArchiveWriter, ZipDataWriter};
 use thiserror::Error;
 use tracing::trace;
 use x509_cert::{Certificate, der::asn1::BitString};
-use zip::{CompressionMethod, DateTime, ZipWriter, result::ZipError, write::SimpleFileOptions};
 
-use crate::{crypto, format::ota};
+use crate::{
+    crypto,
+    format::{ota, zip},
+};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -18,7 +21,7 @@ pub enum Error {
     #[error("New otacerts.zip is too large to fit in {0} bytes")]
     ZipTooLarge(usize),
     #[error("Failed to write otacerts zip")]
-    ZipWrite(#[source] ZipError),
+    ZipWrite(#[source] rawzip::Error),
     #[error("Failed to write certificate to otacerts zip")]
     CertWrite(#[source] crypto::Error),
 }
@@ -71,19 +74,23 @@ bitflags! {
 /// Create an `otacerts.zip` file containing the specified certificate.
 pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8>> {
     let raw_writer = Cursor::new(Vec::new());
-    let mut writer = ZipWriter::new(raw_writer);
+    let mut writer = ZipArchiveWriter::new(raw_writer);
 
     let compression_method = if flags.contains(OtaCertBuildFlags::COMPRESS_DEFLATE) {
-        CompressionMethod::Deflated
+        CompressionMethod::Deflate
     } else {
-        CompressionMethod::Stored
+        CompressionMethod::Store
     };
 
-    let options = SimpleFileOptions::default()
-        .last_modified_time(DateTime::default())
-        .compression_method(compression_method);
     let name = "ota.x509.pem";
-    writer.start_file(name, options).map_err(Error::ZipWrite)?;
+    let entry_writer = writer
+        .new_file(name)
+        .compression_method(compression_method)
+        .create()
+        .map_err(Error::ZipWrite)?;
+    let compressed_writer =
+        zip::compressed_writer(entry_writer, compression_method).map_err(Error::ZipWrite)?;
+    let mut data_writer = ZipDataWriter::new(compressed_writer);
 
     let cert = if flags.is_empty() {
         Cow::Borrowed(cert)
@@ -112,9 +119,16 @@ pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8
         Cow::Owned(modified)
     };
 
-    crypto::write_pem_cert(Path::new(name), &mut writer, &cert).map_err(Error::CertWrite)?;
+    crypto::write_pem_cert(Path::new(name), &mut data_writer, &cert).map_err(Error::CertWrite)?;
 
-    let raw_writer = writer.finish().map_err(Error::ZipWrite)?;
+    data_writer
+        .finish()
+        .and_then(|(w, d)| w.finish()?.finish(d))
+        .map_err(Error::ZipWrite)?;
+
+    let mut raw_writer = writer.finish().map_err(Error::ZipWrite)?;
+
+    zip::make_non_streaming(&mut raw_writer).map_err(Error::ZipWrite)?;
 
     Ok(raw_writer.into_inner())
 }

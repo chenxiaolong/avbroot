@@ -1,27 +1,28 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
-    io::{self, Cursor, SeekFrom},
+    io::{self, SeekFrom},
     ops::Range,
     sync::atomic::AtomicBool,
 };
 
 use memchr::memmem;
+use rawzip::ZipArchive;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use thiserror::Error;
 use tracing::{Span, debug, debug_span, trace};
 use x509_cert::Certificate;
-use zip::ZipArchive;
 
 use crate::{
     crypto::RsaSigningKey,
     format::{
         avb::{self, AppendedDescriptorMut, Footer},
         ota,
+        zip::{ZipFileHeaderRecordExt, ZipSliceEntriesSafeExt},
     },
     patch::otacert,
-    stream::{self, ReadFixedSizeExt, ReadSeekReopen, SectionReader, WriteSeekReopen},
+    stream::{self, ReadFixedSizeExt, ReadSeekReopen, WriteSeekReopen},
     util,
 };
 
@@ -68,23 +69,26 @@ fn find_zip_bounds(data: &[u8], eocd_offset: usize) -> Option<Range<usize>> {
 
     trace!("Found zip bounds: {:?}", start..end);
 
-    let reader = SectionReader::new(Cursor::new(data), start as u64, (end - start) as u64).ok()?;
-    let mut zip_reader = ZipArchive::new(reader).ok()?;
+    let archive = ZipArchive::from_slice(&data[start..end]).ok()?;
+    let mut entries = archive.entries_safe();
+    let mut matches = 0;
 
-    if zip_reader.is_empty() {
+    while let Some((cd_entry, _)) = entries.next_entry().ok()? {
+        let path = cd_entry.file_path_utf8().ok()?;
+
+        if !path.ends_with(".x509.pem") {
+            // otacerts.zip files only contain files named this way.
+            trace!("Excluded due to invalid name: {path:?}");
+            return None;
+        }
+
+        matches += 1;
+    }
+
+    if matches == 0 {
         // otacerts.zip files contain at least one cert.
         trace!("Zip is empty");
         return None;
-    }
-
-    for index in 0..zip_reader.len() {
-        let entry = zip_reader.by_index_raw(index).ok()?;
-
-        if !entry.name().ends_with(".x509.pem") {
-            // otacerts.zip files only contain files named this way.
-            trace!("Excluded due to invalid name: {:?}", entry.name());
-            return None;
-        }
     }
 
     debug!("Found otacerts.zip candidate");

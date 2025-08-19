@@ -37,7 +37,7 @@ use avbroot::{
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         padding,
         payload::{self, CowVersion, PayloadHeader, PayloadWriter, VabcParams},
-        zip::ZipWriterWrapper,
+        zip,
     },
     patch::otacert::{self, OtaCertBuildFlags},
     protobuf::{
@@ -46,16 +46,16 @@ use avbroot::{
             DeltaArchiveManifest, DynamicPartitionGroup, DynamicPartitionMetadata, PartitionUpdate,
         },
     },
-    stream::{self, CountingWriter, FromReader, HashingReader, PSeekFile, Reopen, ToWriter},
+    stream::{self, FromReader, HashingReader, PSeekFile, Reopen, ToWriter},
     util,
 };
 use clap::Parser;
+use rawzip::{CompressionMethod, ZipArchiveWriter, ZipDataWriter};
 use rsa::{BigUint, rand_core::OsRng, traits::PublicKeyParts};
 use tempfile::TempDir;
 use topological_sort::TopologicalSort;
 use tracing::{info, info_span};
 use x509_cert::Certificate;
-use zip::{CompressionMethod, DateTime, ZipWriter, write::SimpleFileOptions};
 
 use crate::{
     cli::{Cli, Command, HelperCli, ListCli, PassSource, ProfileGroup, TestCli},
@@ -740,20 +740,11 @@ fn create_ota(
         .truncate(true)
         .open(output)
         .with_context(|| format!("Failed to open for writing: {output:?}"))?;
-    let mut zip_writer = match zip_mode {
-        ZipMode::Streaming => {
-            let signing_writer = SigningWriter::new_streaming(raw_writer);
-            ZipWriterWrapper::new_streaming(signing_writer)
-        }
-        ZipMode::Seekable => {
-            let signing_writer = SigningWriter::new_seekable(raw_writer);
-            ZipWriterWrapper::new_seekable(signing_writer)
-        }
+    let signing_writer = match zip_mode {
+        ZipMode::Streaming => SigningWriter::new_streaming(raw_writer),
+        ZipMode::Seekable => SigningWriter::new_seekable(raw_writer),
     };
-    let options = SimpleFileOptions::default()
-        .last_modified_time(DateTime::default())
-        .compression_method(CompressionMethod::Stored)
-        .large_file(false);
+    let mut zip_writer = ZipArchiveWriter::new(signing_writer);
 
     let mut entries = vec![];
     let mut properties = None;
@@ -761,19 +752,21 @@ fn create_ota(
 
     for path in [ota::PATH_OTACERT, ota::PATH_PAYLOAD, ota::PATH_PROPERTIES] {
         // All remaining entries are written immediately.
-        let offset = zip_writer
-            .start_file(path, options)
+        let entry_writer = zip_writer
+            .new_file(path)
+            .create()
             .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
-        let mut writer = CountingWriter::new(&mut zip_writer);
+        let offset = entry_writer.stream_offset();
+        let mut data_writer = ZipDataWriter::new(entry_writer);
 
         match path {
             ota::PATH_OTACERT => {
-                crypto::write_pem_cert(Path::new(path), &mut writer, cert_ota)
+                crypto::write_pem_cert(Path::new(path), &mut data_writer, cert_ota)
                     .with_context(|| format!("Failed to write entry: {path}"))?;
             }
             ota::PATH_PAYLOAD => {
                 let (p, m) = create_payload(
-                    &mut writer,
+                    &mut data_writer,
                     &profile.partitions,
                     &inputs,
                     ota_info,
@@ -787,15 +780,17 @@ fn create_ota(
                 payload_metadata_size = Some(m);
             }
             ota::PATH_PROPERTIES => {
-                writer
+                data_writer
                     .write_all(properties.as_ref().unwrap().as_bytes())
                     .with_context(|| format!("Failed to write payload properties: {path}"))?;
             }
             _ => unreachable!(),
         }
 
-        // Cannot fail.
-        let size = writer.stream_position()?;
+        let size = data_writer
+            .finish()
+            .and_then(|(w, d)| w.finish(d))
+            .with_context(|| format!("Failed to finalize zip entry: {path}"))?;
 
         entries.push(ZipEntry {
             path: path.to_owned(),
@@ -832,18 +827,15 @@ fn create_ota(
         spl_downgrade: false,
     };
 
-    let data_descriptor_size = match zip_mode {
-        ZipMode::Streaming => 16,
-        ZipMode::Seekable => 0,
-    };
+    let next_offset = zip_writer.stream_offset();
+
     ota::add_metadata(
         &entries,
         &mut zip_writer,
         // Offset where next entry would begin.
-        entries.last().map(|e| e.offset + e.size).unwrap() + data_descriptor_size,
+        next_offset,
         &metadata,
         payload_metadata_size.unwrap(),
-        zip_mode,
     )
     .context("Failed to write new OTA metadata")?;
 
@@ -861,13 +853,19 @@ fn create_ota(
 }
 
 fn create_fake_magisk(output: &Path) -> Result<()> {
-    let raw_writer =
-        File::create(output).with_context(|| format!("Failed to open for writing: {output:?}"))?;
-    let mut zip_writer = ZipWriter::new(raw_writer);
-    let options = SimpleFileOptions::default().last_modified_time(DateTime::default());
+    let raw_writer = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(output)
+        .with_context(|| format!("Failed to open for writing: {output:?}"))?;
+    let mut zip_writer = ZipArchiveWriter::new(raw_writer);
+    let compression_method = CompressionMethod::Deflate;
 
     for path in [
         "assets/stub.apk",
+        "assets/util_functions.sh",
         "lib/arm64-v8a/libinit-ld.so",
         "lib/arm64-v8a/libmagisk64.so",
         "lib/arm64-v8a/libmagiskinit.so",
@@ -881,13 +879,31 @@ fn create_fake_magisk(output: &Path) -> Result<()> {
         "lib/x86_64/libmagisk64.so",
         "lib/x86_64/libmagiskinit.so",
     ] {
-        zip_writer.start_file(path, options)?;
-        write!(zip_writer, "dummy contents for {path}")?;
+        let entry_writer = zip_writer
+            .new_file(path)
+            .compression_method(compression_method)
+            .create()
+            .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
+        let compressed_writer = zip::compressed_writer(entry_writer, compression_method)
+            .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
+        let mut data_writer = ZipDataWriter::new(compressed_writer);
+
+        if path == "assets/util_functions.sh" {
+            // avbroot looks for the version number in this file.
+            data_writer.write_all(b"MAGISK_VER_CODE=27000\n")?;
+        } else {
+            write!(data_writer, "dummy contents for {path}")?;
+        }
+
+        data_writer
+            .finish()
+            .and_then(|(w, d)| w.finish()?.finish(d))?;
     }
 
-    // avbroot looks for the version number in this file.
-    zip_writer.start_file("assets/util_functions.sh", options)?;
-    zip_writer.write_all(b"MAGISK_VER_CODE=27000\n")?;
+    let raw_writer = zip_writer.finish()?;
+
+    zip::make_non_streaming(raw_writer)
+        .with_context(|| format!("Failed to convert to non-streaming zip: {output:?}"))?;
 
     Ok(())
 }
@@ -1141,7 +1157,7 @@ fn clean_boot_image_certs(path: &Path, cancel_signal: &AtomicBool) -> Result<()>
         .iter_mut()
         .find(|e| e.path == b"system/etc/security/otacerts.zip")
     {
-        let zip_writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let zip_writer = ZipArchiveWriter::new(Cursor::new(Vec::new()));
         let empty_zip = zip_writer.finish()?.into_inner();
 
         entry.data = CpioEntryData::Data(empty_zip);

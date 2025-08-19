@@ -24,13 +24,9 @@ tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 x509-cert = "0.2.5"
 
-# https://github.com/zip-rs/zip2/pull/367
-# https://github.com/zip-rs/zip2/pull/368
-# For getting the data offset when writing new zip entries.
-[dependencies.zip]
-git = "https://github.com/chenxiaolong/zip2"
-rev = "59685f4dadbfee8cb3ea74c8fbb402b60d8137e8"
-default-features = false
+[dependencies.rawzip]
+git = "https://github.com/nickbabcock/rawzip"
+rev = "562b92b73df135829b593abd29892ca73fa7b51a"
 
 [lints]
 workspace = true

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     collections::{HashMap, HashSet},
     fmt::Write,
@@ -16,6 +17,7 @@ use std::{
 
 use bstr::ByteSlice;
 use lzma_rust2::{CheckType, XZOptions, XZWriter};
+use rawzip::{RECOMMENDED_BUFFER_SIZE, ZipArchive};
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use regex::bytes::Regex;
 use ring::digest::Context;
@@ -23,7 +25,6 @@ use rsa::RsaPublicKey;
 use thiserror::Error;
 use tracing::{Span, debug, debug_span, trace, warn};
 use x509_cert::Certificate;
-use zip::{ZipArchive, result::ZipError};
 
 use crate::{
     crypto::{self, RsaSigningKey},
@@ -32,6 +33,7 @@ use crate::{
         bootimage::{self, BootImage, BootImageExt, RamdiskMeta},
         compression::{self, CompressedFormat, CompressedReader, CompressedWriter},
         cpio::{self, CpioEntry, CpioEntryData},
+        zip::{self, ZipEntriesSafeExt, ZipFileHeaderRecordExt, ZipSliceEntriesSafeExt},
     },
     patch::otacert::{self, OtaCertBuildFlags},
     stream::{self, FromReader, HashingWriter, ReadSeek, SectionReader, ToWriter, WriteSeek},
@@ -85,13 +87,15 @@ pub enum Error {
     #[error("Failed to XZ compress entry: {:?}", .0.as_bstr())]
     XzCompress(Vec<u8>, #[source] io::Error),
     #[error("Failed to open zip file: {0:?}")]
-    ZipOpen(PathBuf, #[source] ZipError),
+    ZipOpen(PathBuf, #[source] rawzip::Error),
+    #[error("Failed to list zip entries")]
+    ZipEntryList(#[source] rawzip::Error),
+    #[error("Missing zip entry: {0:?}")]
+    ZipEntryMissing(Cow<'static, str>),
     #[error("Failed to open zip entry: {0:?}")]
-    ZipEntryOpen(&'static str, #[source] ZipError),
+    ZipEntryOpen(Cow<'static, str>, #[source] rawzip::Error),
     #[error("Failed to read zip entry: {0:?}")]
-    ZipEntryRead(&'static str, #[source] io::Error),
-    #[error("Failed to open zip entry #{0}")]
-    ZipIndexOpen(usize, #[source] ZipError),
+    ZipEntryRead(Cow<'static, str>, #[source] io::Error),
     #[error("Failed to open file: {0:?}")]
     FileOpen(PathBuf, #[source] io::Error),
 }
@@ -254,35 +258,46 @@ impl MagiskRootPatcher {
         })
     }
 
-    fn get_version(path: &Path) -> Result<u32> {
-        let reader = File::open(path)
-            .map(BufReader::new)
-            .map_err(|e| Error::FileOpen(path.to_owned(), e))?;
-        let mut zip = ZipArchive::new(reader).map_err(|e| Error::ZipOpen(path.to_owned(), e))?;
-        let entry = zip
-            .by_name(Self::ZIP_UTIL_FUNCTIONS)
-            .map_err(|e| Error::ZipEntryOpen(Self::ZIP_UTIL_FUNCTIONS, e))?;
-        let mut entry = BufReader::new(entry);
-        let mut line = String::new();
+    fn get_version(apk_path: &Path) -> Result<u32> {
+        let file = File::open(apk_path).map_err(|e| Error::FileOpen(apk_path.to_owned(), e))?;
+        let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
+        let archive = ZipArchive::from_file(file, &mut buffer)
+            .map_err(|e| Error::ZipOpen(apk_path.to_owned(), e))?;
+        let mut entries = archive.entries_safe(&mut buffer);
 
-        loop {
-            line.clear();
-            let n = entry
-                .read_line(&mut line)
-                .map_err(|e| Error::ZipEntryRead(Self::ZIP_UTIL_FUNCTIONS, e))?;
-            if n == 0 {
-                return Err(Error::FindMagiskVersion(path.to_owned()));
+        while let Some((cd_entry, entry)) = entries.next_entry().map_err(Error::ZipEntryList)? {
+            let path = cd_entry.file_path_utf8().map_err(Error::ZipEntryList)?;
+
+            if path != Self::ZIP_UTIL_FUNCTIONS {
+                continue;
             }
 
-            if let Some(suffix) = line.trim_end().strip_prefix("MAGISK_VER_CODE=") {
-                trace!("Magisk version code line: {line:?}");
+            let mut reader = zip::verifying_reader(&entry, cd_entry.compression_method())
+                .map(BufReader::new)
+                .map_err(|e| Error::ZipEntryOpen(Self::ZIP_UTIL_FUNCTIONS.into(), e))?;
+            let mut line = String::new();
 
-                let version = suffix
-                    .parse()
-                    .map_err(|e| Error::ParseMagiskVersion(suffix.to_owned(), e))?;
-                return Ok(version);
+            loop {
+                line.clear();
+                let n = reader
+                    .read_line(&mut line)
+                    .map_err(|e| Error::ZipEntryRead(Self::ZIP_UTIL_FUNCTIONS.into(), e))?;
+                if n == 0 {
+                    return Err(Error::FindMagiskVersion(apk_path.to_owned()));
+                }
+
+                if let Some(suffix) = line.trim_end().strip_prefix("MAGISK_VER_CODE=") {
+                    trace!("Magisk version code line: {line:?}");
+
+                    let version = suffix
+                        .parse()
+                        .map_err(|e| Error::ParseMagiskVersion(suffix.to_owned(), e))?;
+                    return Ok(version);
+                }
             }
         }
+
+        Err(Error::ZipEntryMissing(Self::ZIP_UTIL_FUNCTIONS.into()))
     }
 
     fn xz_compress(name: &[u8], reader: impl Read, cancel_signal: &AtomicBool) -> Result<Vec<u8>> {
@@ -436,12 +451,6 @@ impl BootImagePatch for MagiskRootPatcher {
     }
 
     fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
-        let zip_reader = File::open(&self.apk_path)
-            .map(BufReader::new)
-            .map_err(|e| Error::FileOpen(self.apk_path.clone(), e))?;
-        let mut zip =
-            ZipArchive::new(zip_reader).map_err(|e| Error::ZipOpen(self.apk_path.clone(), e))?;
-
         // Load the first ramdisk. If it doesn't exist, we have to generate one
         // from scratch.
         let ramdisk = match boot_image {
@@ -467,60 +476,95 @@ impl BootImagePatch for MagiskRootPatcher {
         // Delete the original init.
         entries.retain(|e| e.path != b"init");
 
-        // Add magiskinit.
-        {
-            let mut zip_entry = zip
-                .by_name(Self::ZIP_MAGISKINIT)
-                .map_err(|e| Error::ZipEntryOpen(Self::ZIP_MAGISKINIT, e))?;
-            let mut data = vec![];
-            zip_entry
-                .read_to_end(&mut data)
-                .map_err(|e| Error::ZipEntryRead(Self::ZIP_MAGISKINIT, e))?;
+        let file =
+            File::open(&self.apk_path).map_err(|e| Error::FileOpen(self.apk_path.clone(), e))?;
+        let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
+        let archive = ZipArchive::from_file(file, &mut buffer)
+            .map_err(|e| Error::ZipOpen(self.apk_path.clone(), e))?;
+
+        let mut zip_entries = archive.entries_safe(&mut buffer);
+        let mut found_magiskinit = false;
+        let mut found_libmagisk = false;
+
+        while let Some((cd_entry, entry)) = zip_entries.next_entry().map_err(Error::ZipEntryList)? {
+            let path = cd_entry.file_path_utf8().map_err(Error::ZipEntryList)?;
+
+            // magiskinit is the only entry that is not xz-compressed.
+            if path == Self::ZIP_MAGISKINIT {
+                let mut reader = zip::verifying_reader(&entry, cd_entry.compression_method())
+                    .map_err(|e| Error::ZipEntryOpen(Self::ZIP_MAGISKINIT.into(), e))?;
+                let mut data = vec![];
+
+                reader
+                    .read_to_end(&mut data)
+                    .map_err(|e| Error::ZipEntryRead(Self::ZIP_MAGISKINIT.into(), e))?;
+
+                entries.push(CpioEntry::new_file(
+                    b"init",
+                    0o750,
+                    CpioEntryData::Data(data),
+                ));
+
+                found_magiskinit = true;
+                continue;
+            }
+
+            // Keep a 'static version of the zip path.
+            let (path, cpio_path): (_, &[u8]) = match path {
+                // Newer Magisk versions only include a single binary for the
+                // target ABI in the ramdisk. This was introduced in commit
+                // fb5ee86615ed3df830e8538f8b39b1b133caea34.
+                p if p == Self::ZIP_LIBMAGISK => {
+                    debug!("Single libmagisk");
+                    found_libmagisk = true;
+                    (Self::ZIP_LIBMAGISK, b"overlay.d/sbin/magisk.xz")
+                }
+                // Older Magisk versions include the 64-bit binary and,
+                // optionally, the 32-bit binary if the device supports it. We
+                // unconditionally include the magisk32 because the boot image
+                // itself doesn't have sufficient information to determine if a
+                // device is 64-bit only.
+                p if p == Self::ZIP_LIBMAGISK32 => {
+                    debug!("Split libmagisk32");
+                    found_libmagisk = true;
+                    (Self::ZIP_LIBMAGISK32, b"overlay.d/sbin/magisk32.xz")
+                }
+                p if p == Self::ZIP_LIBMAGISK64 => {
+                    debug!("Split libmagisk64");
+                    found_libmagisk = true;
+                    (Self::ZIP_LIBMAGISK64, b"overlay.d/sbin/magisk64.xz")
+                }
+                // The stub apk was introduced in commit
+                // ad0e6511e11ebec65aa9b5b916e1397342850319.
+                p if p == Self::ZIP_STUB => {
+                    debug!("Magisk stub found");
+                    (Self::ZIP_STUB, b"overlay.d/sbin/stub.xz")
+                }
+                // init-ld was introduced in commit
+                // 33aebb59763b6ec27209563035303700e998633d.
+                p if p == Self::ZIP_INIT_LD => {
+                    debug!("Magisk init-ld found");
+                    (Self::ZIP_INIT_LD, b"overlay.d/sbin/init-ld.xz")
+                }
+                _ => continue,
+            };
+
+            let reader = zip::verifying_reader(&entry, cd_entry.compression_method())
+                .map_err(|e| Error::ZipEntryOpen(path.into(), e))?;
+
+            let buf = Self::xz_compress(path.as_bytes(), reader, cancel_signal)?;
 
             entries.push(CpioEntry::new_file(
-                b"init",
-                0o750,
-                CpioEntryData::Data(data),
+                cpio_path,
+                0o644,
+                CpioEntryData::Data(buf),
             ));
         }
 
-        let mut xz_files = HashMap::<&str, &[u8]>::new();
-        if zip.file_names().any(|n| n == Self::ZIP_LIBMAGISK) {
-            // Newer Magisk versions only include a single binary for the target
-            // ABI in the ramdisk. fb5ee86615ed3df830e8538f8b39b1b133caea34.
-            debug!("Single libmagisk");
-            xz_files.insert(Self::ZIP_LIBMAGISK, b"overlay.d/sbin/magisk.xz");
-        } else {
-            // Older Magisk versions include the 64-bit binary and, optionally,
-            // the 32-bit binary if the device supports it. We unconditionally
-            // include the magisk32 because the boot image itself doesn't have
-            // sufficient information to determine if a device is 64-bit only.
-            debug!("Split libmagisk32/libmagisk64");
-            xz_files.insert(Self::ZIP_LIBMAGISK32, b"overlay.d/sbin/magisk32.xz");
-            xz_files.insert(Self::ZIP_LIBMAGISK64, b"overlay.d/sbin/magisk64.xz");
-        }
-
-        // Add stub apk, which only exists after Magisk commit
-        // ad0e6511e11ebec65aa9b5b916e1397342850319.
-        if zip.file_names().any(|n| n == Self::ZIP_STUB) {
-            debug!("Magisk stub found");
-            xz_files.insert(Self::ZIP_STUB, b"overlay.d/sbin/stub.xz");
-        }
-
-        // Add init-ld, which only exists after Magisk commit
-        // 33aebb59763b6ec27209563035303700e998633d
-        if zip.file_names().any(|n| n == Self::ZIP_INIT_LD) {
-            debug!("Magisk init-ld found");
-            xz_files.insert(Self::ZIP_INIT_LD, b"overlay.d/sbin/init-ld.xz");
-        }
-
-        for (source, target) in xz_files {
-            let reader = zip
-                .by_name(source)
-                .map_err(|e| Error::ZipEntryOpen(source, e))?;
-            let buf = Self::xz_compress(source.as_bytes(), reader, cancel_signal)?;
-
-            entries.push(CpioEntry::new_file(target, 0o644, CpioEntryData::Data(buf)));
+        if !found_magiskinit {
+            return Err(Error::ZipEntryMissing(Self::ZIP_MAGISKINIT.into()));
+        } else if !found_libmagisk {
+            return Err(Error::ZipEntryMissing(Self::ZIP_LIBMAGISK.into()));
         }
 
         // Create Magisk .backup directory structure.
@@ -602,7 +646,7 @@ pub struct OtaCertPatcher {
 }
 
 impl OtaCertPatcher {
-    const OTACERTS_PATH: &'static [u8] = b"system/etc/security/otacerts.zip";
+    const OTACERTS_PATH: &'static str = "system/etc/security/otacerts.zip";
 
     pub fn new(cert: Certificate) -> Self {
         Self { cert }
@@ -628,29 +672,33 @@ impl OtaCertPatcher {
             }
 
             let (entries, _) = load_ramdisk(ramdisk, cancel_signal)?;
-            let Some(entry) = entries.iter().find(|e| e.path == Self::OTACERTS_PATH) else {
+            let Some(entry) = entries
+                .iter()
+                .find(|e| e.path == Self::OTACERTS_PATH.as_bytes())
+            else {
                 continue;
             };
             let CpioEntryData::Data(data) = &entry.data else {
                 continue;
             };
 
-            let mut zip = ZipArchive::new(Cursor::new(&data)).map_err(|e| {
-                Error::ZipOpen(str::from_utf8(Self::OTACERTS_PATH).unwrap().into(), e)
-            })?;
+            let archive = ZipArchive::from_slice(data)
+                .map_err(|e| Error::ZipOpen(Self::OTACERTS_PATH.into(), e))?;
+            let mut entries = archive.entries_safe();
 
-            for index in 0..zip.len() {
-                let zip_entry = zip
-                    .by_index(index)
-                    .map_err(|e| Error::ZipIndexOpen(index, e))?;
-                if !zip_entry.name().ends_with(".x509.pem") {
-                    debug!("Skipping invalid entry path: {}", zip_entry.name());
+            while let Some((cd_entry, entry)) = entries.next_entry().map_err(Error::ZipEntryList)? {
+                let path = cd_entry.file_path_utf8().map_err(Error::ZipEntryList)?;
+
+                if !path.ends_with(".x509.pem") {
+                    debug!("Skipping invalid entry path: {path:?}");
                     continue;
                 }
 
-                let path = PathBuf::from(zip_entry.name());
+                let reader = zip::verifying_slice_reader(&entry, cd_entry.compression_method())
+                    .map_err(|e| Error::ZipEntryOpen(path.to_owned().into(), e))?;
+
                 let certificate =
-                    crypto::read_pem_cert(&path, zip_entry).map_err(Error::OtaCertLoad)?;
+                    crypto::read_pem_cert(Path::new(path), reader).map_err(Error::OtaCertLoad)?;
                 certificates.push(certificate);
             }
         }
@@ -664,7 +712,10 @@ impl OtaCertPatcher {
         cancel_signal: &AtomicBool,
     ) -> Result<bool> {
         let (mut entries, ramdisk_format) = load_ramdisk(ramdisk, cancel_signal)?;
-        let Some(entry) = entries.iter_mut().find(|e| e.path == Self::OTACERTS_PATH) else {
+        let Some(entry) = entries
+            .iter_mut()
+            .find(|e| e.path == Self::OTACERTS_PATH.as_bytes())
+        else {
             return Ok(false);
         };
 
@@ -705,7 +756,10 @@ impl BootImagePatch for OtaCertPatcher {
 
                 let (entries, _) = load_ramdisk(ramdisk, cancel_signal)
                     .map_err(|e| TargetsError::Load(name.to_owned(), e))?;
-                if entries.iter().any(|e| e.path == Self::OTACERTS_PATH) {
+                if entries
+                    .iter()
+                    .any(|e| e.path == Self::OTACERTS_PATH.as_bytes())
+                {
                     targets.push(name);
                     continue 'outer;
                 }
@@ -740,7 +794,7 @@ impl BootImagePatch for OtaCertPatcher {
         // out of future updates if the OTA certificate mechanism has changed.
         Err(Error::Validation(format!(
             "No ramdisk contains {:?}",
-            Self::OTACERTS_PATH.as_bstr(),
+            Self::OTACERTS_PATH,
         )))
     }
 }
