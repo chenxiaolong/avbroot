@@ -18,6 +18,8 @@ jobs:
       CARGO_TERM_COLOR: always
       # https://github.com/rust-lang/rust/issues/78210
       RUSTFLAGS: -C strip=symbols -C target-feature=+crt-static
+      # https://github.com/rust-lang/cargo/pull/15462
+      RUSTDOCFLAGS: -C target-feature=+crt-static
       TARGETS: ${{ join(matrix.artifact.targets, ' ') || matrix.artifact.name }}
       ANDROID_API: ${{ matrix.artifact.android_api }}
     strategy:
