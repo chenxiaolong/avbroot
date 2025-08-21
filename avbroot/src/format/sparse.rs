@@ -3,7 +3,7 @@
 
 use std::{
     fmt,
-    io::{self, Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, Write},
     mem,
     ops::Range,
 };
@@ -672,7 +672,7 @@ fn hash_fill_chunk(
 /// A type for reading sparse files.
 pub struct SparseReader<R> {
     inner: R,
-    seek: Option<fn(&mut R, SeekFrom) -> io::Result<u64>>,
+    seek_relative: Option<fn(&mut R, i64) -> io::Result<()>>,
     header: RawHeader,
     /// Starting block for next chunk.
     block: u32,
@@ -689,7 +689,7 @@ impl<R: Read + Seek> SparseReader<R> {
     /// efficiently skipped without reading them.
     pub fn new_seekable(inner: R, crc_mode: CrcMode) -> Result<Self> {
         let mut result = Self::new(inner, crc_mode)?;
-        result.seek = Some(Seek::seek);
+        result.seek_relative = Some(Seek::seek_relative);
         Ok(result)
     }
 }
@@ -710,7 +710,7 @@ impl<R: Read> SparseReader<R> {
 
         Ok(Self {
             inner,
-            seek: None,
+            seek_relative: None,
             header,
             block: 0,
             chunk: 0,
@@ -744,12 +744,12 @@ impl<R: Read> SparseReader<R> {
     /// perform its own verification.
     pub fn next_chunk(&mut self) -> Result<Option<Chunk>> {
         if self.data_remain != 0 {
-            if let Some(seek) = self.seek {
+            if let Some(seek_relative) = self.seek_relative {
                 if self.hasher.is_some() {
                     return Err(Error::Crc32RandomRead);
                 }
 
-                seek(&mut self.inner, SeekFrom::Current(self.data_remain.into()))
+                seek_relative(&mut self.inner, self.data_remain.into())
                     .map_err(|e| Error::DataRead("data_remain", e))?;
                 self.data_remain = 0;
             } else {

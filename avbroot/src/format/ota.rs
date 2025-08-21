@@ -818,7 +818,7 @@ fn parse_raw_ota_sig(mut reader: impl Read + Seek) -> Result<RawOtaSignature> {
         .map_err(|e| Error::DataRead("file_size", e))?;
 
     reader
-        .seek(SeekFrom::Current(-6))
+        .seek_relative(-6)
         .map_err(|e| Error::DataRead("footer", e))?;
     let footer = reader
         .read_array_exact::<6>()

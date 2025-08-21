@@ -776,7 +776,7 @@ mod tests {
         assert_eq!(&buf[..4], b"nner");
 
         buf = *b"\0\0\0\0\0";
-        reader.seek(SeekFrom::Current(-5)).unwrap();
+        reader.seek_relative(-5).unwrap();
         reader.read_exact(&mut buf[..3]).unwrap();
         assert_eq!(&buf[..3], b"inn");
 

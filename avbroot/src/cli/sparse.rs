@@ -321,7 +321,7 @@ fn unpack_subcommand(
                 let to_skip = i64::from(chunk.bounds.len()) * i64::from(metadata.header.block_size);
 
                 writer
-                    .seek(SeekFrom::Current(to_skip))
+                    .seek_relative(to_skip)
                     .with_context(|| format!("Failed to seek file: {:?}", cli.output))?;
             }
             ChunkData::Crc32(_) => {}
