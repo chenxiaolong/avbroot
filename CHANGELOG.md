@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Switch to using rawzip for zip parsing and writing ([PR #489])
+
 ### Version 3.20.0
 
 * Switch to using lzma-rust2 for XZ compression and decompression ([PR #483])
@@ -581,3 +585,4 @@ Behind-the-scenes changes:
 [PR #485]: https://github.com/chenxiaolong/avbroot/pull/485
 [PR #486]: https://github.com/chenxiaolong/avbroot/pull/486
 [PR #487]: https://github.com/chenxiaolong/avbroot/pull/487
+[PR #489]: https://github.com/chenxiaolong/avbroot/pull/489
