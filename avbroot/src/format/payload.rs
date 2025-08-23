@@ -126,10 +126,8 @@ pub enum Error {
         num_blocks: u64,
         source: io::Error,
     },
-    #[error("Failed to open input file for partition: {0}")]
-    InputOpen(String, #[source] io::Error),
-    #[error("Failed to open output file for partition: {0}")]
-    OutputOpen(String, #[source] io::Error),
+    #[error("Failed to get input file size for partition: {0}")]
+    InputSize(String, #[source] io::Error),
     #[error("Failed to GZ compress partition image chunk")]
     GzCompress(#[source] io::Error),
     #[error("Failed to initialize XZ encoder")]
@@ -870,16 +868,15 @@ pub fn extract_image(
 }
 
 /// Extract the specified partition images from the payload into writers. This
-/// is done multithreaded and uses rayon's global thread pool. `open_output`
-/// will be called from multiple threads.
-pub fn extract_images<'a>(
+/// is done multithreaded and uses rayon's global thread pool.
+pub fn extract_images<'name, 'file>(
     payload: &(dyn ReadAt + Sync),
-    open_output: impl Fn(&str) -> io::Result<Box<dyn WriteAt>> + Sync,
+    outputs: impl IntoIterator<Item = (&'name str, &'file (dyn WriteAt + Sync))>,
     header: &PayloadHeader,
-    partition_names: impl IntoIterator<Item = &'a str>,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let mut remaining = partition_names.into_iter().collect::<HashSet<_>>();
+    let outputs = outputs.into_iter().collect::<HashMap<_, _>>();
+    let mut remaining = outputs.keys().copied().collect::<HashSet<_>>();
     // We parallelize at the operation level or else one thread might get stuck
     // processing a giant image.
     let mut operations = vec![];
@@ -901,9 +898,7 @@ pub fn extract_images<'a>(
         .into_par_iter()
         .try_for_each(|(name, op)| -> Result<()> {
             let mut reader = UserPosFile::new(payload);
-            let mut writer = open_output(name)
-                .map(UserPosFile::new)
-                .map_err(|e| Error::OutputOpen(name.to_owned(), e))?;
+            let mut writer = UserPosFile::new(&outputs[name]);
 
             apply_operation(
                 &mut reader,
@@ -1265,7 +1260,7 @@ pub fn compute_cow_estimate(
 ) -> Result<CowEstimate> {
     let file_size = input
         .file_len()
-        .map_err(|e| Error::InputOpen(partition_name.to_owned(), e))?;
+        .map_err(|e| Error::InputSize(partition_name.to_owned(), e))?;
     let final_chunk_different = file_size % CHUNK_SIZE != 0;
 
     validate_partition_size(
@@ -1349,7 +1344,7 @@ pub fn compress_image(
 
     let file_size = input
         .file_len()
-        .map_err(|e| Error::InputOpen(partition_name.to_owned(), e))?;
+        .map_err(|e| Error::InputSize(partition_name.to_owned(), e))?;
     let final_chunk_different = file_size % CHUNK_SIZE != 0;
 
     let compression_factor = vabc_params.map_or(block_size, |p| p.compression_factor);

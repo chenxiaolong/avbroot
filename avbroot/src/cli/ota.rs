@@ -53,7 +53,7 @@ use crate::{
     },
     stream::{
         self, FromReader, HashingWriter, MutexFile, ReadAt, SectionReader, SectionReaderAt,
-        ToWriter, UserPosFile,
+        ToWriter, UserPosFile, WriteAt,
     },
     util,
 };
@@ -1344,9 +1344,13 @@ pub fn extract_payload(
     // Extract the images.
     payload::extract_images(
         &payload_reader,
-        |name| Ok(Box::new(output_files[name].clone())),
+        images.iter().map(|n| {
+            (
+                n.as_str(),
+                &output_files[n.as_str()] as &(dyn WriteAt + Sync),
+            )
+        }),
         header,
-        images.iter().map(|n| n.as_str()),
         cancel_signal,
     )
     .context("Failed to extract images from payload")?;
