@@ -10,7 +10,7 @@
 ### Unreleased
 
 * Switch to using rawzip for zip parsing and writing ([PR #489])
-* Minor code improvement for file seeking ([PR #492])
+* Various code improvements ([PR #492], [PR #495])
 
 ### Version 3.20.0
 
@@ -588,3 +588,4 @@ Behind-the-scenes changes:
 [PR #487]: https://github.com/chenxiaolong/avbroot/pull/487
 [PR #489]: https://github.com/chenxiaolong/avbroot/pull/489
 [PR #492]: https://github.com/chenxiaolong/avbroot/pull/492
+[PR #495]: https://github.com/chenxiaolong/avbroot/pull/495
