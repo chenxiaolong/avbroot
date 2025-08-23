@@ -89,12 +89,10 @@ impl fmt::Debug for RawHexU32 {
 impl From<u32> for RawHexU32 {
     fn from(mut value: u32) -> Self {
         let mut buf = [b'0'; 8];
-        let mut index = 7;
 
-        while value != 0 {
-            buf[index] = char::from_digit(value & 0xf, 16).unwrap() as u8;
+        for c in buf.iter_mut().rev() {
+            *c = char::from_digit(value & 0xf, 16).unwrap() as u8;
             value >>= 4;
-            index -= 1;
         }
 
         Self(buf)
