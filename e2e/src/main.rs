@@ -580,8 +580,6 @@ fn create_payload(
     key_ota: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
-    const COMPRESSION_FACTOR: u32 = 64 * 1024;
-
     let dynamic_partitions_names = partitions
         .iter()
         .filter(|(_, p)| matches!(&p.data, Data::DmVerity(_)))
@@ -599,7 +597,6 @@ fn create_payload(
             profile.vabc.map(|v| VabcParams {
                 version: v.version,
                 algo: v.algo,
-                compression_factor: COMPRESSION_FACTOR,
             })
         } else {
             None
@@ -610,7 +607,9 @@ fn create_payload(
 
         compressed.insert(name, writer);
 
-        let is_v3 = profile.vabc.is_some_and(|e| e.version == CowVersion::V3);
+        let is_v3 = profile
+            .vabc
+            .is_some_and(|e| matches!(e.version, CowVersion::V3 { .. }));
 
         payload_partitions.push(PartitionUpdate {
             partition_name: name.clone(),
@@ -658,10 +657,13 @@ fn create_payload(
                 vabc_compression_param: profile.vabc.map(|v| v.algo.to_string()),
                 cow_version: profile.vabc.map(|v| match v.version {
                     CowVersion::V2 => 2,
-                    CowVersion::V3 => 3,
+                    CowVersion::V3 { .. } => 3,
                 }),
                 vabc_feature_set: None,
-                compression_factor: profile.vabc.map(|_| COMPRESSION_FACTOR.into()),
+                compression_factor: profile.vabc.and_then(|v| match v.version {
+                    CowVersion::V2 => v.force_compression_factor.then_some(64 * 1024),
+                    CowVersion::V3 { compression_factor } => Some(compression_factor.into()),
+                }),
             }),
             partial_update: None,
             apex_info: vec![],

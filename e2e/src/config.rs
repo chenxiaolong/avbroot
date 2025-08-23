@@ -110,6 +110,7 @@ pub struct Partition {
 pub struct VabcSettings {
     pub version: CowVersion,
     pub algo: VabcAlgo,
+    pub force_compression_factor: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

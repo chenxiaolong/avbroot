@@ -14,8 +14,9 @@ security_patch_level = "2024-01-01"
 
 [profile.pixel_v4_gki.vabc]
 # CoW v3 is used starting with the Google Pixel 9a.
-version = "V3"
+version = { V3 = { compression_factor = 65536 } }
 algo = { kind = "Lz4" }
+force_compression_factor = false
 
 [profile.pixel_v4_gki.partitions.boot]
 avb.signed = true
@@ -64,6 +65,8 @@ patched = "9195ba963d9897af2f0821ff6051c1efe3fe130055b7936bedf2cd189998fd89"
 [profile.pixel_v4_non_gki.vabc]
 version = "V2"
 algo = { kind = "Lz4" }
+# delta_generator sets it for v2, even though it's not used.
+force_compression_factor = true
 
 [profile.pixel_v4_non_gki.partitions.boot]
 avb.signed = true
@@ -106,6 +109,7 @@ patched = "5018c579df9608f9dfe3add2afd8b176de61ba267376cf3a3e422ecc9d3dd112"
 [profile.pixel_v3.vabc]
 version = "V2"
 algo = { kind = "Gz" }
+force_compression_factor = false
 
 [profile.pixel_v3.partitions.boot]
 avb.signed = true
@@ -136,12 +140,12 @@ data.version = "vendor_v3"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v3.hashes_streaming]
-original = "ae0dbd3055cc86db7df3c3cea89d826f021a860c7b7bbaed44d5ef93e2effcd3"
-patched = "ffe5cdc880468ebf3a2f30b495b56a196f9d0b9b2664acaf837a4084ade84317"
+original = "4b864b906a13ec98b1d6c3440a5eca7404ec63d073080e80a3b84afabcbd2fa2"
+patched = "a9077fe32dee8eb7a0369c1334d8f3378ae8044814ae04da700f33294b12a4d8"
 
 [profile.pixel_v3.hashes_seekable]
-original = "e9459df822703aac48f56755ada2327dccd4067d880a7a43974db139e7fbc155"
-patched = "3108c5163baf0ce5839167d88f78604ae06c2add5deabee24375d918288b1640"
+original = "e0e93ee11de56992f3a5f543858c1d11858b4deb76a91a4caf4fb0f3f34be855"
+patched = "8730b398367179a0be092a67e4714f09c2267c656fe3e42ec1f8b43bb3a28634"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)

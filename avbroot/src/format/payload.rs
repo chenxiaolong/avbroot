@@ -940,10 +940,20 @@ fn compress_chunk(raw_data: &[u8], cancel_signal: &AtomicBool) -> Result<(Vec<u8
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum CowVersion {
     V2,
-    V3,
+    V3 {
+        /// The maximum number of bytes to compress at a time.
+        compression_factor: u32,
+    },
 }
 
 impl CowVersion {
+    fn compression_factor(self) -> Option<u32> {
+        match self {
+            Self::V2 => None,
+            Self::V3 { compression_factor } => Some(compression_factor),
+        }
+    }
+
     /// Compute the size overhead required to store the headers and footers
     /// needed for this version of the on-disk CoW format.
     fn size_overhead(self, cow_replace_ops: u64, payload_install_ops: u64) -> u64 {
@@ -993,7 +1003,7 @@ impl CowVersion {
                 // AOSP: CowWriterV2::GetCowSizeInfo()
                 overhead += SIZEOF_COW_FOOTER_V2;
             }
-            Self::V3 => {
+            Self::V3 { .. } => {
                 // AOSP: CowWriterV3::OpenForWrite() -> GetDataOffset()
                 overhead += SIZEOF_COW_HEADER_V3;
                 overhead += BUFFER_REGION_DEFAULT_SIZE;
@@ -1210,8 +1220,6 @@ pub struct VabcParams {
     pub version: CowVersion,
     /// CoW compression algorithm.
     pub algo: VabcAlgo,
-    /// The maximum number of bytes to compress at a time.
-    pub compression_factor: u32,
 }
 
 /// Ensure that the partition size is aligned to the block size and that the
@@ -1220,17 +1228,16 @@ fn validate_partition_size(
     partition_name: &str,
     file_size: u64,
     block_size: u32,
-    compression_factor: u32,
+    compression_factor: Option<u32>,
 ) -> Result<()> {
     if block_size == 0 || !block_size.is_power_of_two() || CHUNK_SIZE % u64::from(block_size) != 0 {
         return Err(Error::InvalidBlockSize(block_size));
     }
 
-    if compression_factor == 0
-        || !compression_factor.is_power_of_two()
-        || CHUNK_SIZE % u64::from(compression_factor) != 0
+    if let Some(factor) = compression_factor
+        && (factor == 0 || !factor.is_power_of_two() || CHUNK_SIZE % u64::from(factor) != 0)
     {
-        return Err(Error::InvalidMaxCompressionChunkSize(compression_factor));
+        return Err(Error::InvalidMaxCompressionChunkSize(factor));
     }
 
     if file_size % u64::from(block_size) != 0 {
@@ -1267,15 +1274,16 @@ pub fn compute_cow_estimate(
         partition_name,
         file_size,
         block_size,
-        vabc_params.compression_factor,
+        vabc_params.version.compression_factor(),
     )?;
 
     let chunking = ChunkingParams {
         block_size,
         method: match vabc_params.version {
             CowVersion::V2 => ChunkingMethod::Exact,
-            CowVersion::V3 => {
-                ChunkingMethod::MaxPowerOf2(vabc_params.compression_factor.try_into().unwrap())
+            CowVersion::V3 { compression_factor } => {
+                // validate_partition_size() already validated that it is not 0.
+                ChunkingMethod::MaxPowerOf2(compression_factor.try_into().unwrap())
             }
         },
     };
@@ -1347,13 +1355,17 @@ pub fn compress_image(
         .map_err(|e| Error::InputSize(partition_name.to_owned(), e))?;
     let final_chunk_different = file_size % CHUNK_SIZE != 0;
 
-    let compression_factor = vabc_params.map_or(block_size, |p| p.compression_factor);
-    validate_partition_size(partition_name, file_size, block_size, compression_factor)?;
+    validate_partition_size(
+        partition_name,
+        file_size,
+        block_size,
+        vabc_params.and_then(|p| p.version.compression_factor()),
+    )?;
 
     let chunking = ChunkingParams {
         block_size,
         method: match vabc_params.map(|p| p.version) {
-            Some(CowVersion::V3) => {
+            Some(CowVersion::V3 { compression_factor }) => {
                 ChunkingMethod::MaxPowerOf2(compression_factor.try_into().unwrap())
             }
             _ => ChunkingMethod::Exact,

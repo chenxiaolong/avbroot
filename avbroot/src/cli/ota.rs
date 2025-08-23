@@ -587,7 +587,16 @@ fn get_vabc_params(header: &PayloadHeader) -> Result<Option<VabcParams>> {
 
     let cow_version = match dpm.cow_version() {
         2 => CowVersion::V2,
-        3 => CowVersion::V3,
+        3 => {
+            let Some(compression_factor) = dpm.compression_factor else {
+                bail!("No CoW compression factor specified");
+            };
+            let Ok(compression_factor) = u32::try_from(compression_factor) else {
+                bail!("CoW compression factor is too large: {compression_factor}");
+            };
+
+            CowVersion::V3 { compression_factor }
+        }
         v => bail!("Unsupported CoW version: {v}"),
     };
 
@@ -596,18 +605,9 @@ fn get_vabc_params(header: &PayloadHeader) -> Result<Option<VabcParams>> {
         bail!("Unsupported VABC compression: {compression}");
     };
 
-    // This is unused by v2, but delta_generator sets it anyway.
-    let Some(compression_factor) = dpm.compression_factor else {
-        bail!("No CoW compression factor specified");
-    };
-    let Ok(compression_factor) = u32::try_from(compression_factor) else {
-        bail!("CoW compression factor is too large: {compression_factor}");
-    };
-
     let vabc_params = VabcParams {
         version: cow_version,
         algo: vabc_algo,
-        compression_factor,
     };
 
     Ok(Some(vabc_params))
@@ -794,7 +794,8 @@ pub fn compress_image(
 
                     partition.estimate_cow_size = Some(cow_estimate.size);
                     partition.estimate_op_count_max =
-                        (vabc_params.version == CowVersion::V3).then_some(cow_estimate.num_ops);
+                        matches!(vabc_params.version, CowVersion::V3 { .. })
+                            .then_some(cow_estimate.num_ops);
                 }
 
                 *file = Arc::new(writer);
@@ -818,7 +819,7 @@ pub fn compress_image(
     partition.new_partition_info = Some(partition_info);
     partition.operations = operations;
     partition.estimate_cow_size = cow_estimate.map(|e| e.size);
-    let is_v3 = vabc_params.is_some_and(|p| p.version == CowVersion::V3);
+    let is_v3 = vabc_params.is_some_and(|p| matches!(p.version, CowVersion::V3 { .. }));
     partition.estimate_op_count_max = cow_estimate.and_then(|e| is_v3.then_some(e.num_ops));
 
     *file = Arc::new(writer);
@@ -869,7 +870,7 @@ fn recow_image(
 
     partition.estimate_cow_size = Some(cow_estimate.size);
     partition.estimate_op_count_max =
-        (vabc_params.version == CowVersion::V3).then_some(cow_estimate.num_ops);
+        matches!(vabc_params.version, CowVersion::V3 { .. }).then_some(cow_estimate.num_ops);
 
     Ok(())
 }
