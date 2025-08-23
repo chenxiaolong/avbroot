@@ -72,6 +72,5 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
     "https://github.com/chenxiaolong/system-properties",
-    "https://github.com/chenxiaolong/zip2",
     "https://github.com/nickbabcock/rawzip",
 ]
