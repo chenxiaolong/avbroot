@@ -621,32 +621,28 @@ pub fn verify_descriptors(
     options.read(true);
     options.write(repair);
 
-    descriptors
-        .par_iter()
-        .map(|(name, descriptor)| {
-            let _span = parent_span.enter();
+    descriptors.par_iter().try_for_each(|(name, descriptor)| {
+        let _span = parent_span.enter();
 
-            let file = match opener.open(name, &options) {
-                Ok((_, f)) => f,
-                // Some devices, like bluejay, have vbmeta descriptors that
-                // refer to partitions that exist on the device, but not in the
-                // OTA.
-                Err(e) if e.kind() == io::ErrorKind::NotFound && allow_missing => {
-                    warn!("{e}");
-                    return Ok(());
-                }
-                Err(e) => return Err(e.into()),
-            };
+        let file = match opener.open(name, &options) {
+            Ok((_, f)) => f,
+            // Some devices, like bluejay, have vbmeta descriptors that refer to
+            // partitions that exist on the device, but not in the OTA.
+            Err(e) if e.kind() == io::ErrorKind::NotFound && allow_missing => {
+                warn!("{e}");
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        };
 
-            verify_and_repair(
-                Some(name),
-                &file,
-                descriptor.try_into()?,
-                repair,
-                cancel_signal,
-            )
-        })
-        .collect()
+        verify_and_repair(
+            Some(name),
+            &file,
+            descriptor.try_into()?,
+            repair,
+            cancel_signal,
+        )
+    })
 }
 
 fn compute_digest_recursive(

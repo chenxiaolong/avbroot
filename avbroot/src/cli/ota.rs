@@ -1362,45 +1362,42 @@ fn verify_partition_hashes(
     images: &BTreeSet<String>,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    images
-        .par_iter()
-        .map(|name| -> Result<()> {
-            let partition = header
-                .manifest
-                .partitions
-                .iter()
-                .find(|p| p.partition_name == name.as_str())
-                .ok_or_else(|| anyhow!("Partition not found in header: {name}"))?;
-            let expected_digest = partition
-                .new_partition_info
-                .as_ref()
-                .and_then(|info| info.hash.as_ref())
-                .ok_or_else(|| anyhow!("Hash not found for partition: {name}"))?;
+    images.par_iter().try_for_each(|name| -> Result<()> {
+        let partition = header
+            .manifest
+            .partitions
+            .iter()
+            .find(|p| p.partition_name == name.as_str())
+            .ok_or_else(|| anyhow!("Partition not found in header: {name}"))?;
+        let expected_digest = partition
+            .new_partition_info
+            .as_ref()
+            .and_then(|info| info.hash.as_ref())
+            .ok_or_else(|| anyhow!("Hash not found for partition: {name}"))?;
 
-            let path = util::path_join_single(directory, format!("{name}.img"))?;
-            let file = File::open(&path)
-                .with_context(|| format!("Failed to open for reading: {path:?}"))?;
+        let path = util::path_join_single(directory, format!("{name}.img"))?;
+        let file =
+            File::open(&path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
 
-            let mut writer = HashingWriter::new(
-                io::sink(),
-                ring::digest::Context::new(&ring::digest::SHA256),
+        let mut writer = HashingWriter::new(
+            io::sink(),
+            ring::digest::Context::new(&ring::digest::SHA256),
+        );
+
+        stream::copy(file, &mut writer, cancel_signal)?;
+
+        let digest = writer.finish().1.finish();
+
+        if digest.as_ref() != expected_digest {
+            bail!(
+                "Expected sha256 {}, but have {} for partition {name}",
+                hex::encode(expected_digest),
+                hex::encode(digest),
             );
+        }
 
-            stream::copy(file, &mut writer, cancel_signal)?;
-
-            let digest = writer.finish().1.finish();
-
-            if digest.as_ref() != expected_digest {
-                bail!(
-                    "Expected sha256 {}, but have {} for partition {name}",
-                    hex::encode(expected_digest),
-                    hex::encode(digest),
-                );
-            }
-
-            Ok(())
-        })
-        .collect()
+        Ok(())
+    })
 }
 
 pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()> {
