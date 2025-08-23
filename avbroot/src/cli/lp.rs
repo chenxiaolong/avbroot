@@ -240,7 +240,7 @@ fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool
                 .into_par_iter()
                 .map(move |e| (g_index, p_index, e))
         })
-        .map(|(g_index, p_index, extent)| {
+        .try_for_each(|(g_index, p_index, extent)| {
             let mut reader = UserPosFile::new(&inputs[extent.device_index]);
             let mut writer = UserPosFile::new(&files[g_index][p_index]);
 
@@ -259,9 +259,6 @@ fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool
 
             Ok(())
         })
-        .collect::<Result<()>>()?;
-
-    Ok(())
 }
 
 fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) -> Result<()> {
@@ -371,7 +368,7 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
                 .into_par_iter()
                 .map(move |e| (g_index, p_index, e))
         })
-        .map(|(g_index, p_index, extent)| {
+        .try_for_each(|(g_index, p_index, extent)| {
             let mut reader = UserPosFile::new(&files[g_index][p_index]);
             let mut writer = UserPosFile::new(&outputs[extent.device_index]);
 
@@ -390,9 +387,6 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
 
             Ok(())
         })
-        .collect::<Result<()>>()?;
-
-    Ok(())
 }
 
 fn repack_subcommand(lp_cli: &LpCli, cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> {
@@ -475,7 +469,7 @@ fn repack_subcommand(lp_cli: &LpCli, cli: &RepackCli, cancel_signal: &AtomicBool
         // Flatten extents in all partitions and split them to smaller chunks
         // for better parallelism.
         .flat_map(|partition| split_extents(&partition.extents))
-        .map(|extent| {
+        .try_for_each(|extent| {
             let mut reader = UserPosFile::new(&inputs[extent.device_index]);
             let mut writer = UserPosFile::new(&outputs[extent.device_index]);
 
@@ -494,9 +488,6 @@ fn repack_subcommand(lp_cli: &LpCli, cli: &RepackCli, cancel_signal: &AtomicBool
 
             Ok(())
         })
-        .collect::<Result<()>>()?;
-
-    Ok(())
 }
 
 fn info_subcommand(lp_cli: &LpCli, cli: &InfoCli) -> Result<()> {

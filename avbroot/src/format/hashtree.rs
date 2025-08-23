@@ -207,7 +207,7 @@ impl HashTree {
         level_data
             .par_chunks_mut(digest_size * multiplier as usize)
             .enumerate()
-            .map(|(chunk, out_data)| -> io::Result<()> {
+            .try_for_each(|(chunk, out_data)| -> io::Result<()> {
                 let digests = out_data.len() / digest_size;
                 let in_start = (chunk as u64) * multiplier * u64::from(self.block_size);
                 let in_size = ((digests as u64) * u64::from(self.block_size)).min(size - in_start);
@@ -217,9 +217,6 @@ impl HashTree {
 
                 self.hash_partial_level(reader, in_size, out_data, cancel_signal)
             })
-            .collect::<io::Result<()>>()?;
-
-        Ok(())
     }
 
     /// Update parts of the hash tree level corresponding to the specified
@@ -239,7 +236,7 @@ impl HashTree {
             .par_chunks_exact_mut(digest_size)
             .enumerate()
             .filter(|(chunk, _)| util::ranges_contains(block_ranges, &(*chunk as u64)))
-            .map(|(chunk, out_data)| -> io::Result<()> {
+            .try_for_each(|(chunk, out_data)| -> io::Result<()> {
                 let in_start = (chunk as u64) * u64::from(self.block_size);
                 let in_size = u64::from(self.block_size).min(size - in_start);
 
@@ -248,9 +245,6 @@ impl HashTree {
 
                 self.hash_partial_level(reader, in_size, out_data, cancel_signal)
             })
-            .collect::<io::Result<()>>()?;
-
-        Ok(())
     }
 
     /// Compute the hash tree and return the root digest. If `ranges` is
