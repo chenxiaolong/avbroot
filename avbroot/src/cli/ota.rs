@@ -18,7 +18,7 @@ use bitflags::bitflags;
 use clap::{ArgAction, Args, Parser, Subcommand, value_parser};
 use rawzip::{
     CompressionMethod, RECOMMENDED_BUFFER_SIZE, ZipArchive, ZipArchiveEntryWayfinder,
-    ZipArchiveWriter, ZipDataWriter, extra_fields::ExtraFieldId,
+    ZipArchiveWriter, extra_fields::ExtraFieldId,
 };
 use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
 use tempfile::{NamedTempFile, TempDir};
@@ -1107,7 +1107,7 @@ fn patch_ota_zip(
         compression_method: CompressionMethod,
         is_zip64: bool,
         // We can't store the rawzip::ZipEntry directly because of the lifetime
-        // generic parameter. We'll need to read the
+        // generic parameter. We'll need to read the local headers again later.
         wayfinder: ZipArchiveEntryWayfinder,
     }
 
@@ -1221,14 +1221,14 @@ fn patch_ota_zip(
             )?;
         }
 
-        let entry_writer = builder
-            .create()
+        let (entry_writer, data_config) = builder
+            .start()
             .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
         let offset = entry_writer.stream_offset();
         let compressed_writer =
             zip::compressed_writer(entry_writer, input_entry.compression_method)
                 .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
-        let mut data_writer = ZipDataWriter::new(compressed_writer);
+        let mut data_writer = data_config.wrap(compressed_writer);
 
         // All remaining entries are written immediately.
         match path.as_str() {

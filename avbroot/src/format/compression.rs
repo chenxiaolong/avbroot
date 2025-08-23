@@ -115,23 +115,24 @@ pub enum CompressedFormat {
     Xz,
 }
 
-pub enum CompressedReader<'reader, R: Read> {
+pub enum CompressedReader<R: Read> {
     None(R),
     /// Not autodetected.
     Deflate(DeflateDecoder<R>),
     Gzip(GzDecoder<R>),
     Lz4(FrameDecoder<R>),
-    Xz(XZReader<'reader, R>),
+    /// Boxed because the [`XZReader`] is nearly 4 KiB.
+    Xz(Box<XZReader<R>>),
 }
 
-impl<'reader, R: Read + 'reader> CompressedReader<'reader, R> {
+impl<R: Read> CompressedReader<R> {
     pub fn with_format(reader: R, format: CompressedFormat) -> Self {
         match format {
             CompressedFormat::None => Self::None(reader),
             CompressedFormat::Deflate => Self::Deflate(DeflateDecoder::new(reader)),
             CompressedFormat::Gzip => Self::Gzip(GzDecoder::new(reader)),
             CompressedFormat::Lz4Legacy => Self::Lz4(FrameDecoder::new(reader)),
-            CompressedFormat::Xz => Self::Xz(XZReader::new(reader, false)),
+            CompressedFormat::Xz => Self::Xz(Box::new(XZReader::new(reader, false))),
         }
     }
 
@@ -156,7 +157,7 @@ impl<'reader, R: Read + 'reader> CompressedReader<'reader, R> {
     }
 }
 
-impl<'reader, R: Read + Seek + 'reader> CompressedReader<'reader, R> {
+impl<R: Read + Seek> CompressedReader<R> {
     pub fn new(mut reader: R, raw_if_unknown: bool) -> Result<Self> {
         let magic = reader.read_array_exact::<6>().map_err(Error::AutoDetect)?;
 
@@ -167,7 +168,7 @@ impl<'reader, R: Read + Seek + 'reader> CompressedReader<'reader, R> {
         } else if &magic[0..4] == LZ4_LEGACY_MAGIC {
             Ok(Self::Lz4(FrameDecoder::new(reader)))
         } else if &magic == XZ_MAGIC {
-            Ok(Self::Xz(XZReader::new(reader, false)))
+            Ok(Self::Xz(Box::new(XZReader::new(reader, false))))
         } else if raw_if_unknown {
             Ok(Self::None(reader))
         } else {
@@ -176,7 +177,7 @@ impl<'reader, R: Read + Seek + 'reader> CompressedReader<'reader, R> {
     }
 }
 
-impl<'reader, R: Read + 'reader> Read for CompressedReader<'reader, R> {
+impl<R: Read> Read for CompressedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Self::None(r) => r.read(buf),
@@ -189,15 +190,15 @@ impl<'reader, R: Read + 'reader> Read for CompressedReader<'reader, R> {
 }
 
 #[allow(clippy::large_enum_variant)]
-pub enum CompressedWriter<'writer, W: Write> {
+pub enum CompressedWriter<W: Write> {
     None(W),
     Deflate(DeflateEncoder<W>),
     Gzip(GzEncoder<W>),
     Lz4Legacy(Lz4LegacyEncoder<W>),
-    Xz(XZWriter<'writer, W>),
+    Xz(XZWriter<W>),
 }
 
-impl<'writer, W: Write + 'writer> CompressedWriter<'writer, W> {
+impl<W: Write> CompressedWriter<W> {
     pub fn new(writer: W, format: CompressedFormat) -> Result<Self> {
         match format {
             CompressedFormat::None => Ok(Self::None(writer)),
@@ -244,7 +245,7 @@ impl<'writer, W: Write + 'writer> CompressedWriter<'writer, W> {
     }
 }
 
-impl<'writer, W: Write + 'writer> Write for CompressedWriter<'writer, W> {
+impl<W: Write> Write for CompressedWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Self::None(w) => w.write(buf),

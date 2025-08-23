@@ -50,7 +50,7 @@ use avbroot::{
     util,
 };
 use clap::Parser;
-use rawzip::{CompressionMethod, ZipArchiveWriter, ZipDataWriter};
+use rawzip::{CompressionMethod, ZipArchiveWriter};
 use rsa::{BigUint, rand_core::OsRng, traits::PublicKeyParts};
 use tempfile::TempDir;
 use topological_sort::TopologicalSort;
@@ -748,13 +748,12 @@ fn create_ota(
     let mut payload_metadata_size = None;
 
     for path in [ota::PATH_OTACERT, ota::PATH_PAYLOAD, ota::PATH_PROPERTIES] {
-        // All remaining entries are written immediately.
-        let entry_writer = zip_writer
+        let (entry_writer, data_config) = zip_writer
             .new_file(path)
-            .create()
+            .start()
             .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
         let offset = entry_writer.stream_offset();
-        let mut data_writer = ZipDataWriter::new(entry_writer);
+        let mut data_writer = data_config.wrap(entry_writer);
 
         match path {
             ota::PATH_OTACERT => {
@@ -876,14 +875,14 @@ fn create_fake_magisk(output: &Path) -> Result<()> {
         "lib/x86_64/libmagisk64.so",
         "lib/x86_64/libmagiskinit.so",
     ] {
-        let entry_writer = zip_writer
+        let (entry_writer, data_config) = zip_writer
             .new_file(path)
             .compression_method(compression_method)
-            .create()
+            .start()
             .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
         let compressed_writer = zip::compressed_writer(entry_writer, compression_method)
             .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
-        let mut data_writer = ZipDataWriter::new(compressed_writer);
+        let mut data_writer = data_config.wrap(compressed_writer);
 
         if path == "assets/util_functions.sh" {
             // avbroot looks for the version number in this file.

@@ -18,9 +18,7 @@ use cms::signed_data::SignedData;
 use const_oid::{ObjectIdentifier, db::rfc5912};
 use memchr::memmem;
 use prost::Message;
-use rawzip::{
-    CompressionMethod, RECOMMENDED_BUFFER_SIZE, ZipArchive, ZipArchiveWriter, ZipDataWriter,
-};
+use rawzip::{CompressionMethod, RECOMMENDED_BUFFER_SIZE, ZipArchive, ZipArchiveWriter};
 use ring::digest::{Algorithm, Context};
 use thiserror::Error;
 use x509_cert::{Certificate, der::Encode};
@@ -519,12 +517,12 @@ pub fn add_metadata(
         path: &'static str,
         data: &[u8],
     ) -> Result<(u64, u64)> {
-        let entry_writer = archive
+        let (entry_writer, data_config) = archive
             .new_file(path)
-            .create()
+            .start()
             .map_err(|e| Error::ZipEntryStart(path.into(), e))?;
         let data_offset = entry_writer.stream_offset();
-        let mut data_writer = ZipDataWriter::new(entry_writer);
+        let mut data_writer = data_config.wrap(entry_writer);
 
         data_writer
             .write_all(data)

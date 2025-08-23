@@ -4,7 +4,7 @@
 use std::{borrow::Cow, cmp::Ordering, io::Cursor, path::Path};
 
 use bitflags::bitflags;
-use rawzip::{CompressionMethod, ZipArchiveWriter, ZipDataWriter};
+use rawzip::{CompressionMethod, ZipArchiveWriter};
 use thiserror::Error;
 use tracing::trace;
 use x509_cert::{Certificate, der::asn1::BitString};
@@ -83,14 +83,14 @@ pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8
     };
 
     let name = "ota.x509.pem";
-    let entry_writer = writer
+    let (entry_writer, data_config) = writer
         .new_file(name)
         .compression_method(compression_method)
-        .create()
+        .start()
         .map_err(Error::ZipWrite)?;
     let compressed_writer =
         zip::compressed_writer(entry_writer, compression_method).map_err(Error::ZipWrite)?;
-    let mut data_writer = ZipDataWriter::new(compressed_writer);
+    let mut data_writer = data_config.wrap(compressed_writer);
 
     let cert = if flags.is_empty() {
         Cow::Borrowed(cert)

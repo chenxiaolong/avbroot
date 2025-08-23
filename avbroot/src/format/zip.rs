@@ -246,7 +246,7 @@ fn compression_method_to_format(
 pub fn compressed_reader<'archive, R: ReaderAt>(
     entry: &ZipEntry<'archive, R>,
     compression_method: CompressionMethod,
-) -> Result<CompressedReader<'archive, ZipReader<&'archive R>>, rawzip::Error> {
+) -> Result<CompressedReader<ZipReader<&'archive R>>, rawzip::Error> {
     let format = compression_method_to_format(compression_method)?;
 
     Ok(CompressedReader::with_format(entry.reader(), format))
@@ -255,7 +255,7 @@ pub fn compressed_reader<'archive, R: ReaderAt>(
 pub fn compressed_slice_reader<'archive>(
     entry: &ZipSliceEntry<'archive>,
     compression_method: CompressionMethod,
-) -> Result<CompressedReader<'archive, Cursor<&'archive [u8]>>, rawzip::Error> {
+) -> Result<CompressedReader<Cursor<&'archive [u8]>>, rawzip::Error> {
     let format = compression_method_to_format(compression_method)?;
     let raw_reader = Cursor::new(entry.data());
 
@@ -265,24 +265,21 @@ pub fn compressed_slice_reader<'archive>(
 pub fn verifying_reader<'archive, R: ReaderAt>(
     entry: &ZipEntry<'archive, R>,
     compression_method: CompressionMethod,
-) -> Result<
-    ZipVerifier<'archive, CompressedReader<'archive, ZipReader<&'archive R>>, R>,
-    rawzip::Error,
-> {
+) -> Result<ZipVerifier<CompressedReader<ZipReader<&'archive R>>, &'archive R>, rawzip::Error> {
     compressed_reader(entry, compression_method).map(|r| entry.verifying_reader(r))
 }
 
 pub fn verifying_slice_reader<'archive>(
     entry: &ZipSliceEntry<'archive>,
     compression_method: CompressionMethod,
-) -> Result<ZipSliceVerifier<CompressedReader<'archive, Cursor<&'archive [u8]>>>, rawzip::Error> {
+) -> Result<ZipSliceVerifier<CompressedReader<Cursor<&'archive [u8]>>>, rawzip::Error> {
     compressed_slice_reader(entry, compression_method).map(|r| entry.verifying_reader(r))
 }
 
-pub fn compressed_writer<'writer, W: Write + 'writer>(
+pub fn compressed_writer<W: Write>(
     writer: W,
     compression_method: CompressionMethod,
-) -> Result<CompressedWriter<'writer, W>, rawzip::Error> {
+) -> Result<CompressedWriter<W>, rawzip::Error> {
     use compression::Error;
 
     let format = compression_method_to_format(compression_method)?;
