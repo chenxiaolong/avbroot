@@ -37,7 +37,7 @@ use crate::{
     },
     stream::{
         self, CountingReader, FromReader, HashingReader, HashingWriter, ReadAt, ReadDiscardExt,
-        ReadFixedSizeExt, UserPosFile, WriteAt, WriteSeek,
+        ReadFixedSizeExt, ReadSeek, UserPosFile, WriteAt, WriteSeek,
     },
     util::{self, OutOfBoundsError},
 };
@@ -590,12 +590,12 @@ impl<W: Write> Write for PayloadWriter<W> {
 /// Verify the payload signatures using the specified certificate and check that
 /// the digests in `payload_properties.txt` are correct.
 pub fn verify_payload(
-    mut reader: impl Read + Seek,
+    reader: &mut dyn ReadSeek,
     cert: &Certificate,
     properties_raw: &str,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let header = PayloadHeader::from_reader(&mut reader)?;
+    let header = PayloadHeader::from_reader(&mut *reader)?;
     reader.rewind().map_err(|e| Error::DataRead("header", e))?;
 
     let payload_signatures_offset = header
@@ -615,7 +615,7 @@ pub fn verify_payload(
     // Read from the beginning to the metadata signature.
     let metadata_size = header.blob_offset - u64::from(header.metadata_signature_size);
     stream::copy_n_inspect(
-        &mut reader,
+        &mut *reader,
         io::sink(),
         metadata_size,
         |data| {
@@ -632,7 +632,7 @@ pub fn verify_payload(
         let mut writer = Cursor::new(Vec::new());
 
         stream::copy_n_inspect(
-            &mut reader,
+            &mut *reader,
             &mut writer,
             header.metadata_signature_size.into(),
             |data| h_full.update(data),
@@ -662,7 +662,7 @@ pub fn verify_payload(
 
     // Read (and discard) all the payload blobs.
     stream::copy_n_inspect(
-        &mut reader,
+        &mut *reader,
         io::sink(),
         payload_signatures_offset,
         |data| {
@@ -690,7 +690,7 @@ pub fn verify_payload(
         let mut writer = Cursor::new(Vec::new());
 
         stream::copy_n_inspect(
-            &mut reader,
+            &mut *reader,
             &mut writer,
             payload_signatures_size,
             |data| h_full.update(data),
@@ -735,8 +735,8 @@ pub fn verify_payload(
 
 /// Apply a partition operation from `reader` to `writer`.
 pub fn apply_operation(
-    mut reader: impl Read + Seek,
-    mut writer: impl Write + Seek,
+    reader: &mut dyn ReadSeek,
+    writer: &mut dyn WriteSeek,
     block_size: u32,
     blob_offset: u64,
     op: &InstallOperation,
@@ -772,7 +772,7 @@ pub fn apply_operation(
             Type::Zero | Type::Discard => {
                 stream::copy_n_inspect(
                     io::repeat(0),
-                    &mut writer,
+                    &mut *writer,
                     out_data_length,
                     |data| hasher.update(data),
                     cancel_signal,
@@ -791,8 +791,8 @@ pub fn apply_operation(
                 match other {
                     Type::Replace => {
                         stream::copy_n_inspect(
-                            &mut reader,
-                            &mut writer,
+                            &mut *reader,
+                            &mut *writer,
                             data_length,
                             |data| hasher.update(data),
                             cancel_signal,
@@ -800,9 +800,9 @@ pub fn apply_operation(
                         .map_err(error_fn)?;
                     }
                     Type::ReplaceBz => {
-                        let mut decoder = BzDecoder::new(&mut writer);
+                        let mut decoder = BzDecoder::new(&mut *writer);
                         stream::copy_n_inspect(
-                            &mut reader,
+                            &mut *reader,
                             &mut decoder,
                             data_length,
                             |data| hasher.update(data),
@@ -814,10 +814,11 @@ pub fn apply_operation(
                     Type::ReplaceXz => {
                         // lzma_rust2 does not have a Write API, so we limit the
                         // reader and read till EOF.
-                        let limited_reader = (&mut reader).take(data_length);
+                        let limited_reader = (&mut *reader).take(data_length);
                         let hashing_reader = HashingReader::new(limited_reader, hasher);
                         let mut decoder = XZReader::new(hashing_reader, false);
-                        stream::copy(&mut decoder, &mut writer, cancel_signal).map_err(error_fn)?;
+                        stream::copy(&mut decoder, &mut *writer, cancel_signal)
+                            .map_err(error_fn)?;
 
                         (_, hasher) = decoder.into_inner().finish();
                     }
@@ -858,8 +859,8 @@ pub fn extract_image(
 
     partition.operations.par_iter().try_for_each(|op| {
         apply_operation(
-            UserPosFile::new(payload),
-            UserPosFile::new(output),
+            &mut UserPosFile::new(payload),
+            &mut UserPosFile::new(output),
             header.manifest.block_size(),
             header.blob_offset,
             op,
@@ -899,14 +900,14 @@ pub fn extract_images<'a>(
     operations
         .into_par_iter()
         .try_for_each(|(name, op)| -> Result<()> {
-            let reader = UserPosFile::new(payload);
-            let writer = open_output(name)
+            let mut reader = UserPosFile::new(payload);
+            let mut writer = open_output(name)
                 .map(UserPosFile::new)
                 .map_err(|e| Error::OutputOpen(name.to_owned(), e))?;
 
             apply_operation(
-                reader,
-                writer,
+                &mut reader,
+                &mut writer,
                 header.manifest.block_size(),
                 header.blob_offset,
                 op,

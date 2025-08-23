@@ -1955,12 +1955,16 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         .find(|pf| pf.name() == ota::PATH_PAYLOAD)
         .ok_or_else(|| anyhow!("Missing property files entry: {}", ota::PATH_PAYLOAD))?;
 
-    let section_reader = SectionReader::new(&mut reader, pf_payload.offset, pf_payload.size)
+    let mut section_reader = SectionReader::new(&mut reader, pf_payload.offset, pf_payload.size)
         .context("Failed to directly open payload section")?;
 
-    if let Err(e) =
-        payload::verify_payload(section_reader, &ota_sig.cert, &properties, cancel_signal)
-            .context("Failed to verify payload signatures and digests")
+    if let Err(e) = payload::verify_payload(
+        &mut section_reader,
+        &ota_sig.cert,
+        &properties,
+        cancel_signal,
+    )
+    .context("Failed to verify payload signatures and digests")
     {
         fail_later!("{e:?}");
     }
