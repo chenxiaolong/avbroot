@@ -1264,9 +1264,20 @@ fn save_boot_image(
     Ok(())
 }
 
+pub trait BootImageOpener {
+    fn open_original(&self, name: &str) -> io::Result<Box<dyn ReadSeek + Sync>>;
+
+    fn open_replacement(&self, name: &str) -> io::Result<Box<dyn WriteSeek + Sync>> {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{name} boot image not found"),
+        ))
+    }
+}
+
 pub fn load_boot_images<'a>(
     names: &[&'a str],
-    open_input: impl Fn(&str) -> io::Result<Box<dyn ReadSeek>> + Sync,
+    opener: &(dyn BootImageOpener + Sync),
 ) -> TargetsResult<HashMap<&'a str, BootImageInfo>> {
     let parent_span = Span::current();
 
@@ -1274,8 +1285,9 @@ pub fn load_boot_images<'a>(
         .par_iter()
         .map(|&name| {
             let _span = debug_span!(parent: &parent_span, "image", name).entered();
-            let mut reader =
-                open_input(name).map_err(|e| TargetsError::Open(name.to_owned(), e))?;
+            let mut reader = opener
+                .open_original(name)
+                .map_err(|e| TargetsError::Open(name.to_owned(), e))?;
 
             let info =
                 load_boot_image(&mut reader).map_err(|e| TargetsError::Load(name.to_owned(), e))?;
@@ -1292,8 +1304,7 @@ pub fn load_boot_images<'a>(
 /// be opened from multiple threads, but at most once each.
 pub fn patch_boot_images<'a>(
     names: &[&'a str],
-    open_input: impl Fn(&str) -> io::Result<Box<dyn ReadSeek>> + Sync,
-    open_output: impl Fn(&str) -> io::Result<Box<dyn WriteSeek>> + Sync,
+    opener: &(dyn BootImageOpener + Sync),
     key: &RsaSigningKey,
     patchers: &[Box<dyn BootImagePatch + Sync>],
     cancel_signal: &AtomicBool,
@@ -1306,7 +1317,7 @@ pub fn patch_boot_images<'a>(
     }
 
     // Preparse all images. Some patchers need to inspect every candidate.
-    let mut images = load_boot_images(names, open_input)?;
+    let mut images = load_boot_images(names, opener)?;
 
     // Find the targets that each patcher wants to patch.
     let all_targets = patchers
@@ -1357,7 +1368,9 @@ pub fn patch_boot_images<'a>(
     // Resign and write new images.
     groups.par_iter_mut().try_for_each(|(&name, (info, _))| {
         let _span = debug_span!(parent: &parent_span, "image", name).entered();
-        let mut writer = open_output(name).map_err(|e| TargetsError::Open(name.to_owned(), e))?;
+        let mut writer = opener
+            .open_replacement(name)
+            .map_err(|e| TargetsError::Open(name.to_owned(), e))?;
 
         save_boot_image(&mut writer, info, key).map_err(|e| TargetsError::Save(name.to_owned(), e))
     })?;

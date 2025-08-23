@@ -43,8 +43,8 @@ use crate::{
     },
     patch::{
         boot::{
-            self, BootImagePatch, DsuPubKeyPatcher, MagiskRootPatcher, OtaCertPatcher,
-            PrepatchedImagePatcher,
+            self, BootImageOpener, BootImagePatch, DsuPubKeyPatcher, MagiskRootPatcher,
+            OtaCertPatcher, PrepatchedImagePatcher,
         },
         system,
     },
@@ -52,8 +52,8 @@ use crate::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
     },
     stream::{
-        self, FromReader, HashingWriter, MutexFile, ReadAt, SectionReader, SectionReaderAt,
-        ToWriter, UserPosFile, WriteAt,
+        self, FromReader, HashingWriter, MutexFile, ReadAt, ReadSeek, SectionReader,
+        SectionReaderAt, ToWriter, UserPosFile, WriteAt, WriteSeek,
     },
     util,
 };
@@ -200,7 +200,6 @@ fn patch_boot_images(
     key_avb: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let input_files = Mutex::new(input_files);
     let boot_partitions = required_images
         .iter()
         .filter(|(_, flags)| flags.contains(PartitionFlags::BOOT))
@@ -212,19 +211,26 @@ fn patch_boot_images(
         util::join(util::sort(boot_partitions.iter()), ", "),
     );
 
-    boot::patch_boot_images(
-        &boot_partitions,
-        |name| {
-            let locked = input_files.lock().unwrap();
+    struct Opener<'a>(Mutex<&'a mut HashMap<String, InputFile>>);
+
+    impl<'a> BootImageOpener for Opener<'a> {
+        fn open_original(&self, name: &str) -> io::Result<Box<dyn ReadSeek + Sync>> {
+            let locked = self.0.lock().unwrap();
             Ok(Box::new(locked[name].file.clone()))
-        },
-        |name| {
-            let mut locked = input_files.lock().unwrap();
+        }
+
+        fn open_replacement(&self, name: &str) -> io::Result<Box<dyn WriteSeek + Sync>> {
+            let mut locked = self.0.lock().unwrap();
             let input_file = locked.get_mut(name).unwrap();
             input_file.file = tempfile::tempfile().map(Arc::new)?;
             input_file.state = InputFileState::Modified;
             Ok(Box::new(input_file.file.clone()))
-        },
+        }
+    }
+
+    boot::patch_boot_images(
+        &boot_partitions,
+        &Opener(Mutex::new(input_files)),
         key_avb,
         boot_patchers,
         cancel_signal,
@@ -2047,13 +2053,20 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         .filter(|(_, flags)| flags.contains(PartitionFlags::BOOT))
         .map(|(name, _)| name.as_str())
         .collect::<Vec<_>>();
-    let boot_images = boot::load_boot_images(&boot_image_names, |name| {
-        let path = util::path_join_single(temp_dir.path(), format!("{name}.img"))
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
-        Ok(Box::new(File::open(path)?))
-    })
-    .context("Failed to load all boot images")?;
+    struct Opener<'a>(&'a Path);
+
+    impl<'a> BootImageOpener for Opener<'a> {
+        fn open_original(&self, name: &str) -> io::Result<Box<dyn ReadSeek + Sync>> {
+            let path = util::path_join_single(self.0, format!("{name}.img"))
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+            Ok(Box::new(File::open(path)?))
+        }
+    }
+
+    let boot_images = boot::load_boot_images(&boot_image_names, &Opener(temp_dir.path()))
+        .context("Failed to load all boot images")?;
     let targets = OtaCertPatcher::new(ota_cert.clone())
         .find_targets(&boot_images, cancel_signal)
         .context("Failed to find boot image containing otacerts.zip")?;
