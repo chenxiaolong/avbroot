@@ -6,7 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     ffi::{OsStr, OsString},
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write},
     ops::Range,
     path::{Path, PathBuf},
     str::FromStr,
@@ -1344,7 +1344,7 @@ pub fn extract_payload(
     // Extract the images.
     payload::extract_images(
         &payload_reader,
-        |name| Ok(Box::new(BufWriter::new(output_files[name].clone()))),
+        |name| Ok(Box::new(output_files[name].clone())),
         header,
         images.iter().map(|n| n.as_str()),
         cancel_signal,

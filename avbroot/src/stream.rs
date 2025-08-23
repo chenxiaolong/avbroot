@@ -144,17 +144,19 @@ pub trait FileLen {
     fn file_len(&self) -> io::Result<u64>;
 }
 
-impl<F: ?Sized + FileLen> FileLen for &F {
-    fn file_len(&self) -> io::Result<u64> {
-        (**self).file_len()
-    }
+macro_rules! file_len_blanket_impl {
+    ($type:ty) => {
+        impl<F: ?Sized + FileLen> FileLen for $type {
+            fn file_len(&self) -> io::Result<u64> {
+                (**self).file_len()
+            }
+        }
+    };
 }
 
-impl<F: ?Sized + FileLen> FileLen for Arc<F> {
-    fn file_len(&self) -> io::Result<u64> {
-        (**self).file_len()
-    }
-}
+file_len_blanket_impl!(&F);
+file_len_blanket_impl!(Arc<F>);
+file_len_blanket_impl!(Box<F>);
 
 /// Extensions for file-like types that support multi-threaded reads at specific
 /// offsets. No guarantees are made about the state of underlying file position
@@ -177,25 +179,23 @@ pub trait ReadAt: FileLen {
     }
 }
 
-impl<R: ?Sized + ReadAt> ReadAt for &R {
-    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-        (**self).read_at(buf, offset)
-    }
+macro_rules! read_at_blanket_impl {
+    ($type:ty) => {
+        impl<R: ?Sized + ReadAt> ReadAt for $type {
+            fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+                (**self).read_at(buf, offset)
+            }
 
-    fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
-        (**self).read_exact_at(buf, offset)
-    }
+            fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+                (**self).read_exact_at(buf, offset)
+            }
+        }
+    };
 }
 
-impl<R: ?Sized + ReadAt> ReadAt for Arc<R> {
-    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-        (**self).read_at(buf, offset)
-    }
-
-    fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
-        (**self).read_exact_at(buf, offset)
-    }
-}
+read_at_blanket_impl!(&R);
+read_at_blanket_impl!(Arc<R>);
+read_at_blanket_impl!(Box<R>);
 
 /// Extensions for file-like types that support multi-threaded writes at
 /// specific offsets. The behavior is unspecified if writes would overlap. No
@@ -221,33 +221,27 @@ pub trait WriteAt: FileLen {
     fn file_flush(&self) -> io::Result<()>;
 }
 
-impl<W: ?Sized + WriteAt> WriteAt for &W {
-    fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
-        (**self).write_at(buf, offset)
-    }
+macro_rules! write_at_blanket_impl {
+    ($type:ty) => {
+        impl<W: ?Sized + WriteAt> WriteAt for $type {
+            fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
+                (**self).write_at(buf, offset)
+            }
 
-    fn write_all_at(&self, buf: &[u8], offset: u64) -> io::Result<()> {
-        (**self).write_all_at(buf, offset)
-    }
+            fn write_all_at(&self, buf: &[u8], offset: u64) -> io::Result<()> {
+                (**self).write_all_at(buf, offset)
+            }
 
-    fn file_flush(&self) -> io::Result<()> {
-        (**self).file_flush()
-    }
+            fn file_flush(&self) -> io::Result<()> {
+                (**self).file_flush()
+            }
+        }
+    };
 }
 
-impl<W: ?Sized + WriteAt> WriteAt for Arc<W> {
-    fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
-        (**self).write_at(buf, offset)
-    }
-
-    fn write_all_at(&self, buf: &[u8], offset: u64) -> io::Result<()> {
-        (**self).write_all_at(buf, offset)
-    }
-
-    fn file_flush(&self) -> io::Result<()> {
-        (**self).file_flush()
-    }
-}
+write_at_blanket_impl!(&W);
+write_at_blanket_impl!(Arc<W>);
+write_at_blanket_impl!(Box<W>);
 
 /// This is only needed because `dyn ReadAt + WriteAt` is not a valid construct
 /// in Rust yet.

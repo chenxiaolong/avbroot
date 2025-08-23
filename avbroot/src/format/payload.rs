@@ -873,7 +873,7 @@ pub fn extract_image(
 /// will be called from multiple threads.
 pub fn extract_images<'a>(
     payload: &(dyn ReadAt + Sync),
-    open_output: impl Fn(&str) -> io::Result<Box<dyn WriteSeek>> + Sync,
+    open_output: impl Fn(&str) -> io::Result<Box<dyn WriteAt>> + Sync,
     header: &PayloadHeader,
     partition_names: impl IntoIterator<Item = &'a str>,
     cancel_signal: &AtomicBool,
@@ -898,9 +898,11 @@ pub fn extract_images<'a>(
 
     operations
         .into_par_iter()
-        .map(|(name, op)| -> Result<()> {
+        .try_for_each(|(name, op)| -> Result<()> {
             let reader = UserPosFile::new(payload);
-            let writer = open_output(name).map_err(|e| Error::OutputOpen(name.to_owned(), e))?;
+            let writer = open_output(name)
+                .map(UserPosFile::new)
+                .map_err(|e| Error::OutputOpen(name.to_owned(), e))?;
 
             apply_operation(
                 reader,
@@ -909,11 +911,8 @@ pub fn extract_images<'a>(
                 header.blob_offset,
                 op,
                 cancel_signal,
-            )?;
-
-            Ok(())
+            )
         })
-        .collect()
 }
 
 /// Compress raw data into a chunk to be used with a [`Type::ReplaceXz`]
