@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -29,8 +29,8 @@ use crate::{
         padding::{self, ZeroPadding},
     },
     stream::{
-        self, CountingReader, CountingWriter, FromReader, ReadFixedSizeExt, ReadSeekReopen,
-        ToWriter, WriteSeekReopen, WriteZerosExt,
+        self, CountingReader, CountingWriter, FromReader, ReadAt, ReadFixedSizeExt, ReadWriteAt,
+        ToWriter, UserPosFile, WriteZerosExt,
     },
     util::{self, OutOfBoundsError},
 };
@@ -149,10 +149,6 @@ pub enum Error {
     FecVerify(#[source] fec::Error),
     #[error("Failed to repair file with FEC data")]
     FecRepair(#[source] fec::Error),
-    #[error("Failed to reopen input file")]
-    InputReopen(#[source] io::Error),
-    #[error("Failed to reopen output file")]
-    OutputReopen(#[source] io::Error),
     #[error("Failed to compute hash of input file")]
     InputDigest(#[source] io::Error),
     #[error("Failed to read AVB data: {0}")]
@@ -510,10 +506,7 @@ impl HashTreeDescriptor {
 
     /// Update the root hash, hash tree, and FEC data. The hash tree and FEC
     /// data will be written immediately following the image data at offset
-    /// [`Self::image_size`]. Both `open_input` and `open_output` may be called
-    /// from multiple threads and must return independently seekable handles to
-    /// the same file. It is guaranteed that every thread will read and write
-    /// disjoint file offsets.
+    /// [`Self::image_size`].
     ///
     /// If `ranges` is [`Option::None`], then the hash tree and FEC data are
     /// updated for the whole while. Due to the nature of the file access
@@ -525,42 +518,37 @@ impl HashTreeDescriptor {
     /// that what is specified in order to perform the computations.
     ///
     /// The fields in this instance are updated atomically. No fields are
-    /// updated if an error occurs. The input file can be restored back to its
+    /// updated if an error occurs. The file can be restored back to its
     /// original state by truncating it to [`Self::image_size`].
     pub fn update(
         &mut self,
-        input: &(dyn ReadSeekReopen + Sync),
-        output: &(dyn WriteSeekReopen + Sync),
+        file: &(dyn ReadWriteAt + Sync),
         ranges: Option<&[Range<u64>]>,
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
+        let mut pos_file = UserPosFile::new(file);
+
         let algorithm = digest_algorithm(&self.hash_algorithm)?;
         let hash_tree = HashTree::new(self.data_block_size, algorithm, &self.salt);
+        let tree_offset = self.image_size;
         let (root_digest, hash_tree_data) = match ranges {
             Some(r) => {
-                let mut reader = input.reopen_boxed().map_err(Error::InputReopen)?;
-                reader
-                    .seek(SeekFrom::Start(self.tree_offset))
+                pos_file
+                    .seek(SeekFrom::Start(tree_offset))
                     .map_err(|e| Error::DataRead("HashTree::tree_data", e))?;
 
-                let mut hash_tree_data = reader
+                let mut hash_tree_data = pos_file
                     .read_vec_exact(self.tree_size as usize)
                     .map_err(|e| Error::DataRead("HashTree::tree_data", e))?;
 
                 let root_digest = hash_tree
-                    .update(
-                        input,
-                        self.image_size,
-                        r,
-                        &mut hash_tree_data,
-                        cancel_signal,
-                    )
+                    .update(file, self.image_size, r, &mut hash_tree_data, cancel_signal)
                     .map_err(Error::HashTreeUpdate)?;
 
                 (root_digest, hash_tree_data)
             }
             None => hash_tree
-                .generate(input, self.image_size, cancel_signal)
+                .generate(file, self.image_size, cancel_signal)
                 .map_err(Error::HashTreeGenerate)?,
         };
 
@@ -569,11 +557,10 @@ impl HashTreeDescriptor {
 
         let tree_size = hash_tree_data.len() as u64;
 
-        let mut writer = output.reopen_boxed().map_err(Error::OutputReopen)?;
-        writer
-            .seek(SeekFrom::Start(self.image_size))
+        pos_file
+            .seek(SeekFrom::Start(tree_offset))
             .map_err(|e| Error::DataWrite("HashTree::tree_data", e))?;
-        writer
+        pos_file
             .write_all(&hash_tree_data)
             .map_err(|e| Error::DataWrite("HashTree::tree_data", e))?;
 
@@ -588,58 +575,54 @@ impl HashTreeDescriptor {
 
             let parity: u8 = util::try_cast(self.fec_num_roots)
                 .map_err(|e| Error::IntOutOfBounds("HashTree::fec_num_roots", e))?;
+            let fec_offset = tree_offset + tree_size;
 
             let fec_data = if let Some(r) = ranges {
                 let mut r_with_hash_tree = r.to_vec();
-                r_with_hash_tree.push(self.tree_offset..self.tree_offset + tree_size);
+                r_with_hash_tree.push(tree_offset..tree_offset + tree_size);
 
                 let (fec, fec_size) = self.get_fec()?;
 
-                let mut reader = input.reopen_boxed().map_err(Error::InputReopen)?;
-                reader
-                    .seek(SeekFrom::Start(self.fec_offset))
+                pos_file
+                    .seek(SeekFrom::Start(fec_offset))
                     .map_err(|e| Error::DataRead("HashTree::fec_data", e))?;
 
-                let mut fec_data = reader
+                let mut fec_data = pos_file
                     .read_vec_exact(fec_size)
                     .map_err(|e| Error::DataRead("HashTree::fec_data", e))?;
 
-                fec.update(input, &r_with_hash_tree, &mut fec_data, cancel_signal)
+                fec.update(file, &r_with_hash_tree, &mut fec_data, cancel_signal)
                     .map_err(Error::FecUpdate)?;
 
                 fec_data
             } else {
                 // The FEC covers the hash tree as well.
-                let fec = Fec::new(self.image_size + tree_size, self.data_block_size, parity)
-                    .map_err(Error::FecInit)?;
-                fec.generate(input, cancel_signal)
+                let fec =
+                    Fec::new(fec_offset, self.data_block_size, parity).map_err(Error::FecInit)?;
+                fec.generate(file, cancel_signal)
                     .map_err(Error::FecGenerate)?
             };
 
-            // Already seeked to FEC.
-            writer
+            pos_file
+                .seek(SeekFrom::Start(fec_offset))
+                .map_err(|e| Error::DataWrite("HashTree::fec_data", e))?;
+            pos_file
                 .write_all(&fec_data)
                 .map_err(|e| Error::DataWrite("HashTree::fec_data", e))?;
 
-            self.fec_offset = self.image_size + tree_size;
+            self.fec_offset = fec_offset;
             self.fec_size = fec_data.len() as u64;
         }
 
-        self.tree_offset = self.image_size;
+        self.tree_offset = tree_offset;
         self.tree_size = tree_size;
         self.root_digest = root_digest;
 
         Ok(())
     }
 
-    /// Verify the root hash, hash tree, and FEC data. `open_input` will be
-    /// called from multiple threads and must return independently seekable
-    /// handles to the same file.
-    pub fn verify(
-        &self,
-        input: &(dyn ReadSeekReopen + Sync),
-        cancel_signal: &AtomicBool,
-    ) -> Result<()> {
+    /// Verify the root hash, hash tree, and FEC data.
+    pub fn verify(&self, input: &(dyn ReadAt + Sync), cancel_signal: &AtomicBool) -> Result<()> {
         self.check_offsets()?;
 
         let algorithm = digest_algorithm(&self.hash_algorithm)?;
@@ -647,7 +630,7 @@ impl HashTreeDescriptor {
         util::check_bounds(self.tree_size, ..=HASH_TREE_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("HashTree::tree_size", e))?;
 
-        let mut reader = input.reopen_boxed().map_err(Error::InputReopen)?;
+        let mut reader = UserPosFile::new(input);
         reader
             .seek(SeekFrom::Start(self.tree_offset))
             .map_err(|e| Error::DataRead("HashTree::tree_data", e))?;
@@ -684,9 +667,7 @@ impl HashTreeDescriptor {
         Ok(())
     }
 
-    /// Try to repair errors in the input file using the FEC data. Both
-    /// `open_input` and `open_output` may be called from multiple threads and
-    /// must return independently seekable handles to the same file.
+    /// Try to repair errors in the input file using the FEC data.
     ///
     /// Due to the nature of FEC, when there are too many errors, it's possible
     /// for the data to be miscorrected to a "valid" state. [`Self::verify()`]
@@ -694,8 +675,7 @@ impl HashTreeDescriptor {
     /// actually valid.
     pub fn repair(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
-        output: &(dyn WriteSeekReopen + Sync),
+        file: &(dyn ReadWriteAt + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
         self.check_offsets()?;
@@ -705,7 +685,7 @@ impl HashTreeDescriptor {
             return Err(Error::FecMissing);
         }
 
-        let mut reader = input.reopen_boxed().map_err(Error::InputReopen)?;
+        let mut reader = UserPosFile::new(file);
         reader
             .seek(SeekFrom::Start(self.fec_offset))
             .map_err(|e| Error::DataRead("HashTree::fec_data", e))?;
@@ -717,7 +697,7 @@ impl HashTreeDescriptor {
             .read_vec_exact(fec_size)
             .map_err(|e| Error::DataRead("HashTree::fec_data", e))?;
 
-        fec.repair(input, output, &fec_data, cancel_signal)
+        fec.repair(file, &fec_data, cancel_signal)
             .map_err(Error::FecRepair)?;
 
         Ok(())

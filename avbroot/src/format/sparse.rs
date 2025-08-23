@@ -1026,7 +1026,7 @@ impl<W: Write> Write for SparseWriter<W> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Chunk, ChunkBounds, ChunkData, ChunkList};
+    use super::*;
 
     #[test]
     fn chunk_list_merge() {

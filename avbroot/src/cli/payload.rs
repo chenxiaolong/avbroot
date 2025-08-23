@@ -7,7 +7,7 @@ use std::{
     fs::{self, File},
     io::{BufReader, BufWriter, Seek, SeekFrom},
     path::{Path, PathBuf},
-    sync::atomic::AtomicBool,
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -18,7 +18,7 @@ use crate::{
     cli::ota,
     crypto::{self, PassphraseSource, RsaSigningKey},
     format::payload::{PayloadHeader, PayloadWriter},
-    stream::{self, FromReader, PSeekFile},
+    stream::{self, FromReader},
     util,
 };
 
@@ -117,7 +117,7 @@ fn unpack_subcommand(
         .with_context(|| format!("Failed to create directory: {:?}", cli.output_images))?;
 
     ota::extract_payload(
-        &PSeekFile::new(reader.into_inner()),
+        &reader.into_inner(),
         &cli.output_images,
         0,
         payload_size,
@@ -153,7 +153,7 @@ fn pack_subcommand(
             let path =
                 util::path_join_single(&cli.input_images, format!("{}.img", p.partition_name))?;
             let file = File::open(&path)
-                .map(PSeekFile::new)
+                .map(Arc::new)
                 .with_context(|| format!("Failed to open file: {path:?}"))?;
 
             Ok((p.partition_name.clone(), file))

@@ -16,37 +16,33 @@ use rayon::iter::{
 
 use crate::{
     format::lp::{Extent, ExtentType, ImageType, Metadata, SECTOR_SIZE},
-    stream::{self, FromReader, PSeekFile, Reopen, ToWriter},
+    stream::{self, FromReader, ToWriter, UserPosFile},
     util,
 };
 
-fn open_lp_inputs(paths: &[impl AsRef<Path>]) -> Result<(Vec<PSeekFile>, Metadata)> {
-    let mut inputs = paths
+fn open_lp_inputs(paths: &[impl AsRef<Path>]) -> Result<(Vec<File>, Metadata)> {
+    let inputs = paths
         .iter()
         .map(|p| {
             let p = p.as_ref();
 
-            File::open(p)
-                .map(PSeekFile::new)
-                .with_context(|| format!("Failed to open LP image for reading: {p:?}"))
+            File::open(p).with_context(|| format!("Failed to open LP image for reading: {p:?}"))
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let metadata = Metadata::from_reader(&mut inputs[0])
+    let metadata = Metadata::from_reader(&inputs[0])
         .with_context(|| format!("Failed to parse LP image metadata: {:?}", paths[0].as_ref()))?;
 
     Ok((inputs, metadata))
 }
 
-fn open_lp_outputs(paths: &[impl AsRef<Path>]) -> Result<Vec<PSeekFile>> {
+fn open_lp_outputs(paths: &[impl AsRef<Path>]) -> Result<Vec<File>> {
     paths
         .iter()
         .map(|p| {
             let p = p.as_ref();
 
-            File::create(p)
-                .map(PSeekFile::new)
-                .with_context(|| format!("Failed to open LP image for writing: {p:?}"))
+            File::create(p).with_context(|| format!("Failed to open LP image for writing: {p:?}"))
         })
         .collect::<Result<Vec<_>>>()
 }
@@ -165,17 +161,15 @@ fn fill_slots(metadata: &mut Metadata) {
 }
 
 fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool) -> Result<()> {
-    let mut inputs = cli
+    let inputs = cli
         .input
         .iter()
         .map(|p| {
-            File::open(p)
-                .map(PSeekFile::new)
-                .with_context(|| format!("Failed to open LP image for reading: {p:?}"))
+            File::open(p).with_context(|| format!("Failed to open LP image for reading: {p:?}"))
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let mut metadata = Metadata::from_reader(&mut inputs[0])
+    let mut metadata = Metadata::from_reader(&inputs[0])
         .with_context(|| format!("Failed to read LP image metadata: {:?}", cli.input[0]))?;
 
     // Display and write only the selected slot.
@@ -216,7 +210,6 @@ fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool
                 util::path_join_single(&cli.output_images, format!("{}.img", partition.name))?;
 
             let file = File::create(&path)
-                .map(PSeekFile::new)
                 .with_context(|| format!("Failed to open for writing: {path:?}"))?;
 
             file.set_len(partition.size()?)
@@ -248,9 +241,8 @@ fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool
                 .map(move |e| (g_index, p_index, e))
         })
         .map(|(g_index, p_index, extent)| {
-            // Never fails for PSeekFiles.
-            let mut reader = inputs[extent.device_index].reopen()?;
-            let mut writer = files[g_index][p_index].reopen()?;
+            let mut reader = UserPosFile::new(&inputs[extent.device_index]);
+            let mut writer = UserPosFile::new(&files[g_index][p_index]);
 
             let r_path = &cli.input[extent.device_index];
             let w_path = &paths[g_index][p_index];
@@ -313,7 +305,6 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
                     util::path_join_single(&cli.input_images, format!("{}.img", partition.name))?;
 
                 let mut file = File::open(&path)
-                    .map(PSeekFile::new)
                     .with_context(|| format!("Failed to open for reading: {path:?}"))?;
 
                 let size = file
@@ -381,9 +372,8 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
                 .map(move |e| (g_index, p_index, e))
         })
         .map(|(g_index, p_index, extent)| {
-            // Never fails for PSeekFiles.
-            let mut reader = files[g_index][p_index].reopen()?;
-            let mut writer = outputs[extent.device_index].reopen()?;
+            let mut reader = UserPosFile::new(&files[g_index][p_index]);
+            let mut writer = UserPosFile::new(&outputs[extent.device_index]);
 
             let r_path = &paths[g_index][p_index];
             let w_path = &cli.output[extent.device_index];
@@ -486,9 +476,8 @@ fn repack_subcommand(lp_cli: &LpCli, cli: &RepackCli, cancel_signal: &AtomicBool
         // for better parallelism.
         .flat_map(|partition| split_extents(&partition.extents))
         .map(|extent| {
-            // Never fails for PSeekFiles.
-            let mut reader = inputs[extent.device_index].reopen()?;
-            let mut writer = outputs[extent.device_index].reopen()?;
+            let mut reader = UserPosFile::new(&inputs[extent.device_index]);
+            let mut writer = UserPosFile::new(&outputs[extent.device_index]);
 
             let r_path = &cli.input[extent.device_index];
             let w_path = &cli.output[extent.device_index];

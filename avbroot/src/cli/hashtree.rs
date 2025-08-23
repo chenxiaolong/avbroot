@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -13,15 +13,14 @@ use clap::{Parser, Subcommand};
 
 use crate::{
     format::hashtree::HashTreeImage,
-    stream::{FromReader, PSeekFile, ToWriter},
+    stream::{FromReader, ToWriter},
 };
 
-fn open_input(path: &Path, rw: bool) -> Result<PSeekFile> {
+fn open_input(path: &Path, rw: bool) -> Result<File> {
     OpenOptions::new()
         .read(true)
         .write(rw)
         .open(path)
-        .map(PSeekFile::new)
         .with_context(|| format!("Failed to open file: {path:?}"))
 }
 

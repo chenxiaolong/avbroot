@@ -25,7 +25,7 @@ use crate::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
         HashTreeDescriptor, Header, KernelCmdlineDescriptor,
     },
-    stream::{self, PSeekFile, ReadFixedSizeExt, Reopen, ToWriter, check_cancel},
+    stream::{self, ReadFixedSizeExt, ToWriter, UserPosFile, check_cancel},
     util,
 };
 
@@ -52,7 +52,7 @@ fn read_avb_image(path: &Path) -> Result<(AvbInfo, BufReader<File>)> {
     Ok((info, reader))
 }
 
-fn write_avb_image(file: PSeekFile, info: &mut AvbInfo, recompute_size: bool) -> Result<()> {
+fn write_avb_image(file: &File, info: &mut AvbInfo, recompute_size: bool) -> Result<()> {
     let mut writer = BufWriter::new(file);
 
     info.image_size = if let Some(f) = &mut info.footer {
@@ -100,14 +100,13 @@ fn write_raw(
     reader: &mut BufReader<File>,
     size: u64,
     cancel_signal: &AtomicBool,
-) -> Result<PSeekFile> {
+) -> Result<File> {
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(true)
         .open(path)
-        .map(PSeekFile::new)
         .with_context(|| format!("Failed to open raw image for writing: {path:?}"))?;
     let mut writer = BufWriter::new(file);
 
@@ -132,7 +131,7 @@ fn write_raw_and_verify(
     info: &AvbInfo,
     ignore_invalid: bool,
     cancel_signal: &AtomicBool,
-) -> Result<PSeekFile> {
+) -> Result<File> {
     let f = info.footer.as_ref().expect("Not an appended image");
 
     let descriptor = info.header.appended_descriptor()?;
@@ -146,7 +145,7 @@ fn write_raw_and_verify(
 
     let raw_file = write_raw(path, reader, copy_size, cancel_signal)?;
 
-    let result = verify_and_repair(None, raw_file.reopen()?, descriptor, true, cancel_signal);
+    let result = verify_and_repair(None, &raw_file, descriptor, true, cancel_signal);
 
     // Chop off the old hash tree and FEC data.
     raw_file.set_len(f.original_image_size)?;
@@ -169,7 +168,7 @@ fn write_raw_and_update(
     reader: &mut BufReader<File>,
     info: &mut AvbInfo,
     cancel_signal: &AtomicBool,
-) -> Result<PSeekFile> {
+) -> Result<File> {
     assert!(info.footer.is_some(), "Not an appended image");
 
     let image_size = reader
@@ -181,7 +180,7 @@ fn write_raw_and_update(
     match info.header.appended_descriptor_mut()? {
         AppendedDescriptorMut::HashTree(d) => {
             d.image_size = image_size;
-            d.update(&raw_file, &raw_file, None, cancel_signal)
+            d.update(&raw_file, None, cancel_signal)
                 .context("Failed to update hash tree descriptor")?;
         }
         AppendedDescriptorMut::Hash(d) => {
@@ -568,7 +567,7 @@ pub fn verify_headers(
 /// work.
 fn verify_and_repair(
     name: Option<&str>,
-    mut file: PSeekFile,
+    file: &File,
     descriptor: AppendedDescriptorRef,
     repair: bool,
     cancel_signal: &AtomicBool,
@@ -585,7 +584,7 @@ fn verify_and_repair(
                     warn!("Failed to verify hash tree descriptor{suffix}: {e}");
                     warn!("Attempting to repair using FEC data{suffix}");
 
-                    d.repair(&file, &file, cancel_signal)
+                    d.repair(&file, cancel_signal)
                         .with_context(|| format!("Failed to repair data{suffix}"))?;
 
                     d.verify(&file, cancel_signal).inspect(|()| {
@@ -599,8 +598,7 @@ fn verify_and_repair(
         AppendedDescriptorRef::Hash(d) => {
             info!("Verifying hash descriptor{suffix}");
 
-            file.rewind()?;
-            d.verify(file, cancel_signal)
+            d.verify(UserPosFile::new(file), cancel_signal)
                 .with_context(|| format!("Failed to verify hash descriptor{suffix}"))?;
         }
     }
@@ -629,7 +627,7 @@ pub fn verify_descriptors(
             let _span = parent_span.enter();
 
             let file = match opener.open(name, &options) {
-                Ok((_, f)) => PSeekFile::new(f),
+                Ok((_, f)) => f,
                 // Some devices, like bluejay, have vbmeta descriptors that
                 // refer to partitions that exist on the device, but not in the
                 // OTA.
@@ -642,7 +640,7 @@ pub fn verify_descriptors(
 
             verify_and_repair(
                 Some(name),
-                file,
+                &file,
                 descriptor.try_into()?,
                 repair,
                 cancel_signal,
@@ -772,13 +770,12 @@ fn pack_subcommand(cli: &PackCli, cancel_signal: &AtomicBool) -> Result<()> {
         file
     } else {
         File::create(&cli.output)
-            .map(PSeekFile::new)
             .with_context(|| format!("Failed to open output for writing: {:?}", cli.output))?
     };
 
     sign_or_clear(&mut info, &orig_header, &cli.key)?;
 
-    write_avb_image(file, &mut info, cli.recompute_size)?;
+    write_avb_image(&file, &mut info, cli.recompute_size)?;
 
     // We display the info at the very end after both the header and footer are
     // updated so that incorrect/incomplete information isn't shown.
@@ -801,7 +798,7 @@ fn repack_subcommand(cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> 
         // Write new hash tree and FEC data instead of copying the original.
         // There could have been errors in the original FEC data itself.
         if let AppendedDescriptorMut::HashTree(d) = info.header.appended_descriptor_mut()? {
-            d.update(&file, &file, None, cancel_signal)?;
+            d.update(&file, None, cancel_signal)?;
         }
 
         update_dm_verity_cmdline(&mut info)?;
@@ -809,13 +806,12 @@ fn repack_subcommand(cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> 
         file
     } else {
         File::create(&cli.output)
-            .map(PSeekFile::new)
             .with_context(|| format!("Failed to open for writing: {:?}", cli.output))?
     };
 
     sign_or_clear(&mut info, &orig_header, &cli.key)?;
 
-    write_avb_image(file, &mut info, false)?;
+    write_avb_image(&file, &mut info, false)?;
 
     // We display the info at the very end after both the header and footer are
     // updated so that incorrect/incomplete information isn't shown.

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 #[cfg(not(windows))]
@@ -7,7 +7,7 @@ mod fuzz {
 
     use avbroot::{
         format::fec::FecImage,
-        stream::{FromReader, SharedCursor, WriteZerosExt},
+        stream::{FromReader, MutexFile, UserPosFile, WriteZerosExt},
     };
     use honggfuzz::fuzz;
 
@@ -18,12 +18,14 @@ mod fuzz {
 
                 let reader = Cursor::new(data);
                 if let Ok(fec) = FecImage::from_reader(reader) {
-                    let mut input = SharedCursor::new();
+                    let input = MutexFile::new(Cursor::new(Vec::new()));
 
                     // Allow verify() to get further, but don't blow up the host
                     // with excessive memory usage.
                     if fec.data_size < 64 * 1024 * 1024 {
-                        input.write_zeros_exact(fec.data_size).unwrap();
+                        UserPosFile::new(&input)
+                            .write_zeros_exact(fec.data_size)
+                            .unwrap();
                     }
 
                     let _ = fec.verify(&input, &cancel_signal);

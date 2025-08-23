@@ -46,7 +46,7 @@ use avbroot::{
             DeltaArchiveManifest, DynamicPartitionGroup, DynamicPartitionMetadata, PartitionUpdate,
         },
     },
-    stream::{self, FromReader, HashingReader, PSeekFile, Reopen, ToWriter},
+    stream::{self, FromReader, HashingReader, ToWriter},
     util,
 };
 use clap::Parser;
@@ -97,7 +97,7 @@ fn verify_hash(path: &Path, sha256: &[u8; 32], cancel_signal: &AtomicBool) -> Re
 }
 
 fn append_avb(
-    file: &mut PSeekFile,
+    file: &File,
     name: &str,
     avb: Avb,
     hash_tree: bool,
@@ -105,7 +105,7 @@ fn append_avb(
     key_avb: &RsaSigningKey,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let image_size = file.seek(SeekFrom::End(0))?;
+    let image_size = (&*file).seek(SeekFrom::End(0))?;
     let salt = ring::digest::digest(&ring::digest::SHA256, b"avbroot");
     let descriptors = vec![
         if hash_tree {
@@ -127,7 +127,7 @@ fn append_avb(
                 reserved: [0u8; 60],
             };
 
-            descriptor.update(file, file, None, cancel_signal)?;
+            descriptor.update(file, None, cancel_signal)?;
 
             Descriptor::HashTree(descriptor)
         } else {
@@ -141,8 +141,8 @@ fn append_avb(
                 reserved: [0u8; 60],
             };
 
-            file.rewind()?;
-            descriptor.update(&mut *file, cancel_signal)?;
+            (&*file).rewind()?;
+            descriptor.update(file, cancel_signal)?;
 
             Descriptor::Hash(descriptor)
         },
@@ -190,7 +190,7 @@ fn append_avb(
         reserved: Default::default(),
     };
 
-    let eof_size = file.seek(SeekFrom::End(0))?;
+    let eof_size = (&*file).seek(SeekFrom::End(0))?;
     let full_image_size = eof_size
         .checked_add(8192)
         .and_then(|s| padding::round(s, 4096))
@@ -295,7 +295,7 @@ fn create_ramdisk(
 
 #[allow(clippy::too_many_arguments)]
 fn create_boot_image(
-    file: &mut PSeekFile,
+    file: &File,
     name: &str,
     avb: Avb,
     boot_data: &BootData,
@@ -412,7 +412,7 @@ fn create_boot_image(
         }
     };
 
-    boot_image.to_writer(&mut *file)?;
+    boot_image.to_writer(file)?;
 
     append_avb(file, name, avb, false, ota_info, key_avb, cancel_signal)
         .with_context(|| format!("Failed to append AVB metadata for {name}"))?;
@@ -422,7 +422,7 @@ fn create_boot_image(
 
 #[allow(clippy::too_many_arguments)]
 fn create_dm_verity_image(
-    file: &mut PSeekFile,
+    file: &File,
     name: &str,
     avb: Avb,
     dm_verity_data: DmVerityData,
@@ -433,16 +433,16 @@ fn create_dm_verity_image(
 ) -> Result<()> {
     match dm_verity_data.content {
         DmVerityContent::SystemOtacerts => {
-            file.write_all(b"arbitrary_prefix")?;
+            (&*file).write_all(b"arbitrary_prefix")?;
 
             let data = otacert::create_zip(cert_ota, OtaCertBuildFlags::empty())?;
-            file.write_all(&data)?;
+            (&*file).write_all(&data)?;
 
-            file.write_all(b"arbitrary_suffix")?;
+            (&*file).write_all(b"arbitrary_suffix")?;
         }
     }
 
-    padding::write_zeros(&mut *file, 4096)?;
+    padding::write_zeros(file, 4096)?;
 
     append_avb(file, name, avb, true, ota_info, key_avb, cancel_signal)
         .with_context(|| format!("Failed to append AVB metadata for {name}"))?;
@@ -451,19 +451,18 @@ fn create_dm_verity_image(
 }
 
 fn create_vbmeta_image(
-    file: &mut PSeekFile,
+    file: &File,
     name: &str,
     avb: Avb,
     vbmeta_data: &VbmetaData,
-    inputs: &BTreeMap<String, PSeekFile>,
+    inputs: &BTreeMap<String, File>,
     key: &RsaSigningKey,
 ) -> Result<()> {
     let mut descriptors = Vec::new();
 
     for dep in &vbmeta_data.deps {
-        let reader = inputs[dep].reopen()?;
-        let (child_header, _, _) =
-            avb::load_image(reader).with_context(|| format!("Failed to parse AVB image: {dep}"))?;
+        let (child_header, _, _) = avb::load_image(&inputs[dep])
+            .with_context(|| format!("Failed to parse AVB image: {dep}"))?;
 
         if child_header.public_key.is_empty() {
             descriptors.extend(child_header.descriptors);
@@ -511,7 +510,7 @@ fn create_partition_images(
     key_avb: &RsaSigningKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
-) -> Result<BTreeMap<String, PSeekFile>> {
+) -> Result<BTreeMap<String, File>> {
     let mut topo = TopologicalSort::<&String>::new();
 
     for (name, partition) in partitions {
@@ -530,14 +529,13 @@ fn create_partition_images(
         };
         let partition = &partitions[name];
 
-        let mut file = tempfile::tempfile()
-            .map(PSeekFile::new)
+        let file = tempfile::tempfile()
             .with_context(|| format!("Failed to create temp file for {name}"))?;
 
         match &partition.data {
             Data::Boot(data) => {
                 create_boot_image(
-                    &mut file,
+                    &file,
                     name,
                     partition.avb,
                     data,
@@ -550,7 +548,7 @@ fn create_partition_images(
             }
             Data::DmVerity(data) => {
                 create_dm_verity_image(
-                    &mut file,
+                    &file,
                     name,
                     partition.avb,
                     *data,
@@ -562,7 +560,7 @@ fn create_partition_images(
                 .with_context(|| format!("Failed to create dm-verity image: {name}"))?;
             }
             Data::Vbmeta(data) => {
-                create_vbmeta_image(&mut file, name, partition.avb, data, &files, key_avb)
+                create_vbmeta_image(&file, name, partition.avb, data, &files, key_avb)
                     .with_context(|| format!("Failed to create vbmeta image: {name}"))?;
             }
         }
@@ -576,7 +574,7 @@ fn create_partition_images(
 fn create_payload(
     writer: impl Write,
     partitions: &BTreeMap<String, Partition>,
-    inputs: &BTreeMap<String, PSeekFile>,
+    inputs: &BTreeMap<String, File>,
     ota_info: &OtaInfo,
     profile: &Profile,
     key_ota: &RsaSigningKey,
@@ -591,11 +589,10 @@ fn create_payload(
         .collect::<Vec<_>>();
 
     let mut payload_partitions = vec![];
-    let mut compressed = BTreeMap::<&String, PSeekFile>::new();
+    let mut compressed = BTreeMap::<&String, File>::new();
 
     for (name, file) in inputs {
         let writer = tempfile::tempfile()
-            .map(PSeekFile::new)
             .with_context(|| format!("Failed to create temp file for: {name}"))?;
 
         let vabc_params = if dynamic_partitions_names.contains(name) {

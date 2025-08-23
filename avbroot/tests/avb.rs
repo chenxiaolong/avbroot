@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -18,7 +18,7 @@ use avbroot::{
         ChainPartitionDescriptor, Descriptor, Footer, HashDescriptor, HashTreeDescriptor, Header,
         KernelCmdlineDescriptor, PropertyDescriptor,
     },
-    stream::SharedCursor,
+    stream::{MutexFile, UserPosFile},
 };
 
 fn get_test_key() -> RsaSigningKey {
@@ -306,16 +306,17 @@ fn round_trip_appended_hash_tree_image_fixed_size() {
         reserved: repeat_array(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]),
     };
 
-    let mut writer = SharedCursor::default();
+    let writer = MutexFile::new(Cursor::new(Vec::new()));
+    let mut pos_writer = UserPosFile::new(&writer);
     let cancel_signal = AtomicBool::new(false);
 
     // Write the raw partition data.
-    writer.write_all(&raw_data).unwrap();
+    pos_writer.write_all(&raw_data).unwrap();
 
     // Generate and write the hash tree and FEC data.
     match header.appended_descriptor_mut().unwrap() {
         AppendedDescriptorMut::HashTree(d) => {
-            d.update(&writer, &writer, None, &cancel_signal).unwrap();
+            d.update(&writer, None, &cancel_signal).unwrap();
         }
         AppendedDescriptorMut::Hash(_) => panic!("Expected hash tree descriptor"),
     }
@@ -334,10 +335,10 @@ fn round_trip_appended_hash_tree_image_fixed_size() {
     assert_eq!(header.verify().unwrap().unwrap(), key.to_public_key());
 
     // Write vbmeta structures.
-    avb::write_appended_image(&mut writer, &header, &mut footer, Some(image_size)).unwrap();
+    avb::write_appended_image(&mut pos_writer, &header, &mut footer, Some(image_size)).unwrap();
     let mut data = Vec::new();
-    writer.rewind().unwrap();
-    writer.read_to_end(&mut data).unwrap();
+    pos_writer.rewind().unwrap();
+    pos_writer.read_to_end(&mut data).unwrap();
 
     // Verify checksum of the output.
     assert_eq!(
@@ -413,16 +414,17 @@ fn round_trip_appended_hash_tree_image_minimum_size() {
         reserved: repeat_array(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]),
     };
 
-    let mut writer = SharedCursor::default();
+    let writer = MutexFile::new(Cursor::new(Vec::new()));
+    let mut pos_writer = UserPosFile::new(&writer);
     let cancel_signal = AtomicBool::new(false);
 
     // Write the raw partition data.
-    writer.write_all(&raw_data).unwrap();
+    pos_writer.write_all(&raw_data).unwrap();
 
     // Generate and write the hash tree and FEC data.
     match header.appended_descriptor_mut().unwrap() {
         AppendedDescriptorMut::HashTree(d) => {
-            d.update(&writer, &writer, None, &cancel_signal).unwrap();
+            d.update(&writer, None, &cancel_signal).unwrap();
         }
         AppendedDescriptorMut::Hash(_) => panic!("Expected hash tree descriptor"),
     }
@@ -441,10 +443,10 @@ fn round_trip_appended_hash_tree_image_minimum_size() {
     assert_eq!(header.verify().unwrap().unwrap(), key.to_public_key());
 
     // Write vbmeta structures.
-    avb::write_appended_image(&mut writer, &header, &mut footer, None).unwrap();
+    avb::write_appended_image(&mut pos_writer, &header, &mut footer, None).unwrap();
     let mut data = Vec::new();
-    writer.rewind().unwrap();
-    writer.read_to_end(&mut data).unwrap();
+    pos_writer.rewind().unwrap();
+    pos_writer.read_to_end(&mut data).unwrap();
 
     // Verify checksum of the output.
     assert_eq!(

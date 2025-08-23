@@ -6,11 +6,11 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     ffi::{OsStr, OsString},
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
     ops::Range,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Mutex, atomic::AtomicBool},
+    sync::{Arc, Mutex, atomic::AtomicBool},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -37,7 +37,9 @@ use crate::{
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         padding,
         payload::{self, CowVersion, PayloadHeader, PayloadWriter, VabcAlgo, VabcParams},
-        zip::{self, ZipArchivePSeekExt, ZipEntriesSafeExt, ZipFileHeaderRecordExt},
+        zip::{
+            self, ReaderAtWrapper, ZipArchiveReadAtExt, ZipEntriesSafeExt, ZipFileHeaderRecordExt,
+        },
     },
     patch::{
         boot::{
@@ -50,8 +52,8 @@ use crate::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
     },
     stream::{
-        self, FromReader, HashingWriter, PSeekFile, ReadSeekReopen, Reopen, SectionReader,
-        SharedCursor, ToWriter, WriteSeekReopen,
+        self, FromReader, HashingWriter, MutexFile, ReadAt, SectionReader, SectionReaderAt,
+        ToWriter, UserPosFile,
     },
     util,
 };
@@ -125,7 +127,7 @@ enum InputFileState {
 }
 
 struct InputFile {
-    file: PSeekFile,
+    file: Arc<File>,
     state: InputFileState,
 }
 
@@ -134,7 +136,7 @@ struct InputFile {
 /// from the payload into a temporary file (that is unnamed if supported by the
 /// operating system).
 fn open_input_files(
-    payload: &(dyn ReadSeekReopen + Sync),
+    payload: &(dyn ReadAt + Sync),
     required_images: &HashMap<String, PartitionFlags>,
     external_images: &HashMap<String, PathBuf>,
     header: &PayloadHeader,
@@ -156,7 +158,7 @@ fn open_input_files(
             info!("Opening external image: {name}: {path:?}");
 
             let file = File::open(path)
-                .map(PSeekFile::new)
+                .map(Arc::new)
                 .with_context(|| format!("Failed to open external image: {path:?}"))?;
             input_files.insert(
                 name.clone(),
@@ -169,7 +171,7 @@ fn open_input_files(
             info!("Extracting from original payload: {name}");
 
             let file = tempfile::tempfile()
-                .map(PSeekFile::new)
+                .map(Arc::new)
                 .with_context(|| format!("Failed to create temp file for: {name}"))?;
 
             payload::extract_image(payload, &file, header, name, cancel_signal)
@@ -214,14 +216,14 @@ fn patch_boot_images(
         &boot_partitions,
         |name| {
             let locked = input_files.lock().unwrap();
-            ReadSeekReopen::reopen_boxed(&locked[name].file)
+            Ok(Box::new(locked[name].file.clone()))
         },
         |name| {
             let mut locked = input_files.lock().unwrap();
             let input_file = locked.get_mut(name).unwrap();
-            input_file.file = tempfile::tempfile().map(PSeekFile::new)?;
+            input_file.file = tempfile::tempfile().map(Arc::new)?;
             input_file.state = InputFileState::Modified;
-            WriteSeekReopen::reopen_boxed(&input_file.file)
+            Ok(Box::new(input_file.file.clone()))
         },
         key_avb,
         boot_patchers,
@@ -265,25 +267,19 @@ fn patch_system_image<'a>(
 
     // We can't modify external files in place.
     if input_file.state == InputFileState::External {
-        let mut reader = input_file.file.reopen()?;
+        let mut reader = UserPosFile::new(&input_file.file);
         let mut writer = tempfile::tempfile()
-            .map(PSeekFile::new)
             .with_context(|| format!("Failed to create temp file for: {target}"))?;
 
         stream::copy(&mut reader, &mut writer, cancel_signal)?;
 
-        input_file.file = writer;
+        input_file.file = Arc::new(writer);
         input_file.state = InputFileState::Extracted;
     }
 
-    let (mut ranges, other_ranges) = system::patch_system_image(
-        &input_file.file,
-        &input_file.file,
-        cert_ota,
-        key_avb,
-        cancel_signal,
-    )
-    .with_context(|| format!("Failed to patch system image: {target}"))?;
+    let (mut ranges, other_ranges) =
+        system::patch_system_image(&input_file.file, cert_ota, key_avb, cancel_signal)
+            .with_context(|| format!("Failed to patch system image: {target}"))?;
 
     input_file.state = InputFileState::Modified;
 
@@ -703,7 +699,6 @@ fn update_vbmeta_headers(
                 .with_context(|| format!("Failed to sign vbmeta header for image: {name}"))?;
 
             let mut writer = tempfile::tempfile()
-                .map(PSeekFile::new)
                 .with_context(|| format!("Failed to create temp file for: {name}"))?;
             parent_header
                 .to_writer(&mut writer)
@@ -713,7 +708,7 @@ fn update_vbmeta_headers(
                 .with_context(|| format!("Failed to write vbmeta padding: {name}"))?;
 
             let input_file = images.get_mut(name).unwrap();
-            input_file.file = writer;
+            input_file.file = Arc::new(writer);
             input_file.state = InputFileState::Modified;
         }
     }
@@ -727,7 +722,7 @@ fn update_vbmeta_headers(
 /// scenario, unmodified chunks must be copied from the original payload.
 pub fn compress_image(
     name: &str,
-    file: &mut PSeekFile,
+    file: &mut Arc<File>,
     header: &mut PayloadHeader,
     ranges: Option<&[Range<u64>]>,
     cancel_signal: &AtomicBool,
@@ -736,9 +731,8 @@ pub fn compress_image(
 
     file.rewind()?;
 
-    let writer = tempfile::tempfile()
-        .map(PSeekFile::new)
-        .with_context(|| format!("Failed to create temp file for: {name}"))?;
+    let writer =
+        tempfile::tempfile().with_context(|| format!("Failed to create temp file for: {name}"))?;
 
     let vabc_params = get_vabc_params(header)?;
     let block_size = header.manifest.block_size();
@@ -797,7 +791,7 @@ pub fn compress_image(
                         (vabc_params.version == CowVersion::V3).then_some(cow_estimate.num_ops);
                 }
 
-                *file = writer;
+                *file = Arc::new(writer);
 
                 return Ok(indices);
             }
@@ -812,14 +806,8 @@ pub fn compress_image(
 
     info!("Compressing full image: {name}");
 
-    let (partition_info, operations, cow_estimate) = payload::compress_image(
-        &*file,
-        &writer,
-        name,
-        block_size,
-        vabc_params,
-        cancel_signal,
-    )?;
+    let (partition_info, operations, cow_estimate) =
+        payload::compress_image(file, &writer, name, block_size, vabc_params, cancel_signal)?;
 
     partition.new_partition_info = Some(partition_info);
     partition.operations = operations;
@@ -827,7 +815,7 @@ pub fn compress_image(
     let is_v3 = vabc_params.is_some_and(|p| p.version == CowVersion::V3);
     partition.estimate_op_count_max = cow_estimate.and_then(|e| is_v3.then_some(e.num_ops));
 
-    *file = writer;
+    *file = Arc::new(writer);
 
     #[allow(clippy::single_range_in_vec_init)]
     Ok(vec![0..partition.operations.len()])
@@ -837,13 +825,13 @@ pub fn compress_image(
 /// partition entry appropriately. The input file is not modified.
 fn recow_image(
     name: &str,
-    file: &mut PSeekFile,
+    file: &File,
     header: &mut PayloadHeader,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let _span = debug_span!("image", name).entered();
 
-    file.rewind()?;
+    (&*file).rewind()?;
 
     let vabc_params = get_vabc_params(header)?;
     let block_size = header.manifest.block_size();
@@ -865,7 +853,7 @@ fn recow_image(
     info!("Recomputing {} CoW size estimate: {name}", vabc_params.algo);
 
     let cow_estimate = payload::compute_cow_estimate(
-        &*file,
+        file,
         partition.operations.len() as u64,
         name,
         block_size,
@@ -882,7 +870,7 @@ fn recow_image(
 
 #[allow(clippy::too_many_arguments)]
 fn patch_ota_payload(
-    payload: &(dyn ReadSeekReopen + Sync),
+    payload: &(dyn ReadAt + Sync),
     writer: impl Write,
     external_images: &HashMap<String, PathBuf>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
@@ -894,7 +882,7 @@ fn patch_ota_payload(
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
-    let mut header = PayloadHeader::from_reader(payload.reopen_boxed()?)
+    let mut header = PayloadHeader::from_reader(UserPosFile::new(payload))
         .context("Failed to load OTA payload header")?;
     if !header.is_full_ota() {
         bail!("Payload is a delta OTA, not a full OTA");
@@ -992,7 +980,7 @@ fn patch_ota_payload(
             f.state == InputFileState::Extracted && cow_images.contains(name.as_str())
         })
         .try_for_each(|(name, input_file)| {
-            recow_image(name, &mut input_file.file, &mut header, cancel_signal)
+            recow_image(name, &input_file.file, &mut header, cancel_signal)
         })?;
 
     // Drop all unmodified images. We only want to compress modified images.
@@ -1030,7 +1018,7 @@ fn patch_ota_payload(
 
     let mut payload_writer = PayloadWriter::new(writer, header.clone(), key_ota.clone())
         .context("Failed to write payload header")?;
-    let mut orig_payload_reader = payload.reopen_boxed().context("Failed to open payload")?;
+    let mut orig_payload_reader = UserPosFile::new(payload);
 
     while payload_writer
         .begin_next_operation()
@@ -1101,8 +1089,8 @@ fn patch_ota_payload(
 
 #[allow(clippy::too_many_arguments)]
 fn patch_ota_zip(
-    raw_reader: &PSeekFile,
-    zip_reader: &ZipArchive<PSeekFile>,
+    raw_reader: &File,
+    zip_reader: &ZipArchive<ReaderAtWrapper<&File>>,
     zip_writer: &mut ZipArchiveWriter<impl Write>,
     external_images: &HashMap<String, PathBuf>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
@@ -1261,8 +1249,8 @@ fn patch_ota_zip(
                 // The zip library doesn't provide us with a seekable reader, so
                 // we make our own from the underlying file.
                 let payload_range = entry.compressed_data_range();
-                let payload_reader = SectionReader::new(
-                    BufReader::new(raw_reader.reopen()?),
+                let payload_reader = SectionReaderAt::new(
+                    raw_reader,
                     payload_range.0,
                     payload_range.1 - payload_range.0,
                 )?;
@@ -1329,7 +1317,7 @@ fn patch_ota_zip(
 }
 
 pub fn extract_payload(
-    raw_reader: &PSeekFile,
+    raw_reader: &File,
     directory: &Path,
     payload_offset: u64,
     payload_size: u64,
@@ -1345,24 +1333,18 @@ pub fn extract_payload(
         .map(|name| {
             let path = util::path_join_single(directory, format!("{name}.img"))?;
             let file = File::create(&path)
-                .map(PSeekFile::new)
+                .map(Arc::new)
                 .with_context(|| format!("Failed to open for writing: {path:?}"))?;
             Ok((name.as_str(), file))
         })
         .collect::<Result<HashMap<_, _>>>()?;
 
-    let payload_reader = SectionReader::new(
-        BufReader::new(raw_reader.reopen()?),
-        payload_offset,
-        payload_size,
-    )?;
+    let payload_reader = SectionReaderAt::new(raw_reader, payload_offset, payload_size)?;
 
-    // Extract the images. Each time we're asked to open a new file, we just
-    // clone the relevant PSeekFile. We only ever have one actual kernel file
-    // descriptor for each file.
+    // Extract the images.
     payload::extract_images(
         &payload_reader,
-        |name| Ok(Box::new(BufWriter::new(output_files[name].reopen()?))),
+        |name| Ok(Box::new(BufWriter::new(output_files[name].clone()))),
         header,
         images.iter().map(|n| n.as_str()),
         cancel_signal,
@@ -1538,10 +1520,9 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     }
 
     let raw_reader = File::open(&cli.input)
-        .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
     let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
-    let zip_reader = ZipArchive::from_pseekfile(raw_reader.reopen()?, &mut buffer)
+    let zip_reader = ZipArchive::from_read_at(&raw_reader, &mut buffer)
         .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
 
     // Open the output file for reading too, so we can verify offsets later.
@@ -1630,11 +1611,10 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         warn!("Ignoring --boot-partition: deprecated and no longer needed");
     }
 
-    let mut raw_reader = File::open(&cli.input)
-        .map(PSeekFile::new)
+    let raw_reader = File::open(&cli.input)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
     let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
-    let zip = ZipArchive::from_pseekfile(raw_reader.reopen()?, &mut buffer)
+    let zip = ZipArchive::from_read_at(&raw_reader, &mut buffer)
         .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
 
     let mut entry_payload = None;
@@ -1670,14 +1650,10 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
     };
 
     // Open the payload data directly.
-    let mut payload_reader = SectionReader::new(
-        BufReader::new(raw_reader.reopen()?),
-        payload_offset,
-        payload_size,
-    )
-    .context("Failed to directly open payload section")?;
+    let payload_reader = SectionReaderAt::new(&raw_reader, payload_offset, payload_size)
+        .context("Failed to directly open payload section")?;
 
-    let header = PayloadHeader::from_reader(&mut payload_reader)
+    let header = PayloadHeader::from_reader(UserPosFile::new(&payload_reader))
         .context("Failed to load OTA payload header")?;
     if !header.is_full_ota() {
         bail!("Payload is a delta OTA, not a full OTA");
@@ -1727,7 +1703,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
     if let Some(path) = &cli.cert_ota {
         info!("Extracting embedded OTA certificate from zip signature");
 
-        let ota_sig = ota::parse_ota_sig(&mut raw_reader)?;
+        let ota_sig = ota::parse_ota_sig(&raw_reader)?;
 
         crypto::write_pem_cert_file(path, &ota_sig.cert)
             .with_context(|| format!("Failed to write OTA certificate: {path:?}"))?;
@@ -1736,14 +1712,13 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
     if let Some(path) = &cli.public_key_avb {
         info!("Extracting AVB public key from vbmeta image");
 
-        let mut data = SharedCursor::new();
+        let data = MutexFile::new(Cursor::new(Vec::new()));
 
         payload::extract_image(&payload_reader, &data, &header, "vbmeta", cancel_signal)
             .context("Failed to extract vbmeta image")?;
 
-        data.rewind()?;
-
-        let (header, _, _) = avb::load_image(data).context("Failed to parse vbmeta image")?;
+        let (header, _, _) =
+            avb::load_image(UserPosFile::new(&data)).context("Failed to parse vbmeta image")?;
 
         fs::write(path, header.public_key)
             .with_context(|| format!("Failed to write AVB public key: {path:?}"))?;
@@ -1929,7 +1904,6 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     }
 
     let raw_reader = File::open(&cli.input)
-        .map(PSeekFile::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
     let mut reader = BufReader::new(raw_reader);
 
@@ -2072,7 +2046,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         let path = util::path_join_single(temp_dir.path(), format!("{name}.img"))
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
-        Ok(Box::new(File::open(path).map(PSeekFile::new)?))
+        Ok(Box::new(File::open(path)?))
     })
     .context("Failed to load all boot images")?;
     let targets = OtaCertPatcher::new(ota_cert.clone())

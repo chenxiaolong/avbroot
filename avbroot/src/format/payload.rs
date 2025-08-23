@@ -36,8 +36,8 @@ use crate::{
         install_operation::Type, signatures::Signature,
     },
     stream::{
-        self, CountingReader, FromReader, HashingReader, HashingWriter, ReadDiscardExt,
-        ReadFixedSizeExt, ReadSeekReopen, WriteSeek, WriteSeekReopen,
+        self, CountingReader, FromReader, HashingReader, HashingWriter, ReadAt, ReadDiscardExt,
+        ReadFixedSizeExt, UserPosFile, WriteAt, WriteSeek,
     },
     util::{self, OutOfBoundsError},
 };
@@ -126,8 +126,6 @@ pub enum Error {
         num_blocks: u64,
         source: io::Error,
     },
-    #[error("Failed to reopen payload")]
-    PayloadReopen(#[source] io::Error),
     #[error("Failed to open input file for partition: {0}")]
     InputOpen(String, #[source] io::Error),
     #[error("Failed to open output file for partition: {0}")]
@@ -843,11 +841,10 @@ pub fn apply_operation(
 }
 
 /// Extract the specified image from the payload. This is done multithreaded and
-/// uses rayon's global thread pool. Both the `payload` and `output` streams
-/// will be reopened from multiple threads.
+/// uses rayon's global thread pool.
 pub fn extract_image(
-    payload: &(dyn ReadSeekReopen + Sync),
-    output: &(dyn WriteSeekReopen + Sync),
+    payload: &(dyn ReadAt + Sync),
+    output: &(dyn WriteAt + Sync),
     header: &PayloadHeader,
     partition_name: &str,
     cancel_signal: &AtomicBool,
@@ -859,34 +856,23 @@ pub fn extract_image(
         .find(|p| p.partition_name == partition_name)
         .ok_or_else(|| Error::MissingPartition(partition_name.to_owned()))?;
 
-    partition
-        .operations
-        .par_iter()
-        .map(|op| -> Result<()> {
-            let reader = payload.reopen_boxed().map_err(Error::PayloadReopen)?;
-            let writer = output
-                .reopen_boxed()
-                .map_err(|e| Error::OutputOpen(partition_name.to_owned(), e))?;
-
-            apply_operation(
-                reader,
-                writer,
-                header.manifest.block_size(),
-                header.blob_offset,
-                op,
-                cancel_signal,
-            )?;
-
-            Ok(())
-        })
-        .collect::<Result<_>>()
+    partition.operations.par_iter().try_for_each(|op| {
+        apply_operation(
+            UserPosFile::new(payload),
+            UserPosFile::new(output),
+            header.manifest.block_size(),
+            header.blob_offset,
+            op,
+            cancel_signal,
+        )
+    })
 }
 
 /// Extract the specified partition images from the payload into writers. This
-/// is done multithreaded and uses rayon's global thread pool. `open_payload`
-/// and `open_output` will be called from multiple threads.
+/// is done multithreaded and uses rayon's global thread pool. `open_output`
+/// will be called from multiple threads.
 pub fn extract_images<'a>(
-    payload: &(dyn ReadSeekReopen + Sync),
+    payload: &(dyn ReadAt + Sync),
     open_output: impl Fn(&str) -> io::Result<Box<dyn WriteSeek>> + Sync,
     header: &PayloadHeader,
     partition_names: impl IntoIterator<Item = &'a str>,
@@ -913,7 +899,7 @@ pub fn extract_images<'a>(
     operations
         .into_par_iter()
         .map(|(name, op)| -> Result<()> {
-            let reader = payload.reopen_boxed().map_err(Error::PayloadReopen)?;
+            let reader = UserPosFile::new(payload);
             let writer = open_output(name).map_err(|e| Error::OutputOpen(name.to_owned(), e))?;
 
             apply_operation(
@@ -1270,7 +1256,7 @@ fn validate_partition_size(
 /// [`PartitionUpdate::estimate_op_count_max`] or else update_engine may fail to
 /// flash the partition due to running out of space on the CoW block device.
 pub fn compute_cow_estimate(
-    input: &(dyn ReadSeekReopen + Sync),
+    input: &(dyn ReadAt + Sync),
     payload_install_ops: u64,
     partition_name: &str,
     block_size: u32,
@@ -1278,8 +1264,7 @@ pub fn compute_cow_estimate(
     cancel_signal: &AtomicBool,
 ) -> Result<CowEstimate> {
     let file_size = input
-        .reopen_boxed()
-        .and_then(|mut r| r.seek(SeekFrom::End(0)))
+        .file_len()
         .map_err(|e| Error::InputOpen(partition_name.to_owned(), e))?;
     let final_chunk_different = file_size % CHUNK_SIZE != 0;
 
@@ -1306,7 +1291,7 @@ pub fn compute_cow_estimate(
         .into_par_iter()
         .map(|chunk| -> Result<CowEstimate> {
             let data = (|| {
-                let mut reader = input.reopen_boxed()?;
+                let mut reader = UserPosFile::new(input);
                 reader.seek(SeekFrom::Start(chunk * CHUNK_SIZE))?;
 
                 let chunk_size = if final_chunk_different && chunk == chunks_total - 1 {
@@ -1353,8 +1338,8 @@ pub fn compute_cow_estimate(
 /// This is more efficient than separately calling [`compute_cow_estimate`]
 /// since the input does not need to be read twice.
 pub fn compress_image(
-    input: &(dyn ReadSeekReopen + Sync),
-    output: &(dyn WriteSeekReopen + Sync),
+    input: &(dyn ReadAt + Sync),
+    output: &(dyn WriteAt + Sync),
     partition_name: &str,
     block_size: u32,
     vabc_params: Option<VabcParams>,
@@ -1363,8 +1348,7 @@ pub fn compress_image(
     const CHUNK_GROUP: u64 = 32;
 
     let file_size = input
-        .reopen_boxed()
-        .and_then(|mut r| r.seek(SeekFrom::End(0)))
+        .file_len()
         .map_err(|e| Error::InputOpen(partition_name.to_owned(), e))?;
     let final_chunk_different = file_size % CHUNK_SIZE != 0;
 
@@ -1397,7 +1381,7 @@ pub fn compress_image(
         let uncompressed_data_group = (chunks_done..chunks_done + chunks_group)
             .into_par_iter()
             .map(|chunk| -> io::Result<(u64, Vec<u8>)> {
-                let mut reader = input.reopen_boxed()?;
+                let mut reader = UserPosFile::new(input);
                 let offset = reader.seek(SeekFrom::Start(chunk * CHUNK_SIZE))?;
 
                 let chunk_size = if final_chunk_different && chunk == chunks_total - 1 {
@@ -1457,7 +1441,7 @@ pub fn compress_image(
         let group_operations = compressed_data_group
             .into_par_iter()
             .map(|(data, operation, _)| -> io::Result<InstallOperation> {
-                let mut writer = output.reopen_boxed()?;
+                let mut writer = UserPosFile::new(output);
                 writer.seek(SeekFrom::Start(operation.data_offset.unwrap()))?;
                 writer.write_all(&data)?;
 
@@ -1526,8 +1510,8 @@ fn extents_sorted(operations: &[InstallOperation]) -> bool {
 ///
 /// Returns the ranges of indices of `operations` that were updated.
 pub fn compress_modified_image(
-    input: &(dyn ReadSeekReopen + Sync),
-    output: &(dyn WriteSeekReopen + Sync),
+    input: &(dyn ReadAt + Sync),
+    output: &(dyn WriteAt + Sync),
     block_size: u32,
     partition_info: &mut PartitionInfo,
     operations: &mut [InstallOperation],
@@ -1576,7 +1560,7 @@ pub fn compress_modified_image(
                 let extents_size: usize = util::try_cast(extents_size)
                     .map_err(|e| Error::IntOutOfBounds("extents_size", e))?;
 
-                let mut reader = input.reopen_boxed().map_err(Error::ChunkRead)?;
+                let mut reader = UserPosFile::new(input);
                 reader
                     .seek(SeekFrom::Start(extents_start))
                     .map_err(Error::ChunkRead)?;
@@ -1623,7 +1607,7 @@ pub fn compress_modified_image(
         let modified_group_operations = compressed_data_group
             .into_par_iter()
             .map(|(data, i, operation)| {
-                let mut writer = output.reopen_boxed()?;
+                let mut writer = UserPosFile::new(output);
                 writer.seek(SeekFrom::Start(operation.data_offset.unwrap()))?;
                 writer.write_all(&data)?;
 

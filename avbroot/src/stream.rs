@@ -3,9 +3,9 @@
 
 use std::{
     fs::File,
-    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -15,39 +15,32 @@ use ring::digest::Context;
 
 use crate::util;
 
-/// A trait for seekable readers. This is only needed because `dyn Read + Seek`
-/// is not a valid construct in Rust yet.
-pub trait ReadSeek: Read + Seek {}
+/// This is only needed because `dyn Read + Seek` is not a valid construct in
+/// Rust yet.
+pub trait ReadSeek: Read + Seek {
+    // https://github.com/rust-lang/rust/issues/145752
+    fn issue_145752(&self) {}
+}
 
 impl<R: Read + Seek> ReadSeek for R {}
 
-/// A trait for seekable writers. This is only needed because `dyn Write + Seek`
-/// is not a valid construct in Rust yet.
-pub trait WriteSeek: Write + Seek {}
+/// This is only needed because `dyn Write + Seek` is not a valid construct in
+/// Rust yet.
+pub trait WriteSeek: Write + Seek {
+    // https://github.com/rust-lang/rust/issues/145752
+    fn issue_145752(&self) {}
+}
 
 impl<W: Write + Seek> WriteSeek for W {}
 
-/// A trait for seekable and reopenable readers.
-pub trait ReadSeekReopen: ReadSeek {
-    fn reopen_boxed(&self) -> io::Result<Box<dyn ReadSeek>>;
+/// This is only needed because `dyn Read + Write + Seek` is not a valid
+/// construct in Rust yet.
+pub trait ReadWriteSeek: ReadSeek + WriteSeek {
+    // https://github.com/rust-lang/rust/issues/145752
+    fn issue_145752(&self) {}
 }
 
-impl<R: ReadSeek + Reopen + 'static> ReadSeekReopen for R {
-    fn reopen_boxed(&self) -> io::Result<Box<dyn ReadSeek>> {
-        Ok(Box::new(self.reopen()?))
-    }
-}
-
-/// A trait for seekable and reopenable writers.
-pub trait WriteSeekReopen: WriteSeek {
-    fn reopen_boxed(&self) -> io::Result<Box<dyn WriteSeek>>;
-}
-
-impl<W: WriteSeek + Reopen + 'static> WriteSeekReopen for W {
-    fn reopen_boxed(&self) -> io::Result<Box<dyn WriteSeek>> {
-        Ok(Box::new(self.reopen()?))
-    }
-}
+impl<W: ReadSeek + WriteSeek> ReadWriteSeek for W {}
 
 /// Common function for reading a structure from a reader.
 pub trait FromReader<R: Read>: Sized {
@@ -144,24 +137,126 @@ impl<R: Read> ReadFixedSizeExt for R {
     }
 }
 
-/// Extensions for file-like types to reopen themselves.
-pub trait Reopen: Sized {
-    /// Open a new handle to the same file. The new handle is independently
-    /// seekable and the file offset is initially set to 0.
-    fn reopen(&self) -> io::Result<Self>;
+/// Extensions for file-like types to query the file size. No guarantees are
+/// made about the state of the underlying file position after performing any
+/// operation.
+pub trait FileLen {
+    fn file_len(&self) -> io::Result<u64>;
 }
 
-impl<R: Read + Reopen> Reopen for BufReader<R> {
-    fn reopen(&self) -> io::Result<Self> {
-        Ok(Self::new(self.get_ref().reopen()?))
+impl<F: ?Sized + FileLen> FileLen for &F {
+    fn file_len(&self) -> io::Result<u64> {
+        (**self).file_len()
     }
 }
 
-impl<W: Write + Reopen> Reopen for BufWriter<W> {
-    fn reopen(&self) -> io::Result<Self> {
-        Ok(Self::new(self.get_ref().reopen()?))
+impl<F: ?Sized + FileLen> FileLen for Arc<F> {
+    fn file_len(&self) -> io::Result<u64> {
+        (**self).file_len()
     }
 }
+
+/// Extensions for file-like types that support multi-threaded reads at specific
+/// offsets. No guarantees are made about the state of underlying file position
+/// after performing any operation.
+pub trait ReadAt: FileLen {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize>;
+
+    fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+        let n = self.read_at(buf, offset)?;
+        if n != buf.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!(
+                    "Expected to read {} bytes at {offset}, but reached EOF after {n} bytes",
+                    buf.len(),
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl<R: ?Sized + ReadAt> ReadAt for &R {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        (**self).read_at(buf, offset)
+    }
+
+    fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+        (**self).read_exact_at(buf, offset)
+    }
+}
+
+impl<R: ?Sized + ReadAt> ReadAt for Arc<R> {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        (**self).read_at(buf, offset)
+    }
+
+    fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+        (**self).read_exact_at(buf, offset)
+    }
+}
+
+/// Extensions for file-like types that support multi-threaded writes at
+/// specific offsets. The behavior is unspecified if writes would overlap. No
+/// guarantees are made about the state of the underlying file position after
+/// performing any operation.
+pub trait WriteAt: FileLen {
+    fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize>;
+
+    fn write_all_at(&self, buf: &[u8], offset: u64) -> io::Result<()> {
+        let n = self.write_at(buf, offset)?;
+        if n != buf.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!(
+                    "Expected to write {} bytes at {offset}, but reached EOF after {n} bytes",
+                    buf.len(),
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn file_flush(&self) -> io::Result<()>;
+}
+
+impl<W: ?Sized + WriteAt> WriteAt for &W {
+    fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
+        (**self).write_at(buf, offset)
+    }
+
+    fn write_all_at(&self, buf: &[u8], offset: u64) -> io::Result<()> {
+        (**self).write_all_at(buf, offset)
+    }
+
+    fn file_flush(&self) -> io::Result<()> {
+        (**self).file_flush()
+    }
+}
+
+impl<W: ?Sized + WriteAt> WriteAt for Arc<W> {
+    fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
+        (**self).write_at(buf, offset)
+    }
+
+    fn write_all_at(&self, buf: &[u8], offset: u64) -> io::Result<()> {
+        (**self).write_all_at(buf, offset)
+    }
+
+    fn file_flush(&self) -> io::Result<()> {
+        (**self).file_flush()
+    }
+}
+
+/// This is only needed because `dyn ReadAt + WriteAt` is not a valid construct
+/// in Rust yet.
+pub trait ReadWriteAt: ReadAt + WriteAt {
+    // https://github.com/rust-lang/rust/issues/145752
+    fn issue_145752(&self) {}
+}
+
+impl<F: ReadAt + WriteAt> ReadWriteAt for F {}
 
 /// A reader wrapper that implements [`Seek`], but only for reporting the
 /// current file position.
@@ -320,14 +415,6 @@ impl<R: Read + Seek> SectionReader<R> {
     }
 }
 
-impl<R: Read + Seek + Reopen> Reopen for SectionReader<R> {
-    fn reopen(&self) -> io::Result<Self> {
-        let inner = self.inner.reopen()?;
-
-        Self::new(inner, self.start, self.size)
-    }
-}
-
 impl<R: Read + Seek> Read for SectionReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let to_read = self.size.saturating_sub(self.pos).min(buf.len() as u64) as usize;
@@ -370,93 +457,179 @@ impl<R: Read + Seek> Seek for SectionReader<R> {
     }
 }
 
-/// A file wrapper that uses a userspace file offset. A reopened instance uses
-/// the same underlying kernel file descriptor, but a new userspace file offset,
-/// initially set to 0.
-#[derive(Debug)]
-pub struct PSeekFile {
-    // The lock is needed because flush() takes a `&mut self`.
-    file: Arc<RwLock<File>>,
-    offset: u64,
+/// A reader wrapper that only allows reading a specific section of a file.
+pub struct SectionReaderAt<R> {
+    inner: R,
+    start: u64,
+    size: u64,
 }
 
-impl PSeekFile {
-    pub fn new(file: File) -> Self {
-        Self {
-            file: Arc::new(RwLock::new(file)),
-            offset: 0,
-        }
+impl<R: ReadAt> SectionReaderAt<R> {
+    pub fn new(inner: R, start: u64, size: u64) -> io::Result<Self> {
+        Ok(Self { inner, start, size })
     }
 
-    pub fn set_len(&self, size: u64) -> io::Result<()> {
-        let file_locked = self.file.read().unwrap();
-        file_locked.set_len(size)
+    pub fn into_inner(self) -> R {
+        self.inner
     }
+}
 
+impl<R> FileLen for SectionReaderAt<R> {
+    fn file_len(&self) -> io::Result<u64> {
+        Ok(self.size)
+    }
+}
+
+impl<R: ReadAt> ReadAt for SectionReaderAt<R> {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        let to_read = self.size.saturating_sub(offset).min(buf.len() as u64) as usize;
+
+        self.inner.read_at(&mut buf[..to_read], self.start + offset)
+    }
+}
+
+/// Regular files support parallel reads.
+impl ReadAt for File {
     /// Read data from offset. The kernel's file position *will* be changed.
     #[cfg(windows)]
-    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
         use std::os::windows::fs::FileExt;
-        self.file.read().unwrap().seek_read(buf, offset)
+        FileExt::seek_read(self, buf, offset)
     }
 
     /// Read data from offset. The kernel's file position will *not* be changed.
     #[cfg(unix)]
-    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
         use std::os::unix::fs::FileExt;
-        self.file.read().unwrap().read_at(buf, offset)
+        FileExt::read_at(self, buf, offset)
     }
+}
 
+/// Regular files support parallel writes.
+impl WriteAt for File {
     /// Write data to offset. The kernel's file position *will* be changed.
     #[cfg(windows)]
-    pub fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
+    fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
         use std::os::windows::fs::FileExt;
-        self.file.read().unwrap().seek_write(buf, offset)
+        FileExt::seek_write(self, buf, offset)
     }
 
     /// Write data to offset. The kernel's file position will *not* be changed.
     #[cfg(unix)]
-    pub fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
+    fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
         use std::os::unix::fs::FileExt;
-        self.file.read().unwrap().write_at(buf, offset)
+        FileExt::write_at(self, buf, offset)
+    }
+
+    fn file_flush(&self) -> io::Result<()> {
+        (&*self).flush()
     }
 }
 
-impl Reopen for PSeekFile {
-    fn reopen(&self) -> io::Result<Self> {
-        Ok(Self {
-            file: self.file.clone(),
-            offset: 0,
-        })
+impl FileLen for File {
+    fn file_len(&self) -> io::Result<u64> {
+        (&*self).seek(SeekFrom::End(0))
     }
 }
 
-impl Read for PSeekFile {
+/// A file wrapper that implements [`ReadAt`] and [`WriteAt`] on top of
+/// [`Read`], [`Write`], and [`Seek`] via a mutex that makes operations
+/// single-threaded. This is the inverse of [`UserPosFile`].
+pub struct MutexFile<F>(Mutex<F>);
+
+impl<F> MutexFile<F> {
+    pub fn new(file: F) -> Self {
+        Self(Mutex::new(file))
+    }
+
+    pub fn into_inner(self) -> F {
+        self.0.into_inner().unwrap()
+    }
+}
+
+impl<F: Seek> FileLen for MutexFile<F> {
+    fn file_len(&self) -> io::Result<u64> {
+        let mut inner = self.0.lock().unwrap();
+        inner.seek(SeekFrom::End(0))
+    }
+}
+
+impl<F: Read + Seek> ReadAt for MutexFile<F> {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        let mut inner = self.0.lock().unwrap();
+        let pos = inner.stream_position()?;
+
+        inner.seek(SeekFrom::Start(offset))?;
+
+        let result = inner.read(buf);
+
+        inner.seek(SeekFrom::Start(pos))?;
+
+        result
+    }
+}
+
+impl<F: Write + Seek> WriteAt for MutexFile<F> {
+    fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
+        let mut inner = self.0.lock().unwrap();
+        let pos = inner.stream_position()?;
+
+        inner.seek(SeekFrom::Start(offset))?;
+
+        let result = inner.write(buf);
+
+        inner.seek(SeekFrom::Start(pos))?;
+
+        result
+    }
+
+    fn file_flush(&self) -> io::Result<()> {
+        let mut inner = self.0.lock().unwrap();
+        inner.flush()
+    }
+}
+
+/// A file wrapper than implements the standard [`Read`], [`Write`], and
+/// [`Seek`] traits on top of [`ReadAt`] and [`WriteAt`]. The file position is
+/// unique for every instance, even if the underlying file is shared. This is
+/// the inverse of [`MutexFile`].
+pub struct UserPosFile<F> {
+    file: F,
+    offset: u64,
+}
+
+impl<F> UserPosFile<F> {
+    pub fn new(file: F) -> Self {
+        Self { file, offset: 0 }
+    }
+}
+
+impl<F: ReadAt> Read for UserPosFile<F> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.read_at(buf, self.offset)?;
+        let n = self.file.read_at(buf, self.offset)?;
         self.offset += n as u64;
         Ok(n)
     }
 }
 
-impl Write for PSeekFile {
+impl<F: WriteAt> Write for UserPosFile<F> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let n = self.write_at(buf, self.offset)?;
+        let n = self.file.write_at(buf, self.offset)?;
         self.offset += n as u64;
         Ok(n)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.file.write().unwrap().flush()
+        self.file.file_flush()
     }
 }
 
-impl Seek for PSeekFile {
+impl<F: FileLen> Seek for UserPosFile<F> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.offset = match pos {
             SeekFrom::Start(o) => o,
             SeekFrom::End(o) => {
-                let file_size = self.file.read().unwrap().metadata()?.len();
+                let file_size = self.file.file_len()?;
                 file_size
                     .to_i64()
                     .and_then(|s| s.checked_add(o))
@@ -481,70 +654,6 @@ impl Seek for PSeekFile {
                 })?,
         };
 
-        Ok(self.offset)
-    }
-}
-
-/// A small wrapper around a [`Cursor`] that allows multiple instances to share
-/// the same underlying file. All reads, writes, and seeks are single-threaded.
-/// This is useful for scenarios where data needs to be copied from multiple
-/// readers into different parts of the same [`SharedCursor`] writer and the
-/// read operation is significantly more expensive than the write operation (eg.
-/// due to decompression).
-#[derive(Default)]
-pub struct SharedCursor {
-    inner: Arc<Mutex<Cursor<Vec<u8>>>>,
-    offset: u64,
-}
-
-impl SharedCursor {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl Reopen for SharedCursor {
-    fn reopen(&self) -> io::Result<Self> {
-        Ok(Self {
-            inner: self.inner.clone(),
-            offset: 0,
-        })
-    }
-}
-
-impl Read for SharedCursor {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.seek(SeekFrom::Start(self.offset))?;
-
-        let n = inner.read(buf)?;
-        self.offset += n as u64;
-
-        Ok(n)
-    }
-}
-
-impl Write for SharedCursor {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.seek(SeekFrom::Start(self.offset))?;
-
-        let n = inner.write(buf)?;
-        self.offset += n as u64;
-
-        Ok(n)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.flush()
-    }
-}
-
-impl Seek for SharedCursor {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let mut inner = self.inner.lock().unwrap();
-        self.offset = inner.seek(pos)?;
         Ok(self.offset)
     }
 }
@@ -648,10 +757,9 @@ mod tests {
 
     use ring::digest::Context;
 
-    use super::{
-        CountingReader, CountingWriter, HashingReader, HashingWriter, PSeekFile, ReadDiscardExt,
-        Reopen, SectionReader, SharedCursor, WriteZerosExt,
-    };
+    use crate::stream::FileLen;
+
+    use super::*;
 
     const FOOBAR_SHA256: [u8; 32] = [
         0xc3, 0xab, 0x8f, 0xf1, 0x37, 0x20, 0xe8, 0xad, 0x90, 0x47, 0xdd, 0x39, 0x46, 0x6b, 0x3c,
@@ -785,91 +893,98 @@ mod tests {
     }
 
     #[test]
-    fn pseek_file() {
-        let raw_file = tempfile::tempfile().unwrap();
-        let mut a = PSeekFile::new(raw_file);
-        let mut b = a.reopen().unwrap();
-        let mut c = b.reopen().unwrap();
+    fn section_reader_at() {
+        let raw_reader = MutexFile::new(Cursor::new(b"fooinnerbar"));
+        let reader = SectionReaderAt::new(raw_reader, 3, 5).unwrap();
 
-        b.write_all(b"foobar").unwrap();
-        c.write_all(b"hello").unwrap();
-        b.write_all(b"world").unwrap();
-        c.seek(SeekFrom::Start(0)).unwrap();
-        c.write_all(b"hi").unwrap();
+        let mut buf = [0u8; 5];
+        reader.read_exact_at(&mut buf[3..5], 3).unwrap();
+        reader.read_exact_at(&mut buf[..3], 0).unwrap();
+        assert_eq!(&buf, b"inner");
 
-        let mut buf = [0u8; 11];
-        a.read_exact(&mut buf).unwrap();
-        assert_eq!(&buf, b"hillorworld");
-
-        let n = a.read_discard(1).unwrap();
+        let n = reader.read_at(&mut buf, 5).unwrap();
         assert_eq!(n, 0);
     }
 
     #[test]
-    fn shared_cursor() {
-        let mut a = SharedCursor::default();
-        let mut b = a.reopen().unwrap();
-        let mut c = b.reopen().unwrap();
+    fn mutex_file() {
+        let file = MutexFile::new(Cursor::new(Vec::new()));
+        assert_eq!(file.file_len().unwrap(), 0);
 
-        b.write_all(b"foobar").unwrap();
-        c.write_all(b"hello").unwrap();
-        b.write_all(b"world").unwrap();
-        c.seek(SeekFrom::Start(0)).unwrap();
-        c.write_all(b"hi").unwrap();
+        file.write_all_at(b"bar", 3).unwrap();
+        assert_eq!(file.file_len().unwrap(), 6);
 
-        let mut buf = [0u8; 11];
-        a.read_exact(&mut buf).unwrap();
-        assert_eq!(&buf, b"hillorworld");
+        file.write_all_at(b"foo", 0).unwrap();
+        assert_eq!(file.file_len().unwrap(), 6);
 
-        let n = a.read_discard(1).unwrap();
-        assert_eq!(n, 0);
+        let data = file.into_inner().into_inner();
+        assert_eq!(data, b"foobar");
     }
 
     #[test]
-    fn copy() {
+    fn user_pos_file() {
+        let mut raw_file = tempfile::tempfile().unwrap();
+        raw_file.write_all(b"foobar").unwrap();
+
+        let mut file = UserPosFile::new(raw_file);
+        let mut buf = [0u8; 3];
+
+        file.rewind().unwrap();
+        file.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"foo");
+
+        let pos = file.seek(SeekFrom::End(-3)).unwrap();
+        assert_eq!(pos, 3);
+
+        file.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"bar");
+    }
+
+    #[test]
+    fn copy_functions() {
         let cancel_signal = AtomicBool::new(false);
         let mut reader = Cursor::new(b"foobar");
         let mut writer = Cursor::new([0u8; 6]);
 
-        super::copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap();
+        copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap();
         assert_eq!(writer.get_ref(), b"foobar");
 
         // Reader early EOF.
         reader.seek(SeekFrom::Start(3)).unwrap();
         writer.rewind().unwrap();
-        let err = super::copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap_err();
+        let err = copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 
         // Writer early EOF.
         reader.rewind().unwrap();
         writer.seek(SeekFrom::Start(3)).unwrap();
-        let err = super::copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap_err();
+        let err = copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::WriteZero);
 
         reader.rewind().unwrap();
         writer.rewind().unwrap();
-        let n = super::copy(&mut reader, &mut writer, &cancel_signal).unwrap();
+        let n = copy(&mut reader, &mut writer, &cancel_signal).unwrap();
         assert_eq!(n, 6);
         assert_eq!(writer.get_ref(), b"foobar");
 
         // Reader early EOF.
         reader.seek(SeekFrom::Start(3)).unwrap();
         writer.rewind().unwrap();
-        let n = super::copy(&mut reader, &mut writer, &cancel_signal).unwrap();
+        let n = copy(&mut reader, &mut writer, &cancel_signal).unwrap();
         assert_eq!(n, 3);
 
         // Writer early EOF.
         reader.rewind().unwrap();
         writer.seek(SeekFrom::Start(3)).unwrap();
-        let err = super::copy(&mut reader, &mut writer, &cancel_signal).unwrap_err();
+        let err = copy(&mut reader, &mut writer, &cancel_signal).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::WriteZero);
 
         reader.rewind().unwrap();
         writer.rewind().unwrap();
         cancel_signal.store(true, Ordering::SeqCst);
-        let err = super::copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap_err();
+        let err = copy_n(&mut reader, &mut writer, 6, &cancel_signal).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Interrupted);
-        let err = super::copy(&mut reader, &mut writer, &cancel_signal).unwrap_err();
+        let err = copy(&mut reader, &mut writer, &cancel_signal).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Interrupted);
     }
 }

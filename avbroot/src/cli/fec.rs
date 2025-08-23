@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -13,15 +13,14 @@ use clap::{Parser, Subcommand};
 
 use crate::{
     format::fec::FecImage,
-    stream::{FromReader, PSeekFile, ToWriter},
+    stream::{FromReader, ToWriter},
 };
 
-fn open_input(path: &Path, rw: bool) -> Result<PSeekFile> {
+fn open_input(path: &Path, rw: bool) -> Result<File> {
     OpenOptions::new()
         .read(true)
         .write(rw)
         .open(path)
-        .map(PSeekFile::new)
         .with_context(|| format!("Failed to open file: {path:?}"))
 }
 
@@ -91,10 +90,7 @@ fn repair_subcommand(cli: &RepairCli, cancel_signal: &AtomicBool) -> Result<()> 
     let input = open_input(&cli.input, true)?;
     let fec = read_fec(&cli.fec)?;
 
-    // The separate buffered readers and writers are safe because the function
-    // guarantees that every thread touches disjoint offsets and every offset is
-    // read and written at most once.
-    fec.repair(&input, &input, cancel_signal)
+    fec.repair(&input, cancel_signal)
         .context("Failed to repair file")?;
 
     Ok(())

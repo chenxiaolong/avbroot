@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
-    io::{self, SeekFrom},
+    io::{self, Seek, SeekFrom, Write},
     ops::Range,
     sync::atomic::AtomicBool,
 };
@@ -22,7 +22,7 @@ use crate::{
         zip::{ZipFileHeaderRecordExt, ZipSliceEntriesSafeExt},
     },
     patch::otacert,
-    stream::{self, ReadFixedSizeExt, ReadSeekReopen, WriteSeekReopen},
+    stream::{self, ReadFixedSizeExt, ReadWriteAt, UserPosFile},
     util,
 };
 
@@ -100,8 +100,7 @@ fn find_zip_bounds(data: &[u8], eocd_offset: usize) -> Option<Range<usize>> {
 /// Replace `otacerts.zip` with a new one containing the new certificate, but
 /// padded to the same size. If the new zip is too large, the certificate will
 /// be modified to remove unnecessary components until it fits. All operations
-/// run in parallel where possible. The input and output must refer to the same
-/// file and will be reopened from multiple threads.
+/// run in parallel where possible.
 ///
 /// Returns two sorted and non-overlapping lists of byte ranges that were
 /// modified. The first list are the byte regions within the filesystem data
@@ -112,8 +111,7 @@ fn find_zip_bounds(data: &[u8], eocd_offset: usize) -> Option<Range<usize>> {
 /// modified.
 #[allow(clippy::type_complexity)]
 pub fn patch_system_image(
-    input: &(dyn ReadSeekReopen + Sync),
-    output: &(dyn WriteSeekReopen + Sync),
+    raw_file: &(dyn ReadWriteAt + Sync),
     certificate: &Certificate,
     key: &RsaSigningKey,
     cancel_signal: &AtomicBool,
@@ -126,8 +124,7 @@ pub fn patch_system_image(
     let parent_span = Span::current();
 
     let (mut header, footer, image_size) =
-        avb::load_image(input.reopen_boxed().map_err(Error::ReadData)?)
-            .map_err(Error::AvbUpdate)?;
+        avb::load_image(UserPosFile::new(raw_file)).map_err(Error::AvbUpdate)?;
     let Some(mut footer) = footer else {
         return Err(Error::NoFooter);
     };
@@ -148,15 +145,13 @@ pub fn patch_system_image(
             let offset = chunk * CHUNK_SIZE;
             let size = CHUNK_SIZE.min(footer.original_image_size - offset);
 
-            let mut reader = input.reopen_boxed().map_err(Error::ReadData)?;
-            reader
-                .seek(SeekFrom::Start(offset))
+            let mut file = UserPosFile::new(raw_file);
+            file.seek(SeekFrom::Start(offset))
                 .map_err(Error::ReadData)?;
-            let buf = reader
+            let buf = file
                 .read_vec_exact(size as usize)
                 .map_err(Error::ReadData)?;
 
-            let mut writer = output.reopen_boxed().map_err(Error::WriteData)?;
             let mut ranges = Vec::<Range<u64>>::new();
 
             for eocd_offset_rel in memmem::find_iter(&buf, ota::ZIP_EOCD_MAGIC) {
@@ -175,10 +170,9 @@ pub fn patch_system_image(
 
                 stream::check_cancel(cancel_signal).map_err(Error::WriteData)?;
 
-                writer
-                    .seek(SeekFrom::Start(bounds.start))
+                file.seek(SeekFrom::Start(bounds.start))
                     .map_err(Error::WriteData)?;
-                writer.write_all(&new_zip).map_err(Error::WriteData)?;
+                file.write_all(&new_zip).map_err(Error::WriteData)?;
 
                 ranges.push(bounds);
             }
@@ -199,7 +193,7 @@ pub fn patch_system_image(
     let update_ranges = Some(modified_ranges.as_slice());
 
     descriptor
-        .update(input, output, update_ranges, cancel_signal)
+        .update(raw_file, update_ranges, cancel_signal)
         .map_err(Error::AvbUpdate)?;
 
     if !header.public_key.is_empty() {
@@ -208,8 +202,8 @@ pub fn patch_system_image(
         header.sign(key).map_err(Error::AvbUpdate)?;
     }
 
-    let writer = output.reopen_boxed().map_err(Error::WriteData)?;
-    avb::write_appended_image(writer, &header, &mut footer, Some(image_size))
+    let file = UserPosFile::new(raw_file);
+    avb::write_appended_image(file, &header, &mut footer, Some(image_size))
         .map_err(Error::AvbUpdate)?;
 
     let AppendedDescriptorMut::HashTree(descriptor) =

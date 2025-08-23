@@ -3,7 +3,7 @@
 
 use std::{
     fmt,
-    io::{self, Cursor, Read, SeekFrom, Write},
+    io::{self, Cursor, Read, Seek, SeekFrom, Write},
     ops::Range,
     str,
     sync::atomic::AtomicBool,
@@ -24,7 +24,7 @@ use crate::{
         avb,
         padding::{self, ZeroPadding},
     },
-    stream::{self, FromReader, ReadFixedSizeExt, ReadSeekReopen, ToWriter},
+    stream::{self, FromReader, ReadAt, ReadFixedSizeExt, ToWriter, UserPosFile},
     util::{self, NumBytes, OutOfBoundsError},
 };
 
@@ -50,8 +50,8 @@ pub enum Error {
     IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
-    #[error("Failed to reopen input file")]
-    InputReopen(#[source] io::Error),
+    #[error("Failed to get input file size")]
+    InputSize(#[source] io::Error),
     #[error("Failed to compute hash tree of input file")]
     InputDigest(#[source] io::Error),
     #[error("Failed to read hash tree data: {0}")]
@@ -189,7 +189,7 @@ impl HashTree {
     /// Hash one full level in parallel.
     fn hash_one_level_parallel(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         size: u64,
         level_data: &mut [u8],
         cancel_signal: &AtomicBool,
@@ -212,7 +212,7 @@ impl HashTree {
                 let in_start = (chunk as u64) * multiplier * u64::from(self.block_size);
                 let in_size = ((digests as u64) * u64::from(self.block_size)).min(size - in_start);
 
-                let mut reader = input.reopen_boxed()?;
+                let mut reader = UserPosFile::new(input);
                 reader.seek(SeekFrom::Start(in_start))?;
 
                 self.hash_partial_level(reader, in_size, out_data, cancel_signal)
@@ -226,7 +226,7 @@ impl HashTree {
     /// blocks.
     fn hash_partial_level_parallel(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         size: u64,
         block_ranges: &[Range<u64>],
         level_data: &mut [u8],
@@ -243,7 +243,7 @@ impl HashTree {
                 let in_start = (chunk as u64) * u64::from(self.block_size);
                 let in_size = u64::from(self.block_size).min(size - in_start);
 
-                let mut reader = input.reopen_boxed()?;
+                let mut reader = UserPosFile::new(input);
                 reader.seek(SeekFrom::Start(in_start))?;
 
                 self.hash_partial_level(reader, in_size, out_data, cancel_signal)
@@ -261,7 +261,7 @@ impl HashTree {
     /// offset of the leaf layer of the tree must equal `hash_tree_data`'s size.
     fn calculate(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         image_size: u64,
         ranges: Option<&[Range<u64>]>,
         level_offsets: &[Range<usize>],
@@ -270,7 +270,7 @@ impl HashTree {
     ) -> Result<Vec<u8>> {
         // Small files are hashed directly.
         if image_size <= u64::from(self.block_size) {
-            let mut reader = input.reopen_boxed().map_err(Error::InputReopen)?;
+            let mut reader = UserPosFile::new(input);
             let buf = reader
                 .read_vec_exact(image_size as usize)
                 .map_err(Error::InputDigest)?;
@@ -334,7 +334,7 @@ impl HashTree {
     /// hash tree data.
     pub fn generate(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         image_size: u64,
         cancel_signal: &AtomicBool,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
@@ -358,7 +358,7 @@ impl HashTree {
     /// Returns the new root digest.
     pub fn update(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         image_size: u64,
         ranges: &[Range<u64>],
         hash_tree_data: &mut [u8],
@@ -387,7 +387,7 @@ impl HashTree {
     /// Verify that the file contains no errors.
     pub fn verify(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         image_size: u64,
         root_digest: &[u8],
         hash_tree_data: &[u8],
@@ -499,16 +499,13 @@ impl HashTreeImage {
 
     /// Generate hash tree data for a file.
     pub fn generate(
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         block_size: u32,
         algorithm: &str,
         salt: &[u8],
         cancel_signal: &AtomicBool,
     ) -> Result<Self> {
-        let image_size = input
-            .reopen_boxed()
-            .and_then(|mut f| f.seek(SeekFrom::End(0)))
-            .map_err(Error::InputReopen)?;
+        let image_size = input.file_len().map_err(Error::InputSize)?;
         let digest_algorithm = Self::digest_algorithm(algorithm)?;
         let hash_tree = HashTree::new(block_size, digest_algorithm, salt);
         let (root_digest, hash_tree_data) = hash_tree.generate(input, image_size, cancel_signal)?;
@@ -526,7 +523,7 @@ impl HashTreeImage {
     /// Update hash tree data coreesponding to the specified file ranges.
     pub fn update(
         &mut self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         ranges: &[Range<u64>],
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
@@ -545,11 +542,7 @@ impl HashTreeImage {
     }
 
     /// Check that a file contains no errors.
-    pub fn verify(
-        &self,
-        input: &(dyn ReadSeekReopen + Sync),
-        cancel_signal: &AtomicBool,
-    ) -> Result<()> {
+    pub fn verify(&self, input: &(dyn ReadAt + Sync), cancel_signal: &AtomicBool) -> Result<()> {
         let digest_algorithm = Self::digest_algorithm(&self.algorithm)?;
         let hash_tree = HashTree::new(self.block_size, digest_algorithm, &self.salt);
 
@@ -656,7 +649,7 @@ mod tests {
 
     use assert_matches::assert_matches;
 
-    use crate::stream::SharedCursor;
+    use crate::stream::MutexFile;
 
     use super::*;
 
@@ -697,7 +690,8 @@ mod tests {
     fn generate_update_verify() {
         let cancel_signal = AtomicBool::new(false);
         let hash_tree = HashTree::new(64, &ring::digest::SHA256, b"Salt");
-        let mut input = SharedCursor::new();
+        let input = MutexFile::new(Cursor::new(Vec::new()));
+        let mut pos_input = UserPosFile::new(&input);
 
         // Try input smaller than one block.
         let (root_digest, hash_tree_data) = hash_tree.generate(&input, 0, &cancel_signal).unwrap();
@@ -714,7 +708,7 @@ mod tests {
 
         // Try larger input that spans multiple blocks are results in an actual
         // hash tree being created.
-        input.write_all(&b"Data".repeat(25)).unwrap();
+        pos_input.write_all(&b"Data".repeat(25)).unwrap();
 
         let (root_digest, mut hash_tree_data) =
             hash_tree.generate(&input, 100, &cancel_signal).unwrap();
@@ -738,8 +732,8 @@ mod tests {
         );
 
         // Change some data and update the hash tree.
-        input.rewind().unwrap();
-        input.write_all(b"Changed").unwrap();
+        pos_input.rewind().unwrap();
+        pos_input.write_all(b"Changed").unwrap();
 
         let root_digest = hash_tree
             .update(&input, 100, &[0..7], &mut hash_tree_data, &cancel_signal)
@@ -775,8 +769,8 @@ mod tests {
             .unwrap();
 
         // But not if the data is corrupted.
-        input.rewind().unwrap();
-        input.write_all(b"Bad").unwrap();
+        pos_input.rewind().unwrap();
+        pos_input.write_all(b"Bad").unwrap();
 
         hash_tree
             .verify(&input, 100, &root_digest, &hash_tree_data, &cancel_signal)

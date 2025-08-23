@@ -1,10 +1,10 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
     collections::HashSet,
     fmt,
-    io::{self, Read, Seek, SeekFrom, Write},
+    io::{self, Read, SeekFrom, Write},
     mem,
     ops::Range,
     sync::atomic::AtomicBool,
@@ -21,7 +21,10 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     format::verityrs,
-    stream::{self, FromReader, ReadSeekReopen, ToWriter, WriteSeekReopen, WriteZerosExt},
+    stream::{
+        self, FromReader, ReadAt, ReadSeek, ReadWriteAt, ReadWriteSeek, ToWriter, UserPosFile,
+        WriteSeek, WriteZerosExt,
+    },
     util::{self, NumBytes, OutOfBoundsError},
 };
 
@@ -68,10 +71,8 @@ pub enum Error {
     IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
-    #[error("Failed to reopen input file")]
-    InputReopen(#[source] io::Error),
-    #[error("Failed to reopen output file")]
-    OutputReopen(#[source] io::Error),
+    #[error("Failed to get input file size")]
+    InputSize(#[source] io::Error),
     #[error("Failed to read FEC data: {0}")]
     DataRead(&'static str, #[source] io::Error),
     #[error("Failed to write FEC data: {0}")]
@@ -248,7 +249,7 @@ impl Fec {
     /// slice in the file offset grid.
     fn read_seq_block(
         &self,
-        mut reader: impl Read + Seek,
+        reader: &mut dyn ReadSeek,
         offset: u64,
         buf: &mut [u8],
     ) -> io::Result<()> {
@@ -276,7 +277,7 @@ impl Fec {
     /// slice in the file offset grid.
     fn write_seq_block(
         &self,
-        mut writer: impl Write + Seek,
+        writer: &mut dyn WriteSeek,
         offset: u64,
         buf: &[u8],
     ) -> io::Result<()> {
@@ -299,7 +300,7 @@ impl Fec {
 
     /// Read the nth round from the file. The data is laid out sequentially
     /// (row-by-row).
-    fn read_round(&self, mut reader: impl Read + Seek, round: u64) -> io::Result<Vec<u8>> {
+    fn read_round(&self, reader: &mut dyn ReadSeek, round: u64) -> io::Result<Vec<u8>> {
         let mut grid = vec![0u8; usize::from(self.rs_k) * self.block_size as usize];
 
         for row in 0..self.rs_k {
@@ -309,7 +310,7 @@ impl Fec {
             let row_end = row_start + self.block_size as usize;
             let row_slice = &mut grid[row_start..row_end];
 
-            self.read_seq_block(&mut reader, interleaved_offset, row_slice)?;
+            self.read_seq_block(reader, interleaved_offset, row_slice)?;
         }
 
         Ok(grid)
@@ -317,12 +318,7 @@ impl Fec {
 
     /// Write the nth round to the file. The data is expected to be laid out
     /// sequentially (row-by-row).
-    fn write_round(
-        &self,
-        mut writer: impl Write + Seek,
-        round: u64,
-        grid: &[u8],
-    ) -> io::Result<()> {
+    fn write_round(&self, writer: &mut dyn WriteSeek, round: u64, grid: &[u8]) -> io::Result<()> {
         for row in 0..self.rs_k {
             let interleaved_offset =
                 round * u64::from(self.rs_k) * u64::from(self.block_size) + u64::from(row);
@@ -330,7 +326,7 @@ impl Fec {
             let row_end = row_start + self.block_size as usize;
             let row_slice = &grid[row_start..row_end];
 
-            self.write_seq_block(&mut writer, interleaved_offset, row_slice)?;
+            self.write_seq_block(writer, interleaved_offset, row_slice)?;
         }
 
         Ok(())
@@ -360,7 +356,7 @@ impl Fec {
     /// Generate FEC data for a single round.
     fn generate_one_round(
         &self,
-        reader: impl Read + Seek,
+        reader: &mut dyn ReadSeek,
         round: u64,
         fec: &mut [u8],
     ) -> Result<()> {
@@ -386,7 +382,7 @@ impl Fec {
     }
 
     /// Verify file data for a single round.
-    fn verify_one_round(&self, reader: impl Read + Seek, round: u64, fec: &[u8]) -> Result<()> {
+    fn verify_one_round(&self, reader: &mut dyn ReadSeek, round: u64, fec: &[u8]) -> Result<()> {
         assert_eq!(
             fec.len(),
             usize::from(self.parity()) * self.block_size as usize,
@@ -414,8 +410,7 @@ impl Fec {
     /// Repair file data for a single round.
     fn repair_one_round(
         &self,
-        reader: impl Read + Seek,
-        writer: impl Write + Seek,
+        file: &mut dyn ReadWriteSeek,
         round: u64,
         fec: &[u8],
     ) -> Result<u64> {
@@ -426,7 +421,7 @@ impl Fec {
         );
 
         let mut grid = self
-            .read_round(reader, round)
+            .read_round(file, round)
             .map_err(|e| Error::DataRead("round", e))?;
         let correct_errors = verityrs::FN_CORRECT_ERRORS[&self.rs_k];
         let parity = usize::from(self.parity());
@@ -445,7 +440,7 @@ impl Fec {
         }
 
         if num_corrected > 0 {
-            self.write_round(writer, round, &grid)
+            self.write_round(file, round, &grid)
                 .map_err(|e| Error::DataWrite("round", e))?;
         }
 
@@ -458,7 +453,7 @@ impl Fec {
     /// This function is multithreaded and uses rayon's global thread pool.
     pub fn generate(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<Vec<u8>> {
         let fec_size = self.fec_size();
@@ -466,13 +461,12 @@ impl Fec {
 
         fec.par_chunks_exact_mut(fec_size / self.rounds as usize)
             .enumerate()
-            .map(|(round, buf)| -> Result<()> {
-                stream::check_cancel(cancel_signal).map_err(Error::InputReopen)?;
+            .try_for_each(|(round, buf)| -> Result<()> {
+                stream::check_cancel(cancel_signal).map_err(|e| Error::DataRead("(init)", e))?;
 
-                let reader = input.reopen_boxed().map_err(Error::InputReopen)?;
-                self.generate_one_round(reader, round as u64, buf)
-            })
-            .collect::<Result<()>>()?;
+                let mut reader = UserPosFile::new(input);
+                self.generate_one_round(&mut reader, round as u64, buf)
+            })?;
 
         Ok(fec)
     }
@@ -482,7 +476,7 @@ impl Fec {
     /// This function is multithreaded and uses rayon's global thread pool.
     pub fn update(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         ranges: &[Range<u64>],
         fec: &mut [u8],
         cancel_signal: &AtomicBool,
@@ -501,15 +495,12 @@ impl Fec {
         fec.par_chunks_exact_mut(fec_size / self.rounds as usize)
             .enumerate()
             .filter(|(round, _)| rounds_to_update.contains(&(*round as u64)))
-            .map(|(round, buf)| -> Result<()> {
-                stream::check_cancel(cancel_signal).map_err(Error::InputReopen)?;
+            .try_for_each(|(round, buf)| -> Result<()> {
+                stream::check_cancel(cancel_signal).map_err(|e| Error::DataRead("(init)", e))?;
 
-                let reader = input.reopen_boxed().map_err(Error::InputReopen)?;
-                self.generate_one_round(reader, round as u64, buf)
+                let mut reader = UserPosFile::new(input);
+                self.generate_one_round(&mut reader, round as u64, buf)
             })
-            .collect::<Result<()>>()?;
-
-        Ok(())
     }
 
     /// Verify that the file contains no errors. This is significantly faster
@@ -519,7 +510,7 @@ impl Fec {
     /// This function is multithreaded and uses rayon's global thread pool.
     pub fn verify(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         fec: &[u8],
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
@@ -534,15 +525,12 @@ impl Fec {
 
         fec.par_chunks_exact(fec_size / self.rounds as usize)
             .enumerate()
-            .map(|(round, buf)| -> Result<()> {
-                stream::check_cancel(cancel_signal).map_err(Error::InputReopen)?;
+            .try_for_each(|(round, buf)| -> Result<()> {
+                stream::check_cancel(cancel_signal).map_err(|e| Error::DataRead("(init)", e))?;
 
-                let reader = input.reopen_boxed().map_err(Error::InputReopen)?;
-                self.verify_one_round(reader, round as u64, buf)
+                let mut reader = UserPosFile::new(input);
+                self.verify_one_round(&mut reader, round as u64, buf)
             })
-            .collect::<Result<()>>()?;
-
-        Ok(())
     }
 
     /// Repair the file. Up to `parity / 2` bytes per codeword can be repaired.
@@ -558,8 +546,7 @@ impl Fec {
     /// This function is multithreaded and uses rayon's global thread pool.
     pub fn repair(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
-        output: &(dyn WriteSeekReopen + Sync),
+        file: &(dyn ReadWriteAt + Sync),
         fec: &[u8],
         cancel_signal: &AtomicBool,
     ) -> Result<u64> {
@@ -576,15 +563,12 @@ impl Fec {
             .par_chunks_exact(fec_size / self.rounds as usize)
             .enumerate()
             .map(|(round, buf)| -> Result<u64> {
-                stream::check_cancel(cancel_signal).map_err(Error::InputReopen)?;
+                stream::check_cancel(cancel_signal).map_err(|e| Error::DataRead("(init)", e))?;
 
-                let reader = input.reopen_boxed().map_err(Error::InputReopen)?;
-                let writer = output.reopen_boxed().map_err(Error::OutputReopen)?;
-                self.repair_one_round(reader, writer, round as u64, buf)
+                let mut file = UserPosFile::new(file);
+                self.repair_one_round(&mut file, round as u64, buf)
             })
-            .collect::<Result<Vec<u64>>>()?
-            .into_iter()
-            .sum();
+            .try_reduce(|| 0, |prev, cur| Ok(prev + cur))?;
 
         Ok(num_corrected)
     }
@@ -636,14 +620,11 @@ impl FecImage {
     /// Generate FEC data for a file. `parity` is the number of parity bytes per
     /// 255-byte Reed-Solomon codeword.
     pub fn generate(
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         parity: u8,
         cancel_signal: &AtomicBool,
     ) -> Result<Self> {
-        let data_size = input
-            .reopen_boxed()
-            .and_then(|mut f| f.seek(SeekFrom::End(0)))
-            .map_err(Error::InputReopen)?;
+        let data_size = input.file_len().map_err(Error::InputSize)?;
         let fec = Fec::new(data_size, FEC_BLOCK_SIZE as u32, parity)?;
         let fec_data = fec.generate(input, cancel_signal)?;
 
@@ -657,7 +638,7 @@ impl FecImage {
     /// Update FEC data coreesponding to the specified file ranges.
     pub fn update(
         &mut self,
-        input: &(dyn ReadSeekReopen + Sync),
+        input: &(dyn ReadAt + Sync),
         ranges: &[Range<u64>],
         cancel_signal: &AtomicBool,
     ) -> Result<()> {
@@ -667,11 +648,7 @@ impl FecImage {
 
     /// Check that a file contains no errors. This is significantly faster than
     /// [`Self::repair()`] if performing a repair is not necessary.
-    pub fn verify(
-        &self,
-        input: &(dyn ReadSeekReopen + Sync),
-        cancel_signal: &AtomicBool,
-    ) -> Result<()> {
+    pub fn verify(&self, input: &(dyn ReadAt + Sync), cancel_signal: &AtomicBool) -> Result<()> {
         let fec = Fec::new(self.data_size, FEC_BLOCK_SIZE as u32, self.parity)?;
         fec.verify(input, &self.fec, cancel_signal)
     }
@@ -687,18 +664,13 @@ impl FecImage {
     /// possible for there to be a false positive where the corrupted codeword
     /// is "corrected" into an incorrect value. FEC error detection is not a
     /// replacement for cryptographically secure digests.
-    ///
-    /// The inputs and outputs should point to the same underlying file because
-    /// only regions where errors are corrected are written. It is guaranteed
-    /// that multiple threads will always read and write disjoint file offsets.
     pub fn repair(
         &self,
-        input: &(dyn ReadSeekReopen + Sync),
-        output: &(dyn WriteSeekReopen + Sync),
+        file: &(dyn ReadWriteAt + Sync),
         cancel_signal: &AtomicBool,
     ) -> Result<u64> {
         let fec = Fec::new(self.data_size, FEC_BLOCK_SIZE as u32, self.parity)?;
-        fec.repair(input, output, &self.fec, cancel_signal)
+        fec.repair(file, &self.fec, cancel_signal)
     }
 
     /// Build one instance of the FEC header. The caller is responsible for
@@ -833,7 +805,7 @@ mod tests {
     use assert_matches::assert_matches;
     use rand::RngCore;
 
-    use crate::stream::SharedCursor;
+    use crate::stream::MutexFile;
 
     use super::*;
 
@@ -862,7 +834,7 @@ mod tests {
         );
     }
 
-    fn corrupt_byte(file: &mut SharedCursor, offset: u64) {
+    fn corrupt_byte(file: &mut UserPosFile<&MutexFile<Cursor<Vec<u8>>>>, offset: u64) {
         let mut buf = [0u8; 1];
 
         file.seek(SeekFrom::Start(offset)).unwrap();
@@ -881,11 +853,13 @@ mod tests {
         // Generate data big enough to span multiple rounds, but don't fill the
         // offset grid to ensure that the out-of-bounds-is-0 behavior works.
         let size = usize::from(rs_k) * block_size as usize * 3 - block_size as usize;
-        let mut file = SharedCursor::default();
+        let file = MutexFile::new(Cursor::new(Vec::new()));
+        let mut pos_file = UserPosFile::new(&file);
+
         let orig_digest = {
             let mut buf = vec![0u8; size];
             rand::thread_rng().fill_bytes(&mut buf);
-            file.write_all(&buf).unwrap();
+            pos_file.write_all(&buf).unwrap();
             ring::digest::digest(&ring::digest::SHA256, &buf)
         };
 
@@ -901,7 +875,7 @@ mod tests {
         fec.verify(&file, &fec_data, &cancel_signal).unwrap();
 
         // Verify that errors are detected.
-        corrupt_byte(&mut file, 0);
+        corrupt_byte(&mut pos_file, 0);
         assert_matches!(
             fec.verify(&file, &fec_data, &cancel_signal),
             Err(Error::HasErrors)
@@ -909,24 +883,24 @@ mod tests {
 
         // Corrupt one byte in every single codeword.
         for offset in 1..num_codewords {
-            corrupt_byte(&mut file, offset as u64);
+            corrupt_byte(&mut pos_file, offset as u64);
         }
 
         // Verify that all the single-byte errors can be fixed. We don't test
         // for Error::TooManyErrors because of the chance of false positives due
         // to the nature of RS.
-        fec.repair(&file, &file, &fec_data, &cancel_signal).unwrap();
+        fec.repair(&file, &fec_data, &cancel_signal).unwrap();
 
         let repaired_digest = {
             let mut buf = Vec::new();
-            file.rewind().unwrap();
-            file.read_to_end(&mut buf).unwrap();
+            pos_file.rewind().unwrap();
+            pos_file.read_to_end(&mut buf).unwrap();
             ring::digest::digest(&ring::digest::SHA256, &buf)
         };
         assert_eq!(repaired_digest.as_ref(), orig_digest.as_ref());
 
         // Intentionally update some data.
-        corrupt_byte(&mut file, 0);
+        corrupt_byte(&mut pos_file, 0);
         let mut fec_data_updated = fec_data.clone();
         let fec_data = fec.generate(&file, &cancel_signal).unwrap();
         fec.update(&file, &[0..1], &mut fec_data_updated, &cancel_signal)
@@ -948,11 +922,12 @@ mod tests {
     fn round_trip_image() {
         let cancel_signal = Arc::new(AtomicBool::new(false));
 
-        let mut file = SharedCursor::default();
+        let file = MutexFile::new(Cursor::new(Vec::new()));
+
         {
             let mut buf = [0u8; FEC_BLOCK_SIZE];
             rand::thread_rng().fill_bytes(&mut buf);
-            file.write_all(&buf).unwrap();
+            UserPosFile::new(&file).write_all(&buf).unwrap();
         }
 
         let image = FecImage::generate(&file, 2, &cancel_signal).unwrap();

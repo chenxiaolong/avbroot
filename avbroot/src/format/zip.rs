@@ -18,7 +18,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     format::compression::{self, CompressedFormat, CompressedReader, CompressedWriter},
-    stream::PSeekFile,
+    stream::ReadAt,
 };
 
 pub trait ZipFileHeaderRecordExt<'a> {
@@ -294,24 +294,26 @@ pub fn compressed_writer<'writer, W: Write + 'writer>(
     }
 }
 
-pub trait ZipArchivePSeekExt {
-    fn from_pseekfile(
-        mut file: PSeekFile,
+pub trait ZipArchiveReadAtExt {
+    fn from_read_at<R: ReadAt>(
+        file: R,
         buffer: &mut [u8],
-    ) -> Result<ZipArchive<PSeekFile>, rawzip::Error> {
-        let end_offset = file.seek(SeekFrom::End(0))?;
+    ) -> Result<ZipArchive<ReaderAtWrapper<R>>, rawzip::Error> {
+        let end_offset = file.file_len()?;
 
         ZipLocator::new()
-            .locate_in_reader(file, buffer, end_offset)
+            .locate_in_reader(ReaderAtWrapper(file), buffer, end_offset)
             .map_err(|(_, e)| e)
     }
 }
 
-impl ZipArchivePSeekExt for ZipArchive<()> {}
+impl ZipArchiveReadAtExt for ZipArchive<()> {}
 
-impl ReaderAt for PSeekFile {
+pub struct ReaderAtWrapper<R: ReadAt>(R);
+
+impl<R: ReadAt> ReaderAt for ReaderAtWrapper<R> {
     fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-        Self::read_at(self, buf, offset)
+        ReadAt::read_at(&self.0, buf, offset)
     }
 }
 
