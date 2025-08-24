@@ -10,7 +10,7 @@
 ### Unreleased
 
 * Switch to using rawzip for zip parsing and writing ([PR #489])
-* Various code improvements ([PR #492], [PR #495], [PR #496], [PR #497], [PR #499], [PR #500], [PR #501], [PR #502], [PR #503])
+* Various code improvements ([PR #492], [PR #495], [PR #496], [PR #497], [PR #499], [PR #500], [PR #501], [PR #502], [PR #503], [PR #505])
 * Update dependencies ([PR #498])
 * Fix patching older OTAs with payloads using CoW v2 without the compression factor field ([Issue #493], [PR #504])
 
@@ -601,3 +601,4 @@ Behind-the-scenes changes:
 [PR #502]: https://github.com/chenxiaolong/avbroot/pull/502
 [PR #503]: https://github.com/chenxiaolong/avbroot/pull/503
 [PR #504]: https://github.com/chenxiaolong/avbroot/pull/504
+[PR #505]: https://github.com/chenxiaolong/avbroot/pull/505
