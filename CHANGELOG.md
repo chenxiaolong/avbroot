@@ -12,6 +12,7 @@
 * Switch to using rawzip for zip parsing and writing ([PR #489])
 * Various code improvements ([PR #492], [PR #495], [PR #496], [PR #497], [PR #499], [PR #500], [PR #501], [PR #502], [PR #503])
 * Update dependencies ([PR #498])
+* Fix patching older OTAs with payloads using CoW v2 without the compression factor field ([Issue #493], [PR #504])
 
 ### Version 3.20.0
 
@@ -407,6 +408,7 @@ Behind-the-scenes changes:
 [Issue #469]: https://github.com/chenxiaolong/avbroot/issues/469
 [Issue #472]: https://github.com/chenxiaolong/avbroot/issues/472
 [Issue #482]: https://github.com/chenxiaolong/avbroot/issues/482
+[Issue #493]: https://github.com/chenxiaolong/avbroot/issues/493
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -598,3 +600,4 @@ Behind-the-scenes changes:
 [PR #501]: https://github.com/chenxiaolong/avbroot/pull/501
 [PR #502]: https://github.com/chenxiaolong/avbroot/pull/502
 [PR #503]: https://github.com/chenxiaolong/avbroot/pull/503
+[PR #504]: https://github.com/chenxiaolong/avbroot/pull/504
