@@ -213,7 +213,7 @@ fn patch_boot_images(
 
     struct Opener<'a>(Mutex<&'a mut HashMap<String, InputFile>>);
 
-    impl<'a> BootImageOpener for Opener<'a> {
+    impl BootImageOpener for Opener<'_> {
         fn open_original(&self, name: &str) -> io::Result<Box<dyn ReadSeek + Sync>> {
             let locked = self.0.lock().unwrap();
             Ok(Box::new(locked[name].file.clone()))
@@ -2057,7 +2057,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     struct Opener<'a>(&'a Path);
 
-    impl<'a> BootImageOpener for Opener<'a> {
+    impl BootImageOpener for Opener<'_> {
         fn open_original(&self, name: &str) -> io::Result<Box<dyn ReadSeek + Sync>> {
             let path = util::path_join_single(self.0, format!("{name}.img"))
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
