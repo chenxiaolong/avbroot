@@ -830,7 +830,7 @@ pub fn compress_image(
 
 /// Recompute the CoW estimate for an image and update the OTA manifest
 /// partition entry appropriately. The input file is not modified.
-fn recow_image(
+pub fn recow_image(
     name: &str,
     file: &File,
     header: &mut PayloadHeader,

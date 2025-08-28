@@ -160,6 +160,26 @@ fn pack_subcommand(
         })
         .collect::<Result<HashMap<_, _>>>()?;
 
+    for (name, input_file) in &input_files {
+        let Some(dpm) = &header.manifest.dynamic_partition_metadata else {
+            continue;
+        };
+
+        if !dpm.groups.iter().any(|g| g.partition_names.contains(name)) {
+            continue;
+        }
+
+        header
+            .manifest
+            .partitions
+            .iter_mut()
+            .find(|p| p.partition_name == *name)
+            .unwrap()
+            .estimate_cow_size = Some(0);
+
+        ota::recow_image(name, input_file, &mut header, cancel_signal)?;
+    }
+
     // Compress the images and compute the list of install operations for
     // insertion into the payload header. The compressed data is stored in new
     // temp files and the original input files are dropped.
