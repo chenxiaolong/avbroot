@@ -11,6 +11,7 @@
 
 * Fix CoW size estimates not being set when running `avbroot payload pack` ([PR #509])
 * Add support for only unpacking metadata in `avbroot {avb,boot,cpio,lp,payload} unpack` ([PR #510])
+* Specify minimum supported compiler version for building from source ([PR #511])
 
 ### Version 3.21.0
 
@@ -609,3 +610,4 @@ Behind-the-scenes changes:
 [PR #505]: https://github.com/chenxiaolong/avbroot/pull/505
 [PR #509]: https://github.com/chenxiaolong/avbroot/pull/509
 [PR #510]: https://github.com/chenxiaolong/avbroot/pull/510
+[PR #511]: https://github.com/chenxiaolong/avbroot/pull/511
