@@ -34,7 +34,7 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause",
     "bzip2-1.0.6",
-    "GPL-3.0",
+    "GPL-3.0-only",
     "ISC",
     "MIT",
     "Unicode-3.0",

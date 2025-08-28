@@ -28,12 +28,12 @@ flate2 = { version = "1.0.29", features = ["zlib-rs"] }
 gf256 = { version = "0.3.0", features = ["rs"] }
 hex = { version = "0.4.3", features = ["serde"] }
 lz4_flex = "0.11.1"
-lzma-rust2 = "0.10.0"
+lzma-rust2 = "0.11.0"
 memchr = "2.6.0"
 num-bigint-dig = "0.8.4"
 num-traits = "0.2.16"
 passterm = "2.0.3"
-phf = { version = "0.12.1", features = ["macros"] }
+phf = { version = "0.13.1", features = ["macros"] }
 pkcs8 = { version = "0.10.2", features = ["encryption", "pem"] }
 prost = "0.14.1"
 # We can't upgrade to 0.9.0 until rsa updates its rand_core dependency.
