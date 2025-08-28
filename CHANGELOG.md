@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix CoW size estimates not being set when running `avbroot payload pack` ([PR #509])
+
 ### Version 3.21.0
 
 * Switch to using rawzip for zip parsing and writing ([PR #489])
@@ -602,3 +606,4 @@ Behind-the-scenes changes:
 [PR #503]: https://github.com/chenxiaolong/avbroot/pull/503
 [PR #504]: https://github.com/chenxiaolong/avbroot/pull/504
 [PR #505]: https://github.com/chenxiaolong/avbroot/pull/505
+[PR #509]: https://github.com/chenxiaolong/avbroot/pull/509
