@@ -170,22 +170,24 @@ fn unpack_subcommand(
 
     display_format(cpio_cli, format);
 
-    fs::create_dir_all(&cli.output_tree)
-        .with_context(|| format!("Failed to create directory: {:?}", cli.output_tree))?;
+    if !cli.no_output_tree {
+        fs::create_dir_all(&cli.output_tree)
+            .with_context(|| format!("Failed to create directory: {:?}", cli.output_tree))?;
 
-    while let Some(entry) = reader.next_entry().context("Failed to read cpio entry")? {
-        display_entry(cpio_cli, &entry);
+        while let Some(entry) = reader.next_entry().context("Failed to read cpio entry")? {
+            display_entry(cpio_cli, &entry);
 
-        if let Some(mut writer) = create_tree_file(&cli.output_tree, &entry)? {
-            let file_size = entry.data.size()?;
+            if let Some(mut writer) = create_tree_file(&cli.output_tree, &entry)? {
+                let file_size = entry.data.size()?;
 
-            stream::copy_n(&mut reader, &mut writer, file_size.into(), cancel_signal)
-                .context("Failed to copy data")?;
+                stream::copy_n(&mut reader, &mut writer, file_size.into(), cancel_signal)
+                    .context("Failed to copy data")?;
 
-            writer.into_inner().context("Failed to flush data")?;
+                writer.into_inner().context("Failed to flush data")?;
+            }
+
+            info.entries.push(entry);
         }
-
-        info.entries.push(entry);
     }
 
     write_info(&cli.output_info, &info)?;
@@ -300,6 +302,10 @@ struct UnpackCli {
     /// Path to output files directory.
     #[arg(long, value_name = "DIR", value_parser, default_value = "cpio_tree")]
     output_tree: PathBuf,
+
+    /// Do not output files.
+    #[arg(long, conflicts_with = "output_tree")]
+    no_output_tree: bool,
 }
 
 /// Pack a cpio archive.

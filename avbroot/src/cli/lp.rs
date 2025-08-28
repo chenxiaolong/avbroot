@@ -179,7 +179,7 @@ fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool
     write_info(&cli.output_info, &metadata)?;
 
     // For empty images, there's no data to unpack.
-    if metadata.image_type == ImageType::Empty {
+    if metadata.image_type == ImageType::Empty || cli.no_output_images {
         return Ok(());
     }
 
@@ -534,6 +534,10 @@ struct UnpackCli {
     /// Path to output images directory.
     #[arg(long, value_name = "DIR", value_parser, default_value = "lp_images")]
     output_images: PathBuf,
+
+    /// Do not output images.
+    #[arg(long, conflicts_with = "output_images")]
+    no_output_images: bool,
 
     /// The LP metadata slot to use.
     ///

@@ -113,24 +113,26 @@ fn unpack_subcommand(
 
     write_info(&cli.output_info, &header)?;
 
-    fs::create_dir_all(&cli.output_images)
-        .with_context(|| format!("Failed to create directory: {:?}", cli.output_images))?;
+    if !cli.no_output_images {
+        fs::create_dir_all(&cli.output_images)
+            .with_context(|| format!("Failed to create directory: {:?}", cli.output_images))?;
 
-    ota::extract_payload(
-        &reader.into_inner(),
-        &cli.output_images,
-        0,
-        payload_size,
-        &header,
-        &header
-            .manifest
-            .partitions
-            .iter()
-            .map(|p| &p.partition_name)
-            .cloned()
-            .collect(),
-        cancel_signal,
-    )?;
+        ota::extract_payload(
+            &reader.into_inner(),
+            &cli.output_images,
+            0,
+            payload_size,
+            &header,
+            &header
+                .manifest
+                .partitions
+                .iter()
+                .map(|p| &p.partition_name)
+                .cloned()
+                .collect(),
+            cancel_signal,
+        )?;
+    }
 
     Ok(())
 }
@@ -386,6 +388,10 @@ struct UnpackCli {
         default_value = "payload_images"
     )]
     output_images: PathBuf,
+
+    /// Do not output images.
+    #[arg(long, conflicts_with = "output_images")]
+    no_output_images: bool,
 }
 
 /// Pack a payload binary.

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -164,30 +164,44 @@ fn unpack_subcommand(boot_cli: &BootCli, cli: &UnpackCli) -> Result<()> {
         }
     }
 
-    if let Some(data) = kernel {
+    if let Some(data) = kernel
+        && !cli.no_output_kernel
+    {
         write_data_if_not_empty(&cli.output_kernel, data)?;
     }
-    if let Some(data) = second {
+    if let Some(data) = second
+        && !cli.no_output_second
+    {
         write_data_if_not_empty(&cli.output_second, data)?;
     }
-    if let Some(data) = recovery_dtbo {
+    if let Some(data) = recovery_dtbo
+        && !cli.no_output_recovery_dtbo
+    {
         write_data_if_not_empty(&cli.output_recovery_dtbo, data)?;
     }
-    if let Some(data) = dtb {
+    if let Some(data) = dtb
+        && !cli.no_output_dtb
+    {
         write_data_if_not_empty(&cli.output_dtb, data)?;
     }
-    if let Some(header) = vts_signature {
+    if let Some(header) = vts_signature
+        && !cli.no_output_vts_signature
+    {
         write_avb_header(&cli.output_vts_signature, header)?;
     }
-    if let Some(text) = bootconfig {
+    if let Some(text) = bootconfig
+        && !cli.no_output_bootconfig
+    {
         write_text_if_not_empty(&cli.output_bootconfig, text)?;
     }
 
-    for (i, data) in ramdisks.iter().enumerate() {
-        let mut path = cli.output_ramdisk_prefix.as_os_str().to_owned();
-        path.push(i.to_string());
+    if !cli.no_output_ramdisk {
+        for (i, data) in ramdisks.iter().enumerate() {
+            let mut path = cli.output_ramdisk_prefix.as_os_str().to_owned();
+            path.push(i.to_string());
 
-        write_data_if_not_empty(Path::new(&path), data)?;
+            write_data_if_not_empty(Path::new(&path), data)?;
+        }
     }
 
     Ok(())
@@ -339,6 +353,10 @@ struct UnpackCli {
     #[arg(long, value_name = "FILE", value_parser, default_value = "kernel.img")]
     output_kernel: PathBuf,
 
+    /// Do not output kernel image.
+    #[arg(long, conflicts_with = "output_kernel")]
+    no_output_kernel: bool,
+
     /// Path prefix for output ramdisk images.
     #[arg(
         long,
@@ -348,9 +366,17 @@ struct UnpackCli {
     )]
     output_ramdisk_prefix: PathBuf,
 
+    /// Do not output ramdisk images.
+    #[arg(long, conflicts_with = "output_ramdisk_prefix")]
+    no_output_ramdisk: bool,
+
     /// Path to output second stage bootloader image.
     #[arg(long, value_name = "FILE", value_parser, default_value = "second.img")]
     output_second: PathBuf,
+
+    /// Do not output second stage bootloader image.
+    #[arg(long, conflicts_with = "output_second")]
+    no_output_second: bool,
 
     /// Path to output recovery dtbo/acpio image.
     #[arg(
@@ -361,9 +387,17 @@ struct UnpackCli {
     )]
     output_recovery_dtbo: PathBuf,
 
+    /// Do not output recovery dtbo/acpio image.
+    #[arg(long, conflicts_with = "output_recovery_dtbo")]
+    no_output_recovery_dtbo: bool,
+
     /// Path to output device tree blob image.
     #[arg(long, value_name = "FILE", value_parser, default_value = "dtb.img")]
     output_dtb: PathBuf,
+
+    /// Do not output device tree blob image.
+    #[arg(long, conflicts_with = "output_dtb")]
+    no_output_dtb: bool,
 
     /// Path to output VTS signature.
     #[arg(
@@ -374,6 +408,10 @@ struct UnpackCli {
     )]
     output_vts_signature: PathBuf,
 
+    /// Do not output VTS signature.
+    #[arg(long, conflicts_with = "output_vts_signature")]
+    no_output_vts_signature: bool,
+
     /// Path to output bootconfig text.
     #[arg(
         long,
@@ -382,6 +420,10 @@ struct UnpackCli {
         default_value = "bootconfig.txt"
     )]
     output_bootconfig: PathBuf,
+
+    /// Do not output bootconfig text.
+    #[arg(long, conflicts_with = "output_bootconfig")]
+    no_output_bootconfig: bool,
 }
 
 /// Pack a boot image.

@@ -735,7 +735,7 @@ fn unpack_subcommand(cli: &UnpackCli, cancel_signal: &AtomicBool) -> Result<()> 
 
     write_info(&cli.output_info, &info)?;
 
-    if info.footer.is_some() {
+    if info.footer.is_some() && !cli.no_output_raw {
         write_raw_and_verify(
             &cli.output_raw,
             &mut reader,
@@ -1024,6 +1024,10 @@ struct UnpackCli {
     /// Only appended AVB images will have a raw image.
     #[arg(long, value_name = "FILE", value_parser, default_value = "raw.img")]
     output_raw: PathBuf,
+
+    /// Do not output raw image.
+    #[arg(long, conflicts_with = "output_raw")]
+    no_output_raw: bool,
 
     /// Ignore invalid digests or FEC data.
     #[arg(long)]
