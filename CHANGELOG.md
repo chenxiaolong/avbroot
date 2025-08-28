@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.22.0
 
 * Fix CoW size estimates not being set when running `avbroot payload pack` ([PR #509])
 * Add support for only unpacking metadata in `avbroot {avb,boot,cpio,lp,payload} unpack` ([PR #510])
