@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Fix CoW size estimates not being set when running `avbroot payload pack` ([PR #509])
+* Add support for only unpacking metadata in `avbroot {avb,boot,cpio,lp,payload} unpack` ([PR #510])
 
 ### Version 3.21.0
 
@@ -607,3 +608,4 @@ Behind-the-scenes changes:
 [PR #504]: https://github.com/chenxiaolong/avbroot/pull/504
 [PR #505]: https://github.com/chenxiaolong/avbroot/pull/505
 [PR #509]: https://github.com/chenxiaolong/avbroot/pull/509
+[PR #510]: https://github.com/chenxiaolong/avbroot/pull/510
