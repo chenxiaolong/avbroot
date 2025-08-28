@@ -8,6 +8,8 @@ version = "3.21.0"
 license = "GPL-3.0-only"
 edition = "2024"
 repository = "https://github.com/chenxiaolong/avbroot"
+publish = false
+rust-version = "1.88.0"
 
 [workspace.lints.clippy]
 cast_lossless = "deny"
