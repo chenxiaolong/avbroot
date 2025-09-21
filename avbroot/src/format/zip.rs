@@ -330,28 +330,6 @@ struct ZipLocalHeader {
     extra_field_len: little_endian::U16,
 }
 
-#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(C, packed)]
-struct ZipCentralHeader {
-    pub signature: little_endian::U32,
-    pub version_made_by: little_endian::U16,
-    pub version_needed: little_endian::U16,
-    pub flags: little_endian::U16,
-    pub compression_method: little_endian::U16,
-    pub last_mod_time: little_endian::U16,
-    pub last_mod_date: little_endian::U16,
-    pub crc32: little_endian::U32,
-    pub compressed_size: little_endian::U32,
-    pub uncompressed_size: little_endian::U32,
-    pub file_name_len: little_endian::U16,
-    pub extra_field_len: little_endian::U16,
-    pub file_comment_len: little_endian::U16,
-    pub disk_number_start: little_endian::U16,
-    pub internal_file_attrs: little_endian::U16,
-    pub external_file_attrs: little_endian::U32,
-    pub local_header_offset: little_endian::U32,
-}
-
 /// Convert a streaming zip into a non-streaming one. If any entry uses ZIP64,
 /// the local header must contain an [`ExtraFieldId::ANDROID_ZIP_ALIGNMENT`]
 /// extra field with sufficient size (16 bytes to be safe). This is used as

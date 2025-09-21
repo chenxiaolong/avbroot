@@ -520,14 +520,14 @@ impl ChunkList {
         // Find the chunk to insert before. We save the last used index to
         // optimize for sequential insertion and avoid needing to search the
         // entire list every time.
-        let mut insert_before = self.chunks.front_index();
-
-        if let Some(last_used) = self.last_used
+        let mut insert_before = if let Some(last_used) = self.last_used
             && chunk.bounds.start >= self.chunks.get(last_used).unwrap().bounds.start
         {
             // The new chunk starts after the last used chunk.
-            insert_before = Some(last_used);
-        }
+            Some(last_used)
+        } else {
+            self.chunks.front_index()
+        };
 
         while let Some(index) = insert_before {
             if self.chunks.get(index).unwrap().bounds.start >= chunk.bounds.start {

@@ -391,15 +391,15 @@ impl MagiskRootPatcher {
             let mut new_path = b".backup/".to_vec();
             new_path.extend(&old_entry.path);
 
-            let mut new_data = None;
-
-            if xz_compress && let CpioEntryData::Data(data) = &old_entry.data {
+            let new_data = if xz_compress && let CpioEntryData::Data(data) = &old_entry.data {
                 new_path.extend(b".xz");
 
                 let reader = Cursor::new(data);
                 let buf = Self::xz_compress(&new_path, reader, cancel_signal)?;
-                new_data = Some(CpioEntryData::Data(buf));
-            }
+                Some(CpioEntryData::Data(buf))
+            } else {
+                None
+            };
 
             new_entries.push(CpioEntry {
                 path: new_path,
