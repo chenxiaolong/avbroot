@@ -196,11 +196,12 @@ impl MagiskRootPatcher {
     //   replaced by PREINITDEVICE
     // - Versions newer than the latest supported version are assumed to support
     //   the same features as the latest version
-    const VERS_SUPPORTED: &'static [Range<u32>] = &[25102..25207, 25211..30300];
+    const VERS_SUPPORTED: &'static [Range<u32>] = &[25102..25207, 25211..30400];
     const VER_PREINIT_DEVICE: RangeFrom<u32> = 25211..;
     const VER_RANDOM_SEED: Range<u32> = 25211..26103;
     const VER_PATCH_VBMETA: Range<u32> = Self::VERS_SUPPORTED[0].start..26202;
     const VER_XZ_BACKUP: RangeFrom<u32> = 26403..;
+    const VER_VENDOR_BOOT: RangeFrom<u32> = 30300..;
 
     const ZIP_INIT_LD: &'static str = "lib/arm64-v8a/libinit-ld.so";
     const ZIP_LIBMAGISK: &'static str = "lib/arm64-v8a/libmagisk.so";
@@ -585,6 +586,13 @@ impl BootImagePatch for MagiskRootPatcher {
         }
 
         magisk_config.push_str("RECOVERYMODE=false\n");
+
+        // We never install Magisk into the init_boot.cpio within the
+        // vendor_boot ramdisk. This config option was introduced in commit
+        // 742913ebcb10cf819a54699497359535047874f7.
+        if Self::VER_VENDOR_BOOT.contains(&self.version) {
+            magisk_config.push_str("VENDORBOOT=false\n");
+        }
 
         if Self::VER_PREINIT_DEVICE.contains(&self.version)
             && let Some(device) = &self.preinit_device
