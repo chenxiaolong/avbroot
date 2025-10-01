@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.23.0
 
 * Update dependencies and fix Rust 1.90 clippy lints ([PR #517], [PR #520])
 * Add support for Magisk 30300 ([PR #519])
