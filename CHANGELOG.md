@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Update dependencies and fix Rust 1.90 clippy lints ([PR #517])
+* Add support for Magisk 30300 ([PR #519])
 
 ### Version 3.22.0
 
@@ -618,3 +619,4 @@ Behind-the-scenes changes:
 [PR #511]: https://github.com/chenxiaolong/avbroot/pull/511
 [PR #512]: https://github.com/chenxiaolong/avbroot/pull/512
 [PR #517]: https://github.com/chenxiaolong/avbroot/pull/517
+[PR #519]: https://github.com/chenxiaolong/avbroot/pull/519
