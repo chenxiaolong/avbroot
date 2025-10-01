@@ -9,7 +9,7 @@ use flate2::{
     write::{DeflateEncoder, GzEncoder},
 };
 use lz4_flex::frame::FrameDecoder;
-use lzma_rust2::{CheckType, XZOptions, XZReader, XZWriter};
+use lzma_rust2::{CheckType, XzOptions, XzReader, XzWriter};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -121,8 +121,8 @@ pub enum CompressedReader<R: Read> {
     Deflate(DeflateDecoder<R>),
     Gzip(GzDecoder<R>),
     Lz4(FrameDecoder<R>),
-    /// Boxed because the [`XZReader`] is nearly 4 KiB.
-    Xz(Box<XZReader<R>>),
+    /// Boxed because the [`XzReader`] is nearly 4 KiB.
+    Xz(Box<XzReader<R>>),
 }
 
 impl<R: Read> CompressedReader<R> {
@@ -132,7 +132,7 @@ impl<R: Read> CompressedReader<R> {
             CompressedFormat::Deflate => Self::Deflate(DeflateDecoder::new(reader)),
             CompressedFormat::Gzip => Self::Gzip(GzDecoder::new(reader)),
             CompressedFormat::Lz4Legacy => Self::Lz4(FrameDecoder::new(reader)),
-            CompressedFormat::Xz => Self::Xz(Box::new(XZReader::new(reader, false))),
+            CompressedFormat::Xz => Self::Xz(Box::new(XzReader::new(reader, false))),
         }
     }
 
@@ -168,7 +168,7 @@ impl<R: Read + Seek> CompressedReader<R> {
         } else if &magic[0..4] == LZ4_LEGACY_MAGIC {
             Ok(Self::Lz4(FrameDecoder::new(reader)))
         } else if &magic == XZ_MAGIC {
-            Ok(Self::Xz(Box::new(XZReader::new(reader, false))))
+            Ok(Self::Xz(Box::new(XzReader::new(reader, false))))
         } else if raw_if_unknown {
             Ok(Self::None(reader))
         } else {
@@ -195,7 +195,7 @@ pub enum CompressedWriter<W: Write> {
     Deflate(DeflateEncoder<W>),
     Gzip(GzEncoder<W>),
     Lz4Legacy(Lz4LegacyEncoder<W>),
-    Xz(XZWriter<W>),
+    Xz(XzWriter<W>),
 }
 
 impl<W: Write> CompressedWriter<W> {
@@ -215,10 +215,10 @@ impl<W: Write> CompressedWriter<W> {
             }
             CompressedFormat::Xz => {
                 // Some kernels are compiled without support for the default CRC64.
-                let mut options = XZOptions::with_preset(6);
+                let mut options = XzOptions::with_preset(6);
                 options.set_check_sum_type(CheckType::Crc32);
 
-                let xz_writer = XZWriter::new(writer, options).map_err(Error::XzInit)?;
+                let xz_writer = XzWriter::new(writer, options).map_err(Error::XzInit)?;
                 Ok(Self::Xz(xz_writer))
             }
         }

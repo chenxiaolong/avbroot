@@ -16,7 +16,7 @@ use std::{
 };
 
 use bstr::ByteSlice;
-use lzma_rust2::{CheckType, XZOptions, XZWriter};
+use lzma_rust2::{CheckType, XzOptions, XzWriter};
 use rawzip::{RECOMMENDED_BUFFER_SIZE, ZipArchive};
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use regex::bytes::Regex;
@@ -302,11 +302,11 @@ impl MagiskRootPatcher {
     }
 
     fn xz_compress(name: &[u8], reader: impl Read, cancel_signal: &AtomicBool) -> Result<Vec<u8>> {
-        let mut options = XZOptions::with_preset(9);
+        let mut options = XzOptions::with_preset(9);
         options.set_check_sum_type(CheckType::None);
 
         let raw_writer = Cursor::new(Vec::new());
-        let mut writer = XZWriter::new(raw_writer, options).map_err(Error::XzInit)?;
+        let mut writer = XzWriter::new(raw_writer, options).map_err(Error::XzInit)?;
 
         let raw_writer = stream::copy(reader, &mut writer, cancel_signal)
             .and_then(|_| writer.finish())

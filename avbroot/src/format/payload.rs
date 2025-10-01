@@ -15,7 +15,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use bzip2::write::BzDecoder;
 use flate2::{Compression, write::GzEncoder};
-use lzma_rust2::{CheckType, XZOptions, XZReader, XZWriter};
+use lzma_rust2::{CheckType, XzOptions, XzReader, XzWriter};
 use num_traits::CheckedAdd;
 use prost::Message;
 use rayon::{
@@ -814,7 +814,7 @@ pub fn apply_operation(
                         // reader and read till EOF.
                         let limited_reader = (&mut *reader).take(data_length);
                         let hashing_reader = HashingReader::new(limited_reader, hasher);
-                        let mut decoder = XZReader::new(hashing_reader, false);
+                        let mut decoder = XzReader::new(hashing_reader, false);
                         stream::copy(&mut decoder, &mut *writer, cancel_signal)
                             .map_err(error_fn)?;
 
@@ -922,9 +922,9 @@ fn compress_chunk(raw_data: &[u8], cancel_signal: &AtomicBool) -> Result<(Vec<u8
     // decompression. Also, we intentionally pick the lowest compression level
     // since we primarily care about squishing zeros. The non-zero portions of
     // boot images are usually already-compressed kernels and ramdisks.
-    let mut options = XZOptions::with_preset(0);
+    let mut options = XzOptions::with_preset(0);
     options.set_check_sum_type(CheckType::None);
-    let mut xz_writer = XZWriter::new(hashing_writer, options).map_err(Error::XzInit)?;
+    let mut xz_writer = XzWriter::new(hashing_writer, options).map_err(Error::XzInit)?;
 
     stream::copy_n(reader, &mut xz_writer, raw_data.len() as u64, cancel_signal)
         .map_err(Error::XzCompress)?;
