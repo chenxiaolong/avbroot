@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for Magisk 30400 ([PR #521])
+
 ### Version 3.23.0
 
 * Update dependencies and fix Rust 1.90 clippy lints ([PR #517], [PR #520])
@@ -621,3 +625,4 @@ Behind-the-scenes changes:
 [PR #517]: https://github.com/chenxiaolong/avbroot/pull/517
 [PR #519]: https://github.com/chenxiaolong/avbroot/pull/519
 [PR #520]: https://github.com/chenxiaolong/avbroot/pull/520
+[PR #521]: https://github.com/chenxiaolong/avbroot/pull/521
