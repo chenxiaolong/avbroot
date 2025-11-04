@@ -28,8 +28,12 @@ jobs:
         artifact:
           - os: ubuntu-latest
             name: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            name: aarch64-unknown-linux-gnu
           - os: windows-latest
             name: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            name: aarch64-pc-windows-msvc
           - os: macos-latest
             name: universal-apple-darwin
             targets:
@@ -41,8 +45,6 @@ jobs:
             targets:
               - aarch64-linux-android
             android_api: '31'
-          - os: ubuntu-24.04-arm
-            name: aarch64-unknown-linux-gnu
     steps:
       - name: Check out repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
