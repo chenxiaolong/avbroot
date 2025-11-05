@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Add prebuilt binaries for aarch64 GNU/Linux ([PR #523])
+* Add prebuilt binaries for aarch64 Windows ([PR #524])
 
 ### Version 3.23.1
 
@@ -631,3 +632,4 @@ Behind-the-scenes changes:
 [PR #520]: https://github.com/chenxiaolong/avbroot/pull/520
 [PR #521]: https://github.com/chenxiaolong/avbroot/pull/521
 [PR #523]: https://github.com/chenxiaolong/avbroot/pull/523
+[PR #524]: https://github.com/chenxiaolong/avbroot/pull/524
