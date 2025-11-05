@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.23.2
 
 * Add prebuilt binaries for aarch64 GNU/Linux ([PR #523])
 * Add prebuilt binaries for aarch64 Windows ([PR #524])
