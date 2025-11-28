@@ -982,3 +982,5 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::Interrupted);
     }
 }
+
+pub use UserPosFile;
