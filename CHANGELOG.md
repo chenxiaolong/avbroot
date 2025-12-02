@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.23.3
 
 * Add support for Magisk 30600 ([PR #529])
 * Update dependencies ([PR #530])
