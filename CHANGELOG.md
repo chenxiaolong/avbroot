@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Version 3.23.3
+
+* Add support for Magisk 30600 ([PR #529])
+
 ### Version 3.23.2
 
 * Add prebuilt binaries for aarch64 GNU/Linux ([PR #523])
@@ -633,3 +637,4 @@ Behind-the-scenes changes:
 [PR #521]: https://github.com/chenxiaolong/avbroot/pull/521
 [PR #523]: https://github.com/chenxiaolong/avbroot/pull/523
 [PR #524]: https://github.com/chenxiaolong/avbroot/pull/524
+[PR #529]: https://github.com/chenxiaolong/avbroot/pull/529
