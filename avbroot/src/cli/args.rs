@@ -40,17 +40,12 @@ pub enum Command {
     MagiskInfo(boot::MagiskInfoCli),
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum LogFormat {
+    #[default]
     Short,
     Medium,
     Long,
-}
-
-impl Default for LogFormat {
-    fn default() -> Self {
-        Self::Short
-    }
 }
 
 impl fmt::Display for LogFormat {

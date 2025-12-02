@@ -27,9 +27,10 @@ dlv-list = "0.6.0"
 flate2 = { version = "1.0.29", features = ["zlib-rs"] }
 gf256 = { version = "0.3.0", features = ["rs"] }
 hex = { version = "0.4.3", features = ["serde"] }
-lz4_flex = "0.11.1"
-lzma-rust2 = "0.14.2"
+lz4_flex = "0.12.0"
+lzma-rust2 = "0.15.2"
 memchr = "2.6.0"
+# We can't upgrade to 0.9.0 until rsa updates its dependency.
 num-bigint-dig = "0.8.4"
 num-traits = "0.2.16"
 passterm = "2.0.3"
