@@ -237,7 +237,7 @@ Updates to Android, Magisk, and KernelSU are all done the same way: by patching 
 
 2. If Magisk or KernelSU is being updated, first install their new `.apk`. If you happen to open the app, make sure it **does not** flash the boot image. Cancel the boot image update prompts if needed.
 
-3. Reboot to recovery mode. If the screen is stuck at a `No command` message, press the volume up button once while holding down the power button.
+3. Reboot to recovery mode: `adb reboot recovery`. If the screen is stuck at a `No command` message, press the volume up button once while holding down the power button.
 
 4. Sideload the patched OTA with `adb sideload`.
 
