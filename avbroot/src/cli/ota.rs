@@ -78,6 +78,23 @@ bitflags! {
     }
 }
 
+fn is_zero_sha256(mut size: u64, digest: &[u8]) -> bool {
+    if digest.len() != ring::digest::SHA256_OUTPUT_LEN {
+        return false;
+    }
+
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    while size > 0 {
+        let n = size.min(util::ZEROS.len() as u64);
+        context.update(&util::ZEROS[..n as usize]);
+        size -= n;
+    }
+
+    let zero_digest = context.finish();
+
+    zero_digest.as_ref() == digest
+}
+
 /// Get the images required for patching. If [`RequiredFlags::SYSTEM`] is
 /// specified, then the system image is included. If [`RequiredFlags::ALL_COW`]
 /// is specified, then all images with CoW size estimates are included.
@@ -96,6 +113,18 @@ pub fn get_required_images(
         } else if required_flags.contains(RequiredFlags::SYSTEM) && name == "system" {
             flags |= PartitionFlags::SYSTEM;
         } else if name.starts_with("vbmeta") {
+            let Some(pi) = &partition.new_partition_info else {
+                continue;
+            };
+
+            // Some devices seem to ship with empty unused vbmeta partitions.
+            // Use the SHA-256 checksum to skip them so we don't have to extract
+            // them to check.
+            let size = pi.size();
+            if (4096..=65536).contains(&size) && is_zero_sha256(size, pi.hash()) {
+                continue;
+            }
+
             flags |= PartitionFlags::VBMETA;
         }
 
