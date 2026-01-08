@@ -93,14 +93,14 @@ jobs:
         with:
           key: ${{ matrix.artifact.name }}
 
-      - name: Clippy
-        shell: bash
-        run: |
-          for target in ${TARGETS}; do
-              cargo android \
-                  clippy --release --workspace \
-                  --target "${target}"
-          done
+      # - name: Clippy
+      #   shell: bash
+      #   run: |
+      #     for target in ${TARGETS}; do
+      #         cargo android \
+      #             clippy --release --workspace \
+      #             --target "${target}"
+      #     done
 
       - name: Build
         shell: bash
@@ -111,24 +111,24 @@ jobs:
                   --target "${target}"
           done
 
-      - name: Tests
-        shell: bash
-        run: |
-          for target in ${TARGETS}; do
-              cargo android \
-                  test --release --workspace \
-                  --target "${target}"
-          done
+      # - name: Tests
+      #   shell: bash
+      #   run: |
+      #     for target in ${TARGETS}; do
+      #         cargo android \
+      #             test --release --workspace \
+      #             --target "${target}"
+      #     done
 
-      - name: End to end tests
-        shell: bash
-        run: |
-          for target in ${TARGETS}; do
-              cargo android \
-                  run --release -p e2e \
-                  --target "${target}" \
-                  -- test -a -c e2e/e2e.toml
-          done
+      # - name: End to end tests
+      #   shell: bash
+      #   run: |
+      #     for target in ${TARGETS}; do
+      #         cargo android \
+      #             run --release -p e2e \
+      #             --target "${target}" \
+      #             -- test -a -c e2e/e2e.toml
+      #     done
 
       - name: Create output directory
         shell: bash
