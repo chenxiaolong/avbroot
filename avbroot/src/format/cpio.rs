@@ -775,8 +775,8 @@ pub fn assign_inodes(entries: &mut [CpioEntry], missing_only: bool) -> Result<()
     // (dev maj, dev min) -> (inode set, last assigned inode)
     let mut inodes: HashMap<(u32, u32), (HashSet<u32>, u32)> = HashMap::new();
 
-    if missing_only {
-        for entry in &mut *entries {
+    for entry in &mut *entries {
+        if missing_only {
             if entry.inode != 0 {
                 let key = (entry.dev_maj, entry.dev_min);
                 let (set, last) = inodes.entry(key).or_default();
@@ -784,6 +784,8 @@ pub fn assign_inodes(entries: &mut [CpioEntry], missing_only: bool) -> Result<()
                 set.insert(entry.inode);
                 *last = (*last).max(entry.inode);
             }
+        } else {
+            entry.inode = 0;
         }
     }
 
@@ -834,4 +836,57 @@ pub fn save(
     cpio_writer.finish()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_assign_inodes_missing() {
+        let mut entries = [
+            CpioEntry::new_directory(b"a", 0o755),
+            CpioEntry::new_directory(b"b", 0o755),
+            CpioEntry::new_directory(b"c", 0o755),
+            CpioEntry::new_directory(b"d", 0o755),
+            CpioEntry::new_directory(b"e", 0o755),
+        ];
+        entries[0].inode = 999;
+        entries[2].inode = 500;
+        entries[3].dev_maj = 1;
+        entries[3].dev_min = 1;
+
+        assign_inodes(&mut entries, true).unwrap();
+
+        assert_eq!(entries[0].inode, 999);
+        assert_eq!(entries[1].inode, 1000);
+        assert_eq!(entries[2].inode, 500);
+        assert_eq!(entries[3].inode, 300000);
+        assert_eq!(entries[4].inode, 1001);
+    }
+
+    #[test]
+    fn test_assign_inodes_reassign() {
+        let mut entries = [
+            CpioEntry::new_directory(b"a", 0o755),
+            CpioEntry::new_directory(b"b", 0o755),
+            CpioEntry::new_directory(b"c", 0o755),
+            CpioEntry::new_directory(b"d", 0o755),
+            CpioEntry::new_directory(b"e", 0o755),
+        ];
+        entries[0].dev_maj = 1;
+        entries[0].dev_min = 1;
+        entries[0].inode = 1000;
+        entries[1].inode = 1000;
+        entries[2].inode = 500;
+        entries[3].dev_maj = 1;
+        entries[3].dev_min = 1;
+
+        assign_inodes(&mut entries, false).unwrap();
+
+        assert_eq!(entries[0].inode, 300000);
+        assert_eq!(entries[1].inode, 300000);
+        assert_eq!(entries[2].inode, 300001);
+        assert_eq!(entries[3].inode, 300001);
+    }
 }

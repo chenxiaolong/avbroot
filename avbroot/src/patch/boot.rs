@@ -139,10 +139,13 @@ fn load_ramdisk(
 }
 
 fn save_ramdisk(
-    entries: &[CpioEntry],
+    entries: &mut [CpioEntry],
     format: CompressedFormat,
     cancel_signal: &AtomicBool,
 ) -> Result<Vec<u8>> {
+    cpio::sort(entries);
+    cpio::assign_inodes(entries, false).map_err(Error::RamdiskSaveCpio)?;
+
     let raw_writer = Cursor::new(vec![]);
     let mut writer =
         CompressedWriter::new(raw_writer, format).map_err(Error::RamdiskSaveCompression)?;
@@ -619,9 +622,7 @@ impl BootImagePatch for MagiskRootPatcher {
         ));
 
         // Repack ramdisk.
-        cpio::sort(&mut entries);
-        cpio::assign_inodes(&mut entries, false).map_err(Error::RamdiskSaveCpio)?;
-        let new_ramdisk = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
+        let new_ramdisk = save_ramdisk(&mut entries, ramdisk_format, cancel_signal)?;
 
         match boot_image {
             BootImage::V0Through2(b) => b.ramdisk = new_ramdisk,
@@ -732,7 +733,7 @@ impl OtaCertPatcher {
         entry.data = CpioEntryData::Data(zip.to_vec());
 
         // Repack ramdisk.
-        *ramdisk = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
+        *ramdisk = save_ramdisk(&mut entries, ramdisk_format, cancel_signal)?;
 
         Ok(true)
     }
@@ -843,7 +844,7 @@ impl DsuPubKeyPatcher {
             entries.push(CpioEntry::new_file(Self::AVBROOT_KEY_PATH, 0o644, data));
         }
 
-        *ramdisk = save_ramdisk(&entries, ramdisk_format, cancel_signal)?;
+        *ramdisk = save_ramdisk(&mut entries, ramdisk_format, cancel_signal)?;
 
         Ok(true)
     }
