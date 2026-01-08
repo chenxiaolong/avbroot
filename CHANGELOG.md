@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Always sort ramdisk cpio entries and ensure they have inode numbers assigned ([PR #540])
+* Relax LP image parser's validation to allow parsing the `/metadata/gsi/dsu/dsu/lp_metadata` image used by DSU ([PR #541])
 
 ### Version 3.23.3
 
@@ -645,3 +646,4 @@ Behind-the-scenes changes:
 [PR #529]: https://github.com/chenxiaolong/avbroot/pull/529
 [PR #530]: https://github.com/chenxiaolong/avbroot/pull/530
 [PR #540]: https://github.com/chenxiaolong/avbroot/pull/540
+[PR #541]: https://github.com/chenxiaolong/avbroot/pull/541
