@@ -54,7 +54,7 @@ const PARTITION_RESERVED_BYTES: u32 = 4096;
 
 /// Maximum allowed size of [`RawGeometry::metadata_max_size`] to prevent the
 /// memory usage from blowing up.
-const METADATA_MAX_SIZE: u32 = 128 * 1024;
+const METADATA_MAX_SIZE: u32 = 512 * 1024;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -118,8 +118,6 @@ pub enum Error {
     },
     #[error("Partition {name:?}: Extent indices too large")]
     PartitionExtentIndicesTooLarge { name: DebugString },
-    #[error("Partition {name:?}: Extent indices set on empty image")]
-    PartitionExtentIndicesEmptyImage { name: DebugString },
     #[error("Partition {name:?}: Extent index too large")]
     PartitionExtentIndexTooLarge { name: DebugString },
     #[error("Partition {name:?}: Extent count too large")]
@@ -695,26 +693,16 @@ impl RawPartition {
             });
         }
 
-        match image_type {
-            ImageType::Normal => {
-                if self
-                    .first_extent_index
-                    .get()
-                    .checked_add(self.num_extents.get())
-                    .is_none_or(|n| n as usize > extents.len())
-                {
-                    return Err(Error::PartitionExtentIndicesTooLarge {
-                        name: DebugString::new(self.name),
-                    });
-                }
-            }
-            ImageType::Empty => {
-                if self.first_extent_index.get() != 0 || self.num_extents.get() != 0 {
-                    return Err(Error::PartitionExtentIndicesEmptyImage {
-                        name: DebugString::new(self.name),
-                    });
-                }
-            }
+        if image_type == ImageType::Normal
+            && self
+                .first_extent_index
+                .get()
+                .checked_add(self.num_extents.get())
+                .is_none_or(|n| n as usize > extents.len())
+        {
+            return Err(Error::PartitionExtentIndicesTooLarge {
+                name: DebugString::new(self.name),
+            });
         }
 
         if self.group_index.get() as usize >= groups.len() {
