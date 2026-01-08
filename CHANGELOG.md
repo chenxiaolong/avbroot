@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Always sort ramdisk cpio entries and ensure they have inode numbers assigned ([PR #540])
+
 ### Version 3.23.3
 
 * Add support for Magisk 30600 ([PR #529])
@@ -640,3 +644,4 @@ Behind-the-scenes changes:
 [PR #524]: https://github.com/chenxiaolong/avbroot/pull/524
 [PR #529]: https://github.com/chenxiaolong/avbroot/pull/529
 [PR #530]: https://github.com/chenxiaolong/avbroot/pull/530
+[PR #540]: https://github.com/chenxiaolong/avbroot/pull/540
