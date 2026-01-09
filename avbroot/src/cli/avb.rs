@@ -78,7 +78,7 @@ fn write_avb_image(file: &File, info: &mut AvbInfo, recompute_size: bool) -> Res
 fn read_info(path: &Path) -> Result<AvbInfo> {
     let data = fs::read_to_string(path)
         .with_context(|| format!("Failed to read AVB info TOML: {path:?}"))?;
-    let info = toml_edit::de::from_str(&data)
+    let info = toml::de::from_str(&data)
         .with_context(|| format!("Failed to parse AVB info TOML: {path:?}"))?;
 
     Ok(info)
@@ -86,7 +86,7 @@ fn read_info(path: &Path) -> Result<AvbInfo> {
 
 /// Write AVB information to TOML file.
 fn write_info(path: &Path, info: &AvbInfo) -> Result<()> {
-    let data = toml_edit::ser::to_string_pretty(info)
+    let data = toml::ser::to_string_pretty(info)
         .with_context(|| format!("Failed to serialize AVB info TOML: {path:?}"))?;
     fs::write(path, data).with_context(|| format!("Failed to write AVB info TOML: {path:?}"))?;
 

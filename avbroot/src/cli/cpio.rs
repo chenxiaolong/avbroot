@@ -73,7 +73,7 @@ fn flush_writer(writer: CpioWriter<CompressedWriter<BufWriter<File>>>) -> Result
 fn read_info(path: &Path) -> Result<CpioInfo> {
     let data = fs::read_to_string(path)
         .with_context(|| format!("Failed to read cpio info TOML: {path:?}"))?;
-    let info = toml_edit::de::from_str(&data)
+    let info = toml::de::from_str(&data)
         .with_context(|| format!("Failed to parse cpio info TOML: {path:?}"))?;
 
     Ok(info)
@@ -81,7 +81,7 @@ fn read_info(path: &Path) -> Result<CpioInfo> {
 
 /// Write cpio information to TOML file.
 fn write_info(path: &Path, info: &CpioInfo) -> Result<()> {
-    let data = toml_edit::ser::to_string_pretty(info)
+    let data = toml::ser::to_string_pretty(info)
         .with_context(|| format!("Failed to serialize cpio info TOML: {path:?}"))?;
     fs::write(path, data).with_context(|| format!("Failed to write cpio info TOML: {path:?}"))?;
 

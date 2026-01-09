@@ -50,14 +50,14 @@ fn open_lp_outputs(paths: &[impl AsRef<Path>]) -> Result<Vec<File>> {
 fn read_info(path: &Path) -> Result<Metadata> {
     let data = fs::read_to_string(path)
         .with_context(|| format!("Failed to read metadata info TOML: {path:?}"))?;
-    let info = toml_edit::de::from_str(&data)
+    let info = toml::de::from_str(&data)
         .with_context(|| format!("Failed to parse metadata info TOML: {path:?}"))?;
 
     Ok(info)
 }
 
 fn write_info(path: &Path, metadata: &Metadata) -> Result<()> {
-    let data = toml_edit::ser::to_string_pretty(metadata)
+    let data = toml::ser::to_string_pretty(metadata)
         .with_context(|| format!("Failed to serialize metadata info TOML: {path:?}"))?;
     fs::write(path, data)
         .with_context(|| format!("Failed to write metadata info TOML: {path:?}"))?;

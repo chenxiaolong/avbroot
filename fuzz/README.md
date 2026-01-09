@@ -10,7 +10,13 @@ While avbroot's parsers are all memory-safe, it is still possible for panics or 
     cargo install honggfuzz
     ```
 
-2. Pick a fuzz target to run. A fuzz target is the name of the source file in [`src/bin/`](./src/bin) without the `.rs` extension.
+2. [Optional] Generate sample files to use as the initial fuzzing corpus.
+
+    ```bash
+    ./corpus/build.sh
+    ```
+
+3. Pick a fuzz target to run. A fuzz target is the name of the source file in [`src/bin/`](./src/bin) without the `.rs` extension.
 
     The list of targets can be queried programmatically with:
 
@@ -18,7 +24,7 @@ While avbroot's parsers are all memory-safe, it is still possible for panics or 
     cargo read-manifest | jq -r '.targets[].name'
     ```
 
-3. Run the fuzzer.
+4. Run the fuzzer.
 
     ```bash
     cargo hfuzz run <fuzz target>
@@ -41,7 +47,7 @@ While avbroot's parsers are all memory-safe, it is still possible for panics or 
 
     When a crash occurs, the `Crashes` counter will increment and the input data that triggered the crash will be written to `hfuzz_workspace/<fuzz target>/*.fuzz`. New files are only written for unique crashes.
 
-4. If a crash occurs, run the following command to trigger the crash in a debugger.
+5. If a crash occurs, run the following command to trigger the crash in a debugger.
 
     ```bash
     cargo hfuzz run-debug <fuzz target> \

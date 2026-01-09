@@ -52,14 +52,14 @@ fn open_writer(
 fn read_info(path: &Path) -> Result<PayloadHeader> {
     let data = fs::read_to_string(path)
         .with_context(|| format!("Failed to read payload info TOML: {path:?}"))?;
-    let info = toml_edit::de::from_str(&data)
+    let info = toml::de::from_str(&data)
         .with_context(|| format!("Failed to parse payload info TOML: {path:?}"))?;
 
     Ok(info)
 }
 
 fn write_info(path: &Path, manifest: &PayloadHeader) -> Result<()> {
-    let data = toml_edit::ser::to_string_pretty(manifest)
+    let data = toml::ser::to_string_pretty(manifest)
         .with_context(|| format!("Failed to serialize payload info TOML: {path:?}"))?;
     fs::write(path, data)
         .with_context(|| format!("Failed to write payload info TOML: {path:?}"))?;

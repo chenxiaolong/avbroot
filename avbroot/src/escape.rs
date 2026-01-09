@@ -151,11 +151,11 @@ mod tests {
         contents.extend("💩".as_bytes());
 
         let data = TestData { contents };
-        let serialized = toml_edit::ser::to_string(&data).unwrap();
+        let serialized = toml::ser::to_string(&data).unwrap();
 
         assert_eq!(serialized, "contents = 'foo\\xFFbar💩'\n");
 
-        let new_data: TestData = toml_edit::de::from_str(&serialized).unwrap();
+        let new_data: TestData = toml::de::from_str(&serialized).unwrap();
         assert_eq!(data.contents, new_data.contents);
     }
 }

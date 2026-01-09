@@ -1,4 +1,5 @@
 /hfuzz_target/
+/hfuzz_workspace/
 HONGGFUZZ.REPORT.TXT
 *.honggfuzz.cov
 *.fuzz

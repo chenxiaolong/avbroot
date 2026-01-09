@@ -41,14 +41,14 @@ fn write_image(path: &Path, image: &BootImage) -> Result<()> {
 fn read_header(path: &Path) -> Result<BootImage> {
     let data = fs::read_to_string(path)
         .with_context(|| format!("Failed to read header TOML: {path:?}"))?;
-    let image = toml_edit::de::from_str(&data)
+    let image = toml::de::from_str(&data)
         .with_context(|| format!("Failed to parse header TOML: {path:?}"))?;
 
     Ok(image)
 }
 
 fn write_header(path: &Path, image: &BootImage) -> Result<()> {
-    let data = toml_edit::ser::to_string_pretty(image)
+    let data = toml::ser::to_string_pretty(image)
         .with_context(|| format!("Failed to serialize header TOML: {path:?}"))?;
     fs::write(path, data).with_context(|| format!("Failed to write header TOML: {path:?}"))?;
 

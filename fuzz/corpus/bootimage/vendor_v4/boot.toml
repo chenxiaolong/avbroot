@@ -1,0 +1,96 @@
+type = "VendorV3Through4"
+page_size = 2048
+kernel_addr = 19088743
+ramdisk_addr = 2309737967
+cmdline = "CmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdlineCmdl"
+tags_addr = 4275878552
+name = "NameNameNameName"
+dtb_addr = 1985229328
+
+[[v4_extra.ramdisk_metas]]
+ramdisk_type = 0
+ramdisk_name = "NoneNoneNoneNoneNoneNoneNoneNone"
+board_id = [
+    1122867,
+    1146447479,
+    2291772091,
+    3437096703,
+    4293844428,
+    3148519816,
+    2003195204,
+    857870592,
+    4491468,
+    290822621,
+    577153774,
+    863484927,
+    4290475827,
+    4004144674,
+    3717813521,
+    3431482368,
+]
+
+[[v4_extra.ramdisk_metas]]
+ramdisk_type = 1
+ramdisk_name = "PlatformPlatformPlatformPlatform"
+board_id = [
+    1122867,
+    1146447479,
+    2291772091,
+    3437096703,
+    4293844428,
+    3148519816,
+    2003195204,
+    857870592,
+    4491468,
+    290822621,
+    577153774,
+    863484927,
+    4290475827,
+    4004144674,
+    3717813521,
+    3431482368,
+]
+
+[[v4_extra.ramdisk_metas]]
+ramdisk_type = 2
+ramdisk_name = "RecoveryRecoveryRecoveryRecovery"
+board_id = [
+    1122867,
+    1146447479,
+    2291772091,
+    3437096703,
+    4293844428,
+    3148519816,
+    2003195204,
+    857870592,
+    4491468,
+    290822621,
+    577153774,
+    863484927,
+    4290475827,
+    4004144674,
+    3717813521,
+    3431482368,
+]
+
+[[v4_extra.ramdisk_metas]]
+ramdisk_type = 3
+ramdisk_name = "DlkmDlkmDlkmDlkmDlkmDlkmDlkmDlkm"
+board_id = [
+    1122867,
+    1146447479,
+    2291772091,
+    3437096703,
+    4293844428,
+    3148519816,
+    2003195204,
+    857870592,
+    4491468,
+    290822621,
+    577153774,
+    863484927,
+    4290475827,
+    4004144674,
+    3717813521,
+    3431482368,
+]

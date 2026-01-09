@@ -1,0 +1,80 @@
+image_type = "Empty"
+metadata_max_size = 65536
+metadata_slot_count = 3
+logical_block_size = 4096
+
+[[slots]]
+major_version = 10
+minor_version = 2
+flags = "VIRTUAL_AB_DEVICE"
+
+[[slots.groups]]
+name = "default"
+flags = ""
+partitions = []
+
+[[slots.groups]]
+name = "google_dynamic_partitions_a"
+flags = ""
+maximum_size = 8527020032
+
+[[slots.groups.partitions]]
+name = "system_a"
+attributes = "READONLY"
+
+[[slots.groups.partitions]]
+name = "system_dlkm_a"
+attributes = "READONLY"
+
+[[slots.groups.partitions]]
+name = "system_ext_a"
+attributes = "READONLY"
+
+[[slots.groups.partitions]]
+name = "product_a"
+attributes = "READONLY"
+
+[[slots.groups.partitions]]
+name = "vendor_a"
+attributes = "READONLY"
+
+[[slots.groups.partitions]]
+name = "vendor_dlkm_a"
+attributes = "READONLY"
+
+[[slots.groups]]
+name = "google_dynamic_partitions_b"
+flags = ""
+maximum_size = 8527020032
+
+[[slots.groups.partitions]]
+name = "system_b"
+attributes = "READONLY"
+
+[[slots.groups.partitions]]
+name = "system_dlkm_b"
+attributes = "READONLY"
+
+[[slots.groups.partitions]]
+name = "system_ext_b"
+attributes = "READONLY"
+
+[[slots.groups.partitions]]
+name = "product_b"
+attributes = "READONLY"
+
+[[slots.groups.partitions]]
+name = "vendor_b"
+attributes = "READONLY"
+
+[[slots.groups.partitions]]
+name = "vendor_dlkm_b"
+attributes = "READONLY"
+
+[[slots.block_devices]]
+first_logical_sector = 2048
+alignment = 1048576
+alignment_offset = 0
+size = 8531214336
+partition_name = "super"
+flags = ""

@@ -1,0 +1,35 @@
+format = "None"
+
+[[entries]]
+path = "symlink"
+data = "target"
+file_type = "Symlink"
+file_mode = "777"
+nlink = 1
+
+[[entries]]
+path = "directory"
+file_type = "Directory"
+file_mode = "755"
+nlink = 1
+
+[[entries]]
+path = "file"
+file_type = "Regular"
+file_mode = "644"
+nlink = 1
+
+[[entries]]
+path = "reserved"
+inode = 12345
+file_type = "Reserved"
+file_mode = "4777"
+uid = 12345678
+gid = 87654321
+nlink = 2
+mtime = 1700000000
+dev_maj = 2222
+dev_min = 3333
+rdev_maj = 4444
+rdev_min = 5555
+crc32 = 4275878409
