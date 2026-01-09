@@ -2066,10 +2066,10 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         }
     }
 
-    let boot_images = boot::load_boot_images(&boot_image_names, &Opener(temp_dir.path()))
+    let (boot_images, layout) = boot::load_boot_images(&boot_image_names, &Opener(temp_dir.path()))
         .context("Failed to load all boot images")?;
     let targets = OtaCertPatcher::new(ota_cert.clone())
-        .find_targets(&boot_images, cancel_signal)
+        .find_targets(layout, &boot_images, cancel_signal)
         .context("Failed to find boot image containing otacerts.zip")?;
 
     if targets.is_empty() {

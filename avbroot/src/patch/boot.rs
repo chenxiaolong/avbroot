@@ -159,6 +159,12 @@ fn save_ramdisk(
     Ok(raw_writer.into_inner())
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct BootLayoutInfo {
+    pub has_recovery: bool,
+}
+
+#[derive(Clone, Eq, PartialEq)]
 pub struct BootImageInfo {
     pub header: Header,
     pub footer: Footer,
@@ -174,11 +180,17 @@ pub trait BootImagePatch {
     /// can be inspected, but during patching, only the boot image is available.
     fn find_targets<'a>(
         &self,
+        layout: BootLayoutInfo,
         boot_images: &HashMap<&'a str, BootImageInfo>,
         cancel_signal: &AtomicBool,
     ) -> TargetsResult<Vec<&'a str>>;
 
-    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()>;
+    fn patch(
+        &self,
+        layout: BootLayoutInfo,
+        boot_image: &mut BootImage,
+        cancel_signal: &AtomicBool,
+    ) -> Result<()>;
 }
 
 /// Root a boot image with Magisk.
@@ -440,6 +452,7 @@ impl BootImagePatch for MagiskRootPatcher {
 
     fn find_targets<'a>(
         &self,
+        _layout: BootLayoutInfo,
         boot_images: &HashMap<&'a str, BootImageInfo>,
         _cancel_signal: &AtomicBool,
     ) -> TargetsResult<Vec<&'a str>> {
@@ -454,7 +467,12 @@ impl BootImagePatch for MagiskRootPatcher {
         Ok(targets)
     }
 
-    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
+    fn patch(
+        &self,
+        _layout: BootLayoutInfo,
+        boot_image: &mut BootImage,
+        cancel_signal: &AtomicBool,
+    ) -> Result<()> {
         // Load the first ramdisk. If it doesn't exist, we have to generate one
         // from scratch.
         let ramdisk = match boot_image {
@@ -746,6 +764,7 @@ impl BootImagePatch for OtaCertPatcher {
 
     fn find_targets<'a>(
         &self,
+        _layout: BootLayoutInfo,
         boot_images: &HashMap<&'a str, BootImageInfo>,
         cancel_signal: &AtomicBool,
     ) -> TargetsResult<Vec<&'a str>> {
@@ -778,7 +797,12 @@ impl BootImagePatch for OtaCertPatcher {
         Ok(targets)
     }
 
-    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
+    fn patch(
+        &self,
+        _layout: BootLayoutInfo,
+        boot_image: &mut BootImage,
+        cancel_signal: &AtomicBool,
+    ) -> Result<()> {
         let ramdisks = match boot_image {
             BootImage::V0Through2(b) => slice::from_mut(&mut b.ramdisk),
             BootImage::V3Through4(b) => slice::from_mut(&mut b.ramdisk),
@@ -817,31 +841,46 @@ impl DsuPubKeyPatcher {
     const FIRST_STAGE_PATH: &'static [u8] = b"first_stage_ramdisk";
     const DSU_KEYS_PATH: &'static [u8] = b"first_stage_ramdisk/avb";
     const AVBROOT_KEY_PATH: &'static [u8] = b"first_stage_ramdisk/avb/avbroot.avbpubkey";
+    const RECOVERY_DSU_KEYS_PATH: &'static [u8] = b"avb";
+    const RECOVERY_AVBROOT_KEY_PATH: &'static [u8] = b"avb/avbroot.avbpubkey";
 
     pub fn new(key: RsaPublicKey) -> Self {
         Self { key }
     }
 
-    fn patch_ramdisk(&self, ramdisk: &mut Vec<u8>, cancel_signal: &AtomicBool) -> Result<bool> {
+    fn patch_ramdisk(
+        &self,
+        layout: BootLayoutInfo,
+        ramdisk: &mut Vec<u8>,
+        cancel_signal: &AtomicBool,
+    ) -> Result<bool> {
         let (mut entries, ramdisk_format) = load_ramdisk(ramdisk, cancel_signal)?;
         if !entries.iter_mut().any(|e| e.path == Self::FIRST_STAGE_PATH) {
             return Ok(false);
         }
 
-        if !entries.iter().any(|e| e.path == Self::DSU_KEYS_PATH) {
-            entries.push(CpioEntry::new_directory(Self::DSU_KEYS_PATH, 0o755));
+        let (dsu_keys_path, avbroot_key_path) = if layout.has_recovery {
+            (
+                Self::RECOVERY_DSU_KEYS_PATH,
+                Self::RECOVERY_AVBROOT_KEY_PATH,
+            )
+        } else {
+            (Self::DSU_KEYS_PATH, Self::AVBROOT_KEY_PATH)
+        };
+
+        debug!("DSU key path: {:?}", avbroot_key_path.as_bstr());
+
+        if !entries.iter().any(|e| e.path == dsu_keys_path) {
+            entries.push(CpioEntry::new_directory(dsu_keys_path, 0o755));
         }
 
         let binary_key = avb::encode_public_key(&self.key).map_err(Error::AvbEncodeKey)?;
         let data = CpioEntryData::Data(binary_key);
 
-        if let Some(e) = entries
-            .iter_mut()
-            .find(|e| e.path == Self::AVBROOT_KEY_PATH)
-        {
+        if let Some(e) = entries.iter_mut().find(|e| e.path == avbroot_key_path) {
             e.data = data;
         } else {
-            entries.push(CpioEntry::new_file(Self::AVBROOT_KEY_PATH, 0o644, data));
+            entries.push(CpioEntry::new_file(avbroot_key_path, 0o644, data));
         }
 
         *ramdisk = save_ramdisk(&mut entries, ramdisk_format, cancel_signal)?;
@@ -857,6 +896,7 @@ impl BootImagePatch for DsuPubKeyPatcher {
 
     fn find_targets<'a>(
         &self,
+        layout: BootLayoutInfo,
         boot_images: &HashMap<&'a str, BootImageInfo>,
         cancel_signal: &AtomicBool,
     ) -> TargetsResult<Vec<&'a str>> {
@@ -870,6 +910,12 @@ impl BootImagePatch for DsuPubKeyPatcher {
                 BootImage::VendorV3Through4(b) => &b.ramdisks,
             };
 
+            let dsu_keys_path = if layout.has_recovery {
+                Self::RECOVERY_DSU_KEYS_PATH
+            } else {
+                Self::DSU_KEYS_PATH
+            };
+
             for ramdisk in ramdisks {
                 if ramdisk.is_empty() {
                     continue;
@@ -880,10 +926,12 @@ impl BootImagePatch for DsuPubKeyPatcher {
                 let mut found = false;
 
                 for entry in entries {
-                    if entry.path == Self::DSU_KEYS_PATH {
+                    if entry.path == dsu_keys_path {
                         dsu_keys_targets.push(name);
                         found = true;
                     } else if entry.path == Self::FIRST_STAGE_PATH {
+                        // This exists even on devices with recovery partitions.
+                        // init just doesn't switch root to it.
                         first_stage_targets.push(name);
                         found = true;
                     }
@@ -917,7 +965,12 @@ impl BootImagePatch for DsuPubKeyPatcher {
         }
     }
 
-    fn patch(&self, boot_image: &mut BootImage, cancel_signal: &AtomicBool) -> Result<()> {
+    fn patch(
+        &self,
+        layout: BootLayoutInfo,
+        boot_image: &mut BootImage,
+        cancel_signal: &AtomicBool,
+    ) -> Result<()> {
         let ramdisks = match boot_image {
             BootImage::V0Through2(b) => slice::from_mut(&mut b.ramdisk),
             BootImage::V3Through4(b) => slice::from_mut(&mut b.ramdisk),
@@ -929,7 +982,7 @@ impl BootImagePatch for DsuPubKeyPatcher {
                 continue;
             }
 
-            if self.patch_ramdisk(ramdisk, cancel_signal)? {
+            if self.patch_ramdisk(layout, ramdisk, cancel_signal)? {
                 return Ok(());
             }
         }
@@ -1014,6 +1067,7 @@ impl BootImagePatch for PrepatchedImagePatcher {
 
     fn find_targets<'a>(
         &self,
+        _layout: BootLayoutInfo,
         boot_images: &HashMap<&'a str, BootImageInfo>,
         _cancel_signal: &AtomicBool,
     ) -> TargetsResult<Vec<&'a str>> {
@@ -1038,7 +1092,12 @@ impl BootImagePatch for PrepatchedImagePatcher {
         Ok(targets)
     }
 
-    fn patch(&self, boot_image: &mut BootImage, _cancel_signal: &AtomicBool) -> Result<()> {
+    fn patch(
+        &self,
+        _layout: BootLayoutInfo,
+        boot_image: &mut BootImage,
+        _cancel_signal: &AtomicBool,
+    ) -> Result<()> {
         let prepatched_image = self.load_prepatched_image()?;
 
         // Level 0: Warnings that don't affect booting
@@ -1287,10 +1346,10 @@ pub trait BootImageOpener {
 pub fn load_boot_images<'a>(
     names: &[&'a str],
     opener: &(dyn BootImageOpener + Sync),
-) -> TargetsResult<HashMap<&'a str, BootImageInfo>> {
+) -> TargetsResult<(HashMap<&'a str, BootImageInfo>, BootLayoutInfo)> {
     let parent_span = Span::current();
 
-    names
+    let images = names
         .par_iter()
         .map(|&name| {
             let _span = debug_span!(parent: &parent_span, "image", name).entered();
@@ -1303,7 +1362,13 @@ pub fn load_boot_images<'a>(
 
             Ok((name, info))
         })
-        .collect()
+        .collect::<TargetsResult<HashMap<_, _>>>()?;
+
+    let layout = BootLayoutInfo {
+        has_recovery: images.contains_key("recovery"),
+    };
+
+    Ok((images, layout))
 }
 
 /// Apply applicable patches to the list of specified boot images. For each
@@ -1326,7 +1391,7 @@ pub fn patch_boot_images<'a>(
     }
 
     // Preparse all images. Some patchers need to inspect every candidate.
-    let mut images = load_boot_images(names, opener)?;
+    let (mut images, layout) = load_boot_images(names, opener)?;
 
     // Find the targets that each patcher wants to patch.
     let all_targets = patchers
@@ -1334,14 +1399,15 @@ pub fn patch_boot_images<'a>(
         .map(|p| {
             let _span =
                 debug_span!(parent: &parent_span, "patcher", name = p.patcher_name()).entered();
-            p.find_targets(&images, cancel_signal).and_then(|targets| {
-                if targets.is_empty() {
-                    Err(TargetsError::NoTargets(p.patcher_name()))
-                } else {
-                    debug!("Found patcher targets: {targets:?}");
-                    Ok(targets)
-                }
-            })
+            p.find_targets(layout, &images, cancel_signal)
+                .and_then(|targets| {
+                    if targets.is_empty() {
+                        Err(TargetsError::NoTargets(p.patcher_name()))
+                    } else {
+                        debug!("Found patcher targets: {targets:?}");
+                        Ok(targets)
+                    }
+                })
         })
         .collect::<TargetsResult<Vec<_>>>()?;
 
@@ -1368,8 +1434,8 @@ pub fn patch_boot_images<'a>(
         .try_for_each(|(&name, (info, patchers))| -> TargetsResult<()> {
             patchers.iter().try_for_each(|p| {
                 let _span =
-                    debug_span!(parent: &parent_span, "patcher", name = p.patcher_name()).entered();
-                p.patch(&mut info.boot_image, cancel_signal)
+                    debug_span!(parent: &parent_span, "patcher", name = p.patcher_name(), image = name).entered();
+                p.patch(layout, &mut info.boot_image, cancel_signal)
                     .map_err(|e| TargetsError::Patch(name.to_owned(), e))
             })
         })?;
