@@ -672,7 +672,6 @@ impl RawPartition {
     /// [`RawPartitionGroup::validate`] do not.
     fn validate(
         &self,
-        image_type: ImageType,
         header: &RawHeader,
         extents: &[RawExtent],
         groups: &[RawPartitionGroup],
@@ -693,12 +692,11 @@ impl RawPartition {
             });
         }
 
-        if image_type == ImageType::Normal
-            && self
-                .first_extent_index
-                .get()
-                .checked_add(self.num_extents.get())
-                .is_none_or(|n| n as usize > extents.len())
+        if self
+            .first_extent_index
+            .get()
+            .checked_add(self.num_extents.get())
+            .is_none_or(|n| n as usize > extents.len())
         {
             return Err(Error::PartitionExtentIndicesTooLarge {
                 name: DebugString::new(self.name),
@@ -959,7 +957,7 @@ struct RawMetadataSlot {
 impl RawMetadataSlot {
     /// Ensure that all fields are semantically valid and can be used without
     /// further checks.
-    fn validate(&self, image_type: ImageType, geometry: &RawGeometry) -> Result<()> {
+    fn validate(&self, geometry: &RawGeometry) -> Result<()> {
         self.header.validate(geometry)?;
 
         for (len, descriptor, name) in [
@@ -1020,7 +1018,7 @@ impl RawMetadataSlot {
         }
 
         for partition in &self.partitions {
-            partition.validate(image_type, &self.header, &self.extents, &self.groups)?;
+            partition.validate(&self.header, &self.extents, &self.groups)?;
         }
 
         for (i, group) in self.groups.iter().enumerate() {
@@ -1099,11 +1097,7 @@ impl RawMetadata {
     /// Read a single [`RawMetadataSlot`], including the header and all tables.
     /// This does not read the extra padding between the end of the last table
     /// and [`RawGeometry::metadata_max_size`].
-    fn read_metadata(
-        mut reader: impl Read,
-        image_type: ImageType,
-        geometry: &RawGeometry,
-    ) -> Result<RawMetadataSlot> {
+    fn read_metadata(mut reader: impl Read, geometry: &RawGeometry) -> Result<RawMetadataSlot> {
         let mut header = RawHeader::new_zeroed();
 
         reader
@@ -1143,7 +1137,7 @@ impl RawMetadata {
             block_devices: block_devices.to_vec(),
         };
 
-        slot.validate(image_type, geometry)?;
+        slot.validate(geometry)?;
 
         Ok(slot)
     }
@@ -1182,7 +1176,7 @@ impl RawMetadata {
                 }
             }
 
-            slot.validate(self.image_type, &self.geometry)?;
+            slot.validate(&self.geometry)?;
         }
 
         Ok(())
@@ -1217,7 +1211,7 @@ impl<R: Read> FromReader<R> for RawMetadata {
                         .stream_position()
                         .map_err(|e| Error::DataRead("orig_offset", e))?;
 
-                    match Self::read_metadata(&mut reader, image_type, &geometry) {
+                    match Self::read_metadata(&mut reader, &geometry) {
                         Ok(m) => *slot = Some(m),
                         Err(e @ Error::DataRead(_, _)) => return Err(e),
                         Err(e) => last_err = Some(e),
