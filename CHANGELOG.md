@@ -14,6 +14,7 @@
 * Add support for devices with separate recovery partitions when using `--dsu` ([Issue #536], [PR #543])
 * Fix broken symlinks in fuzzing corpus ([Issue #532], [PR #544])
 * Ignore unused vbmeta partitions that are filled with zeros ([Issue #537], [PR #539])
+* Update dependencies ([PR #547])
 
 ### Version 3.23.3
 
@@ -657,3 +658,4 @@ Behind-the-scenes changes:
 [PR #543]: https://github.com/chenxiaolong/avbroot/pull/543
 [PR #544]: https://github.com/chenxiaolong/avbroot/pull/544
 [PR #545]: https://github.com/chenxiaolong/avbroot/pull/545
+[PR #547]: https://github.com/chenxiaolong/avbroot/pull/547
