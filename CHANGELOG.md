@@ -13,6 +13,7 @@
 * Relax LP image parser's validation to allow parsing the `/metadata/gsi/dsu/dsu/lp_metadata` image used by DSU ([PR #541], [PR #545])
 * Add support for devices with separate recovery partitions when using `--dsu` ([Issue #536], [PR #543])
 * Fix broken symlinks in fuzzing corpus ([Issue #532], [PR #544])
+* Ignore unused vbmeta partitions that are filled with zeros ([Issue #537], [PR #539])
 
 ### Version 3.23.3
 
@@ -444,6 +445,7 @@ Behind-the-scenes changes:
 [Issue #493]: https://github.com/chenxiaolong/avbroot/issues/493
 [Issue #532]: https://github.com/chenxiaolong/avbroot/issues/532
 [Issue #536]: https://github.com/chenxiaolong/avbroot/issues/536
+[Issue #537]: https://github.com/chenxiaolong/avbroot/issues/537
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -649,6 +651,7 @@ Behind-the-scenes changes:
 [PR #524]: https://github.com/chenxiaolong/avbroot/pull/524
 [PR #529]: https://github.com/chenxiaolong/avbroot/pull/529
 [PR #530]: https://github.com/chenxiaolong/avbroot/pull/530
+[PR #539]: https://github.com/chenxiaolong/avbroot/pull/539
 [PR #540]: https://github.com/chenxiaolong/avbroot/pull/540
 [PR #541]: https://github.com/chenxiaolong/avbroot/pull/541
 [PR #543]: https://github.com/chenxiaolong/avbroot/pull/543
