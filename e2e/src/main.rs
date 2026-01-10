@@ -1203,7 +1203,7 @@ fn filter_profiles<'a>(config: &'a Config, cli: &'a ProfileGroup) -> Result<BTre
 }
 
 fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
-    let (config, _) = config::load_config(&cli.config.config)?;
+    let config = config::load_config(&cli.config.config)?;
     let profiles = filter_profiles(&config, &cli.profile)?;
 
     if profiles.is_empty() {
@@ -1336,7 +1336,7 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
 }
 
 fn list_subcommand(cli: &ListCli) -> Result<()> {
-    let (config, _) = config::load_config(&cli.config.config)?;
+    let config = config::load_config(&cli.config.config)?;
 
     for profile in config.profile.keys() {
         println!("{profile}");

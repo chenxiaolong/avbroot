@@ -6,7 +6,6 @@ use std::{collections::BTreeMap, fs, path::Path};
 use anyhow::{Context, Result};
 use avbroot::format::payload::{CowVersion, VabcAlgo};
 use serde::{Deserialize, Serialize};
-use toml_edit::DocumentMut;
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Sha256Hash(
@@ -130,12 +129,8 @@ pub struct Config {
     pub profile: BTreeMap<String, Profile>,
 }
 
-pub fn load_config(path: &Path) -> Result<(Config, DocumentMut)> {
+pub fn load_config(path: &Path) -> Result<Config> {
     let contents =
         fs::read_to_string(path).with_context(|| format!("Failed to read config: {path:?}"))?;
-    let config: Config = toml_edit::de::from_str(&contents)
-        .with_context(|| format!("Failed to parse config: {path:?}"))?;
-    let document: DocumentMut = contents.parse().unwrap();
-
-    Ok((config, document))
+    toml::de::from_str(&contents).with_context(|| format!("Failed to parse config: {path:?}"))
 }
