@@ -15,6 +15,7 @@
 * Fix broken symlinks in fuzzing corpus ([Issue #532], [PR #544], [PR #548])
 * Ignore unused vbmeta partitions that are filled with zeros ([Issue #537], [PR #539])
 * Update dependencies ([PR #547], [PR #549])
+* Fix `cargo deny` failing after running fuzzers with `cargo hfuzz` ([PR #550])
 
 ### Version 3.23.3
 
@@ -661,3 +662,4 @@ Behind-the-scenes changes:
 [PR #547]: https://github.com/chenxiaolong/avbroot/pull/547
 [PR #548]: https://github.com/chenxiaolong/avbroot/pull/548
 [PR #549]: https://github.com/chenxiaolong/avbroot/pull/549
+[PR #550]: https://github.com/chenxiaolong/avbroot/pull/550
