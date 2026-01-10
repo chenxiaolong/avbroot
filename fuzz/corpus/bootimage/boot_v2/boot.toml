@@ -23,7 +23,4 @@ extra_cmdline = "ExtraCmdlineExtraCmdlineExtraCmdlineExtraCmdlineExtraCmdlineExt
 recovery_dtbo_offset = 81985529216486895
 
 [v2_extra]
-# Unpacking the generated image will currently fail due to toml not supporting
-# serialization of integers larger than i64::MAX:
-# https://github.com/toml-rs/toml/issues/1085
 dtb_addr = 18364758544493064720
