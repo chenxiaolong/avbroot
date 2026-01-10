@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.24.0
 
 * Always sort ramdisk cpio entries and ensure they have inode numbers assigned ([PR #540])
 * Relax LP image parser's validation to allow parsing the `/metadata/gsi/dsu/dsu/lp_metadata` image used by DSU ([PR #541], [PR #545])
