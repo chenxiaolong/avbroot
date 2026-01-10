@@ -12,7 +12,7 @@
 * Always sort ramdisk cpio entries and ensure they have inode numbers assigned ([PR #540])
 * Relax LP image parser's validation to allow parsing the `/metadata/gsi/dsu/dsu/lp_metadata` image used by DSU ([PR #541], [PR #545])
 * Add support for devices with separate recovery partitions when using `--dsu` ([Issue #536], [PR #543])
-* Fix broken symlinks in fuzzing corpus ([Issue #532], [PR #544])
+* Fix broken symlinks in fuzzing corpus ([Issue #532], [PR #544], [PR #548])
 * Ignore unused vbmeta partitions that are filled with zeros ([Issue #537], [PR #539])
 * Update dependencies ([PR #547])
 
@@ -659,3 +659,4 @@ Behind-the-scenes changes:
 [PR #544]: https://github.com/chenxiaolong/avbroot/pull/544
 [PR #545]: https://github.com/chenxiaolong/avbroot/pull/545
 [PR #547]: https://github.com/chenxiaolong/avbroot/pull/547
+[PR #548]: https://github.com/chenxiaolong/avbroot/pull/548
