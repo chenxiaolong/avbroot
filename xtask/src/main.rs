@@ -1,7 +1,8 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 mod changelog;
+mod fuzz_corpus;
 mod version;
 
 use anyhow::Result;
@@ -16,6 +17,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::SetVersion(c) => version::set_version_subcommand(&c),
+        Command::FuzzCorpus => fuzz_corpus::fuzz_corpus_subcommand(),
         Command::UpdateChangelog => changelog::update_changelog_subcommand(),
     }
 }
@@ -23,6 +25,8 @@ fn main() -> Result<()> {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     SetVersion(SetVersionCli),
+    /// Generate initial fuzzing corpus.
+    FuzzCorpus,
     /// Update links in CHANGELOG.md.
     UpdateChangelog,
 }

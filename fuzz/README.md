@@ -13,7 +13,7 @@ While avbroot's parsers are all memory-safe, it is still possible for panics or 
 2. [Optional] Generate sample files to use as the initial fuzzing corpus.
 
     ```bash
-    ./corpus/build.sh
+    cargo xtask fuzz-corpus
     ```
 
 3. Pick a fuzz target to run. A fuzz target is the name of the source file in [`src/bin/`](./src/bin) without the `.rs` extension.
