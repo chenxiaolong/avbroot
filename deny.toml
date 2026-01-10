@@ -54,8 +54,11 @@ executables = "deny"
 include-dependencies = true
 include-workspace = true
 bypass = [
-    # Copies of unmodified crashwrangler objects for old macOS versions.
-    { name = "honggfuzz", allow-globs = ["honggfuzz/third_party/mac/CrashReport_*.o"] },
+    # honggfuzz/third_party/mac/CrashReport_*.o are copies of unmodified
+    # crashwrangler objects for old macOS versions. Unfortunately, when running
+    # cargo hfuzz, the compiled hongfuzz binary and corresponding object files
+    # are written to the source directory too.
+    { name = "honggfuzz", allow-globs = ["honggfuzz/*.o", "honggfuzz/honggfuzz"] },
     # Only used in tests.
     { name = "libloading", allow-globs = ["tests/nagisa*.dll"] },
 ]
