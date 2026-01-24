@@ -1169,8 +1169,8 @@ struct VerifyCli {
 struct VerifyDeviceCli {
     /// Path to public key in AVB binary format.
     ///
-    /// If this is not specified, the signatures can only be checked for
-    /// validity, not whether they are trusted.
+    /// If this is not specified, then the signature is verified against the
+    /// ro.boot.vbmeta.public_key_digest value provided by the bootloader.
     #[arg(short, long, value_name = "FILE", value_parser)]
     public_key: Option<PathBuf>,
 
