@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update `avbroot avb verify-device --help` to mention that `ro.boot.vbmeta.public_key_digest` is used when `-p` is not specified ([Issue #554], [PR #555])
+
 ### Version 3.24.0
 
 * Always sort ramdisk cpio entries and ensure they have inode numbers assigned ([PR #540])
@@ -448,6 +452,7 @@ Behind-the-scenes changes:
 [Issue #532]: https://github.com/chenxiaolong/avbroot/issues/532
 [Issue #536]: https://github.com/chenxiaolong/avbroot/issues/536
 [Issue #537]: https://github.com/chenxiaolong/avbroot/issues/537
+[Issue #554]: https://github.com/chenxiaolong/avbroot/issues/554
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -663,3 +668,4 @@ Behind-the-scenes changes:
 [PR #548]: https://github.com/chenxiaolong/avbroot/pull/548
 [PR #549]: https://github.com/chenxiaolong/avbroot/pull/549
 [PR #550]: https://github.com/chenxiaolong/avbroot/pull/550
+[PR #555]: https://github.com/chenxiaolong/avbroot/pull/555
