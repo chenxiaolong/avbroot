@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.24.1
 
 * Update `avbroot avb verify-device --help` to mention that `ro.boot.vbmeta.public_key_digest` is used when `-p` is not specified ([Issue #554], [PR #555])
 * Update dependencies ([PR #559])
