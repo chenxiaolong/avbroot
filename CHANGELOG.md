@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Update `avbroot avb verify-device --help` to mention that `ro.boot.vbmeta.public_key_digest` is used when `-p` is not specified ([Issue #554], [PR #555])
+* Update dependencies ([PR #559])
 
 ### Version 3.24.0
 
@@ -669,3 +670,4 @@ Behind-the-scenes changes:
 [PR #549]: https://github.com/chenxiaolong/avbroot/pull/549
 [PR #550]: https://github.com/chenxiaolong/avbroot/pull/550
 [PR #555]: https://github.com/chenxiaolong/avbroot/pull/555
+[PR #559]: https://github.com/chenxiaolong/avbroot/pull/559
