@@ -287,8 +287,7 @@ pub fn cpio_main(cli: &CpioCli, cancel_signal: &AtomicBool) -> Result<()> {
 /// TOML file, like the UID/GID, permissions, and symlink targets.
 ///
 /// If any paths inside the cpio archive are unsafe, the extraction process will
-/// fail and exit. Extracted files are never written outside of the tree
-/// directory, even if an external process tries to interfere.
+/// fail and exit.
 #[derive(Debug, Parser)]
 struct UnpackCli {
     /// Path to input cpio file.

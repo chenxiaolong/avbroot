@@ -515,8 +515,7 @@ pub fn lp_main(cli: &LpCli, cancel_signal: &AtomicBool) -> Result<()> {
 /// directory. For empty images, the output images directory is unused.
 ///
 /// If any partition names are unsafe to use in a path, the extraction process
-/// will fail and exit. Extracted files are never written outside of the tree
-/// directory, even if an external process tries to interfere.
+/// will fail and exit.
 #[derive(Debug, Parser)]
 struct UnpackCli {
     /// Path to input LP images.

@@ -363,8 +363,7 @@ struct KeyGroup {
 /// directory. The payload header metadata is written to the info TOML file.
 ///
 /// If any partition names are unsafe to use in a path, the extraction process
-/// will fail and exit. Extracted files are never written outside of the tree
-/// directory, even if an external process tries to interfere.
+/// will fail and exit.
 #[derive(Debug, Parser)]
 struct UnpackCli {
     /// Path to input payload binary.
