@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Remove outdated mentions of guarantees provided by cap-std in `--help` text, which was removed in version 3.20.0 ([PR #561])
+
 ### Version 3.24.1
 
 * Update `avbroot avb verify-device --help` to mention that `ro.boot.vbmeta.public_key_digest` is used when `-p` is not specified ([Issue #554], [PR #555])
@@ -671,3 +675,4 @@ Behind-the-scenes changes:
 [PR #550]: https://github.com/chenxiaolong/avbroot/pull/550
 [PR #555]: https://github.com/chenxiaolong/avbroot/pull/555
 [PR #559]: https://github.com/chenxiaolong/avbroot/pull/559
+[PR #561]: https://github.com/chenxiaolong/avbroot/pull/561
