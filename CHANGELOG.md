@@ -15,6 +15,7 @@
 * Fix `-o` being used as the short option for both `--output` and `--output-properties` in `avbroot payload pack` and `avbroot payload repack` ([PR #563])
   * The short option for `--output-properties` is now uppercase `-O`.
 * Add missing file flush operations and remove them where they are no-ops ([PR #564])
+* Update dependencies ([PR #565])
 
 ### Version 3.24.1
 
@@ -684,3 +685,4 @@ Behind-the-scenes changes:
 [PR #562]: https://github.com/chenxiaolong/avbroot/pull/562
 [PR #563]: https://github.com/chenxiaolong/avbroot/pull/563
 [PR #564]: https://github.com/chenxiaolong/avbroot/pull/564
+[PR #565]: https://github.com/chenxiaolong/avbroot/pull/565
