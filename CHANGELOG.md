@@ -14,6 +14,7 @@
   * For folks who are familiar with how OTAs are built, this means it's now possible create an OTA from scratch without using `avbroot ota patch`.
 * Fix `-o` being used as the short option for both `--output` and `--output-properties` in `avbroot payload pack` and `avbroot payload repack` ([PR #563])
   * The short option for `--output-properties` is now uppercase `-O`.
+* Add missing file flush operations and remove them where they are no-ops ([PR #564])
 
 ### Version 3.24.1
 
@@ -682,3 +683,4 @@ Behind-the-scenes changes:
 [PR #561]: https://github.com/chenxiaolong/avbroot/pull/561
 [PR #562]: https://github.com/chenxiaolong/avbroot/pull/562
 [PR #563]: https://github.com/chenxiaolong/avbroot/pull/563
+[PR #564]: https://github.com/chenxiaolong/avbroot/pull/564
