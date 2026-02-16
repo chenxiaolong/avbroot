@@ -20,7 +20,7 @@ ring = "0.17.14"
 rsa = { version = "0.9.6", features = ["hazmat"] }
 serde = { version = "1.0.188", features = ["derive"] }
 tempfile = "3.8.0"
-toml = { version = "0.9.11", features = ["serde"] }
+toml = { version = "1.0.1", features = ["serde"] }
 topological-sort = "0.2.2"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
