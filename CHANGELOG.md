@@ -10,6 +10,8 @@
 ### Unreleased
 
 * Remove outdated mentions of guarantees provided by cap-std in `--help` text, which was removed in version 3.20.0 ([PR #561])
+* Add new commands for packing and unpacking raw OTA zips ([PR #562])
+  * For folks who are familiar with how OTAs are built, this means it's now possible create an OTA from scratch without using `avbroot ota patch`
 
 ### Version 3.24.1
 
@@ -676,3 +678,4 @@ Behind-the-scenes changes:
 [PR #555]: https://github.com/chenxiaolong/avbroot/pull/555
 [PR #559]: https://github.com/chenxiaolong/avbroot/pull/559
 [PR #561]: https://github.com/chenxiaolong/avbroot/pull/561
+[PR #562]: https://github.com/chenxiaolong/avbroot/pull/562
