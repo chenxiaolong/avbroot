@@ -19,7 +19,7 @@ The vbmeta descriptor digests are validated during unpacking. For dm-verity imag
 ### Packing an AVB image
 
 ```bash
-avbroot avb pack -o <output AVB image> [--key <AVB private key>]
+avbroot avb pack -o <output AVB image> [-k <AVB private key>]
 ```
 
 This subcommand packs a new AVB image from the `avb.toml` file and, for appended vbmeta images, the `raw.img` file.
@@ -345,17 +345,19 @@ Only full payload binaries can be unpacked. Delta payload binaries from incremen
 ### Packing a payload binary
 
 ```bash
-avbroot payload pack -o <output payload> --key <OTA private key>
+avbroot payload pack -o <output payload> -k <OTA private key> [-O <output properties>]
 ```
 
 This subcommand packs a new payload binary from the `payload.toml` file and `payload_images` directory. Any `.img` files in the `payload_images` directory that don't have a corresponding entry in `payload.toml` are silently ignored.
+
+When replacing the payload binary in an OTA, it is not sufficient to only update `payload.bin`. The checksums in `payload_properties.txt` need to be updated as well. Use `--output-properties` to generate a new properties file.
 
 Packing a payload binary requires compressing all of the partition images, which is very CPU intensive. If re-signing an existing payload binary without making any other modifications is all that's needed, use the `repack` subcommand instead.
 
 ### Repacking a payload binary
 
 ```bash
-avbroot payload repack -i <input payload> -o <output payload> --key <OTA private key>
+avbroot payload repack -i <input payload> -o <output payload> -k <OTA private key> [-O <output properties>]
 ```
 
 This subcommand is logically equivalent to `avbroot payload unpack` followed by `avbroot payload pack`, except significantly more efficient. Instead of decompressing and recompressing all partition images, the raw data is directly copied from the input payload binary.
@@ -435,7 +437,7 @@ This subcommand unpacks the OTA metadata to `ota.toml` and the OTA files to the 
 ### Packing an OTA zip
 
 ```bash
-avbroot ota pack -o <output OTA> --key <OTA private key>
+avbroot ota pack -o <output OTA> -k <OTA private key>
 ```
 
 This subcommand packs a new OTA zip from the `ota.toml` file and `ota_files` directory. Any files in the `ota_files` directory that don't have a corresponding entry in `ota.toml` are silently ignored.
@@ -445,7 +447,7 @@ When packing an OTA zip, the `metadata.property_files` field in `ota.toml` may p
 ### Repacking an OTA zip
 
 ```bash
-avbroot ota repack -i <input OTA> -o <output OTA> --key <OTA private key>
+avbroot ota repack -i <input OTA> -o <output OTA> -k <OTA private key>
 ```
 
 This subcommand is logically equivalent to `avbroot ota unpack` followed by `avbroot ota pack`, except more efficient.

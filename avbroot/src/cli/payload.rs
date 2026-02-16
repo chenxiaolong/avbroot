@@ -406,7 +406,7 @@ struct PackCli {
     output: PathBuf,
 
     /// Path to output payload properties file.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short = 'O', long, value_name = "FILE", value_parser)]
     output_properties: Option<PathBuf>,
 
     /// Path to input info TOML.
@@ -446,7 +446,7 @@ struct RepackCli {
     output: PathBuf,
 
     /// Path to output payload properties file.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short = 'O', long, value_name = "FILE", value_parser)]
     output_properties: Option<PathBuf>,
 
     #[command(flatten)]
