@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.25.0
 
 * Remove outdated mentions of guarantees provided by cap-std in `--help` text, which was removed in version 3.20.0 ([PR #561])
 * Add new commands for packing and unpacking raw OTA zips ([PR #562])
