@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{env, ffi::OsStr, fs, io, path::Path};
@@ -35,6 +35,10 @@ fn main() {
     const CUE_PU: &str = ".chromeos_update_engine.PartitionUpdate";
     const CUE_VABCFS: &str = ".chromeos_update_engine.VABCFeatureSet";
 
+    const BTR_DS: &str = ".build.tools.releasetools.DeviceState";
+    const BTR_OM: &str = ".build.tools.releasetools.OtaMetadata";
+    const BTR_PS: &str = ".build.tools.releasetools.PartitionState";
+
     const DERIVE_SERDE: &str = "#[derive(serde::Deserialize, serde::Serialize)]";
     const SERDE_DEFAULT: &str = "#[serde(default)]";
     const SERDE_SKIP: &str = "#[serde(skip)]";
@@ -45,19 +49,25 @@ fn main() {
     prost_build::Config::new()
         .btree_map(["."])
         // Allow deserializing and serializing the types we care about.
-        .type_attribute(CUE_AI, DERIVE_SERDE)
-        .type_attribute(CUE_DAM, DERIVE_SERDE)
-        .type_attribute(CUE_DPG, DERIVE_SERDE)
-        .type_attribute(CUE_DPM, DERIVE_SERDE)
-        .type_attribute(CUE_PU, DERIVE_SERDE)
-        .type_attribute(CUE_VABCFS, DERIVE_SERDE)
+        .message_attribute(CUE_AI, DERIVE_SERDE)
+        .message_attribute(CUE_DAM, DERIVE_SERDE)
+        .message_attribute(CUE_DPG, DERIVE_SERDE)
+        .message_attribute(CUE_DPM, DERIVE_SERDE)
+        .message_attribute(CUE_PU, DERIVE_SERDE)
+        .message_attribute(CUE_VABCFS, DERIVE_SERDE)
+        .message_attribute(BTR_DS, DERIVE_SERDE)
+        .message_attribute(BTR_OM, DERIVE_SERDE)
+        .message_attribute(BTR_PS, DERIVE_SERDE)
         // Allow default-initializing all fields.
-        .type_attribute(CUE_AI, SERDE_DEFAULT)
-        .type_attribute(CUE_DAM, SERDE_DEFAULT)
-        .type_attribute(CUE_DPG, SERDE_DEFAULT)
-        .type_attribute(CUE_DPM, SERDE_DEFAULT)
-        .type_attribute(CUE_PU, SERDE_DEFAULT)
-        .type_attribute(CUE_VABCFS, SERDE_DEFAULT)
+        .message_attribute(CUE_AI, SERDE_DEFAULT)
+        .message_attribute(CUE_DAM, SERDE_DEFAULT)
+        .message_attribute(CUE_DPG, SERDE_DEFAULT)
+        .message_attribute(CUE_DPM, SERDE_DEFAULT)
+        .message_attribute(CUE_PU, SERDE_DEFAULT)
+        .message_attribute(CUE_VABCFS, SERDE_DEFAULT)
+        .message_attribute(BTR_DS, SERDE_DEFAULT)
+        .message_attribute(BTR_OM, SERDE_DEFAULT)
+        .message_attribute(BTR_PS, SERDE_DEFAULT)
         // Don't serialize fields that define the structure of the payload
         // binary and that we recompute during packing.
         .field_attribute(c!(CUE_DAM, ".signatures_offset"), SERDE_SKIP)
@@ -84,6 +94,11 @@ fn main() {
         .field_attribute(c!(CUE_DAM, ".partitions"), SERDE_SKIP_IF_VEC_EMPTY)
         .field_attribute(c!(CUE_DPG, ".partition_names"), SERDE_SKIP_IF_VEC_EMPTY)
         .field_attribute(c!(CUE_DPM, ".groups"), SERDE_SKIP_IF_VEC_EMPTY)
+        // Serialize enums as their enum types, not their underlying reprs.
+        .field_attribute(
+            c!(BTR_OM, ".type"),
+            "#[serde(with = \"crate::protobuf::ota_type\")]",
+        )
         .compile_fds(file_descriptors)
         .unwrap();
 }

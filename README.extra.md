@@ -52,6 +52,8 @@ avbroot avb info -i <image>
 
 This subcommand shows all of the vbmeta header and footer fields. `vbmeta` partition images will only have a header, while partitions with actual data (eg. boot images) will have both a header and a footer.
 
+(The `unpack`, `pack`, and `repack` subcommands also show this information. This specific subcommand just does so without performing any other operation.)
+
 ### Verifying AVB hashes and signatures
 
 ```bash
@@ -117,7 +119,9 @@ This subcommand repacks a boot image without writing the individual components t
 avbroot boot info -i <input boot image>
 ```
 
-All of the `boot` subcommands show the boot image information. This specific subcommand just does it without performing any other operation. To show avbroot's internal representation of the information, pass in `-d`.
+This subcommand shows the information contained in the boot image's header. To show avbroot's internal representation of the information, pass in `-d`.
+
+(All of the `boot` subcommands show this information. This specific subcommand just does so without performing any other operation.)
 
 ## `avbroot cpio`
 
@@ -159,7 +163,9 @@ This is almost equivalent to running `avbroot cpio unpack` followed by `avbroot 
 avbroot cpio info -i <input cpio archive>
 ```
 
-All of the `cpio` subcommands show details about all the entries in the archive. This specific subcommand just does it without performing any other operation.
+This subcommand shows details about every entry in the archive.
+
+(All of the `cpio` subcommands show this information. This specific subcommand just does so without performing any other operation.)
 
 ## `avbroot fec`
 
@@ -320,6 +326,8 @@ avbroot lp info -i <first LP image>
 
 This subcommand shows the LP image metadata, including all metadata slots. If there are multiple images, only the first one is needed because it is the only one that stores the metadata.
 
+(All of the `lp` subcommands show this information. This specific subcommand just does so without performing any other operation.)
+
 ## `avbroot payload`
 
 This set of commands is for working with payload binary files (`payload.bin`). The `unpack` and `pack` commands can only work with full payloads because they require the complete data to be available, but the `repack` and `info` commands also work with delta payloads.
@@ -361,6 +369,8 @@ avbroot payload info -i <payload>
 ```
 
 This subcommand shows all of the payload header fields (which will likely be extremely long).
+
+(All of the `payload` subcommands show this information. This specific subcommand just does so without performing any other operation.)
 
 ## `avbroot sparse`
 
@@ -405,3 +415,49 @@ avbroot sparse info -i <input sparse image>
 ```
 
 This subcommand shows the sparse image metadata, including the header and all chunks.
+
+(All of the `sparse` subcommands show this information. This specific subcommand just does so without performing any other operation.)
+
+## `avbroot zip`
+
+This set of commands is for working with raw OTA zip files. They are intentionally placed outside of `avbroot ota` to make them less discoverable by accident. These commands are useful for creating OTA zip files without going through the normal `avbroot ota patch` mechanism.
+
+**WARNING**: Make sure to run `avbroot ota verify` on OTA files before installing them. These pack commands are low level operations that only check that the file structure of the OTA itself is valid, not the contents contained within.
+
+### Unpacking an OTA zip
+
+```bash
+avbroot ota unpack -i <input OTA>
+```
+
+This subcommand unpacks the OTA metadata to `ota.toml` and the OTA files to the `ota_files` directory.
+
+### Packing an OTA zip
+
+```bash
+avbroot ota pack -o <output OTA> --key <OTA private key>
+```
+
+This subcommand packs a new OTA zip from the `ota.toml` file and `ota_files` directory. Any files in the `ota_files` directory that don't have a corresponding entry in `ota.toml` are silently ignored.
+
+When packing an OTA zip, the `metadata.property_files` field in `ota.toml` may potentially be recomputed. To write a TOML file containing the new values, use `--output-info <output TOML>`. It is safe to overwrite the existing `ota.toml` if desired.
+
+### Repacking an OTA zip
+
+```bash
+avbroot ota repack -i <input OTA> -o <output OTA> --key <OTA private key>
+```
+
+This subcommand is logically equivalent to `avbroot ota unpack` followed by `avbroot ota pack`, except more efficient.
+
+**WARNING**: This is generally not a useful command. Resigning the OTA zip without also resigning the payload binary inside results in an invalid OTA.
+
+### Showing OTA metadata
+
+```bash
+avbroot ota info -i <input OTA>
+```
+
+This subcommand shows all of the OTA metadata fields. If both the modern protobuf metadata and the legacy plain text metadata exist, the protobuf metadata takes precedence.
+
+(All of the `ota` subcommands show this information. This specific subcommand just does so without performing any other operation.)

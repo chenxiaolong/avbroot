@@ -1940,9 +1940,9 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         };
     }
 
-    let raw_reader = File::open(&cli.input)
+    let mut reader = File::open(&cli.input)
+        .map(BufReader::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
-    let mut reader = BufReader::new(raw_reader);
 
     info!("Verifying whole-file signature");
 
@@ -2193,7 +2193,7 @@ pub struct PatchCli {
         alias = "privkey-avb",
         value_name = "FILE",
         value_parser,
-        help_heading = HEADING_KEY
+        help_heading = HEADING_KEY,
     )]
     pub key_avb: PathBuf,
 
@@ -2206,7 +2206,7 @@ pub struct PatchCli {
         alias = "privkey-ota",
         value_name = "FILE",
         value_parser,
-        help_heading = HEADING_KEY
+        help_heading = HEADING_KEY,
     )]
     pub key_ota: PathBuf,
 
@@ -2221,7 +2221,7 @@ pub struct PatchCli {
         value_name = "ENV_VAR",
         value_parser,
         group = "pass_avb",
-        help_heading = HEADING_KEY
+        help_heading = HEADING_KEY,
     )]
     pub pass_avb_env_var: Option<OsString>,
 
@@ -2232,7 +2232,7 @@ pub struct PatchCli {
         value_name = "FILE",
         value_parser,
         group = "pass_avb",
-        help_heading = HEADING_KEY
+        help_heading = HEADING_KEY,
     )]
     pub pass_avb_file: Option<PathBuf>,
 
@@ -2243,7 +2243,7 @@ pub struct PatchCli {
         value_name = "ENV_VAR",
         value_parser,
         group = "pass_ota",
-        help_heading = HEADING_KEY
+        help_heading = HEADING_KEY,
     )]
     pub pass_ota_env_var: Option<OsString>,
 
@@ -2254,7 +2254,7 @@ pub struct PatchCli {
         value_name = "FILE",
         value_parser,
         group = "pass_ota",
-        help_heading = HEADING_KEY
+        help_heading = HEADING_KEY,
     )]
     pub pass_ota_file: Option<PathBuf>,
 
@@ -2273,7 +2273,7 @@ pub struct PatchCli {
         value_names = ["PARTITION", "FILE"],
         value_parser = value_parser!(OsString),
         num_args = 2,
-        help_heading = HEADING_PATH
+        help_heading = HEADING_PATH,
     )]
     pub replace: Vec<OsString>,
 
@@ -2285,7 +2285,7 @@ pub struct PatchCli {
         long,
         value_name = "PARTITION",
         conflicts_with_all = ["prepatched", "rootless"],
-        help_heading = HEADING_MAGISK
+        help_heading = HEADING_MAGISK,
     )]
     pub magisk_preinit_device: Option<String>,
 
@@ -2294,7 +2294,7 @@ pub struct PatchCli {
         long,
         value_name = "NUMBER",
         conflicts_with_all = ["prepatched", "rootless"],
-        help_heading = HEADING_MAGISK
+        help_heading = HEADING_MAGISK,
     )]
     pub magisk_random_seed: Option<u64>,
 
@@ -2302,7 +2302,7 @@ pub struct PatchCli {
     #[arg(
         long,
         conflicts_with_all = ["prepatched", "rootless"],
-        help_heading = HEADING_MAGISK
+        help_heading = HEADING_MAGISK,
     )]
     pub ignore_magisk_warnings: bool,
 
@@ -2311,7 +2311,7 @@ pub struct PatchCli {
         long,
         action = ArgAction::Count,
         conflicts_with_all = ["magisk", "rootless"],
-        help_heading = HEADING_PREPATCHED
+        help_heading = HEADING_PREPATCHED,
     )]
     pub ignore_prepatched_compat: u8,
 
@@ -2368,7 +2368,7 @@ pub struct PatchCli {
         long,
         value_name = "MODE",
         default_value_t = ZipMode::Streaming,
-        help_heading = HEADING_OTHER
+        help_heading = HEADING_OTHER,
     )]
     pub zip_mode: ZipMode,
 
@@ -2377,7 +2377,7 @@ pub struct PatchCli {
         long,
         value_name = "PARTITION",
         hide = true,
-        help_heading = HEADING_OTHER
+        help_heading = HEADING_OTHER,
     )]
     pub boot_partition: Option<String>,
 }

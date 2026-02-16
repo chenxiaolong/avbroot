@@ -456,7 +456,7 @@ struct RepackCli {
 /// Display payload information.
 #[derive(Debug, Parser)]
 struct InfoCli {
-    /// Path to input payload file.
+    /// Path to input payload binary.
     #[arg(short, long, value_name = "FILE", value_parser)]
     input: PathBuf,
 }
