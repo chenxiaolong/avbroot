@@ -235,9 +235,11 @@ fn pack_subcommand(
             .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
     }
 
-    let (_, header, properties, _) = payload_writer
+    let (raw_writer, header, properties, _) = payload_writer
         .finish()
         .context("Failed to finalize payload")?;
+
+    raw_writer.into_inner().context("Failed to flush payload")?;
 
     // Display the header information now that it has been finalized.
     display_header(payload_cli, &header);

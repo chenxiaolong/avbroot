@@ -37,9 +37,9 @@ struct AvbInfo {
 }
 
 fn read_avb_image(path: &Path) -> Result<(AvbInfo, BufReader<File>)> {
-    let file = File::open(path)
+    let mut reader = File::open(path)
+        .map(BufReader::new)
         .with_context(|| format!("Failed to open AVB image for reading: {path:?}"))?;
-    let mut reader = BufReader::new(file);
     let (header, footer, image_size) = avb::load_image(&mut reader)
         .with_context(|| format!("Failed to load AVB image: {path:?}"))?;
 
@@ -101,14 +101,14 @@ fn write_raw(
     size: u64,
     cancel_signal: &AtomicBool,
 ) -> Result<File> {
-    let file = fs::OpenOptions::new()
+    let mut writer = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(true)
         .open(path)
+        .map(BufWriter::new)
         .with_context(|| format!("Failed to open raw image for writing: {path:?}"))?;
-    let mut writer = BufWriter::new(file);
 
     reader
         .rewind()

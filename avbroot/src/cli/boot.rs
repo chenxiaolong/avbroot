@@ -16,8 +16,9 @@ use crate::{
 };
 
 fn read_image(path: &Path) -> Result<BootImage> {
-    let file = File::open(path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
-    let reader = BufReader::new(file);
+    let reader = File::open(path)
+        .map(BufReader::new)
+        .with_context(|| format!("Failed to open for reading: {path:?}"))?;
     let image = BootImage::from_reader(reader)
         .with_context(|| format!("Failed to read boot image: {path:?}"))?;
 
@@ -25,9 +26,9 @@ fn read_image(path: &Path) -> Result<BootImage> {
 }
 
 fn write_image(path: &Path, image: &BootImage) -> Result<()> {
-    let file =
-        File::create(path).with_context(|| format!("Failed to open for writing: {path:?}"))?;
-    let mut writer = BufWriter::new(file);
+    let mut writer = File::create(path)
+        .map(BufWriter::new)
+        .with_context(|| format!("Failed to open for writing: {path:?}"))?;
     image
         .to_writer(&mut writer)
         .with_context(|| format!("Failed to write boot image: {path:?}"))?;
@@ -76,12 +77,12 @@ fn read_text_if_exists(path: &Path) -> Result<Option<String>> {
 }
 
 fn read_avb_header_if_exists(path: &Path) -> Result<Option<Header>> {
-    let file = match File::open(path) {
-        Ok(f) => f,
+    let reader = match File::open(path) {
+        Ok(f) => BufReader::new(f),
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => Err(e).with_context(|| format!("Failed to open for reading: {path:?}"))?,
     };
-    let header = Header::from_reader(BufReader::new(file))
+    let header = Header::from_reader(reader)
         .with_context(|| format!("Failed to read vbmeta header: {path:?}"))?;
 
     Ok(Some(header))
@@ -105,9 +106,15 @@ fn write_text_if_not_empty(path: &Path, text: &str) -> Result<()> {
 }
 
 fn write_avb_header(path: &Path, header: &Header) -> Result<()> {
-    let file =
-        File::create(path).with_context(|| format!("Failed to open for writing: {path:?}"))?;
-    header.to_writer(BufWriter::new(file))?;
+    let mut writer = File::create(path)
+        .map(BufWriter::new)
+        .with_context(|| format!("Failed to open for writing: {path:?}"))?;
+    header
+        .to_writer(&mut writer)
+        .with_context(|| format!("Failed to write AVB header: {path:?}"))?;
+    writer
+        .flush()
+        .with_context(|| format!("Failed to flush AVB header: {path:?}"))?;
 
     Ok(())
 }
@@ -286,8 +293,9 @@ fn info_subcommand(boot_cli: &BootCli, cli: &InfoCli) -> Result<()> {
 
 pub fn magisk_info_subcommand(cli: &MagiskInfoCli) -> Result<()> {
     let raw_reader = File::open(&cli.image)
+        .map(BufReader::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.image))?;
-    let boot_image = BootImage::from_reader(BufReader::new(raw_reader))
+    let boot_image = BootImage::from_reader(raw_reader)
         .with_context(|| format!("Failed to load boot image: {:?}", cli.image))?;
 
     let mut ramdisks = vec![];

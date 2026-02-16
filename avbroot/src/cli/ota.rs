@@ -1600,7 +1600,6 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
     let mut temp_writer = signing_writer
         .finish(&key_ota, &cert_ota, cancel_signal)
         .context("Failed to sign output zip")?;
-    temp_writer.flush().context("Failed to flush output zip")?;
 
     // We do a lot of low-level hackery. Reopen and verify offsets.
     info!("Verifying metadata offsets");

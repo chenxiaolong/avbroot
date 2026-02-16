@@ -68,11 +68,11 @@ use crate::{
 fn hash_file(path: &Path, cancel_signal: &AtomicBool) -> Result<[u8; 32]> {
     info!("Calculating hash: {path:?}");
 
-    let raw_reader =
-        File::open(path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
-    let buf_reader = BufReader::new(raw_reader);
+    let raw_reader = File::open(path)
+        .map(BufReader::new)
+        .with_context(|| format!("Failed to open for reading: {path:?}"))?;
     let context = ring::digest::Context::new(&ring::digest::SHA256);
-    let mut hashing_reader = HashingReader::new(buf_reader, context);
+    let mut hashing_reader = HashingReader::new(raw_reader, context);
 
     stream::copy(&mut hashing_reader, io::sink(), cancel_signal)?;
 

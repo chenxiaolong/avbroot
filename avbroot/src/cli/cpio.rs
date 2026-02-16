@@ -36,9 +36,10 @@ fn open_reader(
     CpioReader<CompressedReader<BufReader<File>>>,
     CompressedFormat,
 )> {
-    let file =
-        File::open(path).with_context(|| format!("Failed to open cpio for reading: {path:?}"))?;
-    let reader = CompressedReader::new(BufReader::new(file), true)
+    let raw_reader = File::open(path)
+        .map(BufReader::new)
+        .with_context(|| format!("Failed to open cpio for reading: {path:?}"))?;
+    let reader = CompressedReader::new(raw_reader, true)
         .with_context(|| format!("Failed to open decompressor: {path:?}"))?;
     let format = reader.format();
     let cpio_reader = CpioReader::new(reader, include_trailer);
@@ -50,9 +51,10 @@ fn open_writer(
     path: &Path,
     format: CompressedFormat,
 ) -> Result<CpioWriter<CompressedWriter<BufWriter<File>>>> {
-    let file =
-        File::create(path).with_context(|| format!("Failed to open cpio for writing: {path:?}"))?;
-    let writer = CompressedWriter::new(BufWriter::new(file), format)
+    let raw_writer = File::create(path)
+        .map(BufWriter::new)
+        .with_context(|| format!("Failed to open cpio for writing: {path:?}"))?;
+    let writer = CompressedWriter::new(raw_writer, format)
         .with_context(|| format!("Failed to open compressor: {path:?}"))?;
     let cpio_writer = CpioWriter::new(writer, false);
 
