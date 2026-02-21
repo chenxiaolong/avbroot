@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.26.0
 
 * Add new `--re-sign` option to `avbroot ota patch` for re-signing partitions that would otherwise be unmodified ([Issue #569], [PR #570])
 * Warn when a partition is signed with an AOSP test key in `avbroot ota verify` ([Issue #569], [PR #571])
