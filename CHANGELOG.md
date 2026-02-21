@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add new `--re-sign` option to `avbroot ota patch` for re-signing partitions that would otherwise be unmodified ([Issue #569], [PR #570])
+
 ### Version 3.25.0
 
 * Remove outdated mentions of guarantees provided by cap-std in `--help` text, which was removed in version 3.20.0 ([PR #561])
@@ -464,6 +468,7 @@ Behind-the-scenes changes:
 [Issue #536]: https://github.com/chenxiaolong/avbroot/issues/536
 [Issue #537]: https://github.com/chenxiaolong/avbroot/issues/537
 [Issue #554]: https://github.com/chenxiaolong/avbroot/issues/554
+[Issue #569]: https://github.com/chenxiaolong/avbroot/issues/569
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -686,3 +691,4 @@ Behind-the-scenes changes:
 [PR #563]: https://github.com/chenxiaolong/avbroot/pull/563
 [PR #564]: https://github.com/chenxiaolong/avbroot/pull/564
 [PR #565]: https://github.com/chenxiaolong/avbroot/pull/565
+[PR #570]: https://github.com/chenxiaolong/avbroot/pull/570
