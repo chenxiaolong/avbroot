@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Add new `--re-sign` option to `avbroot ota patch` for re-signing partitions that would otherwise be unmodified ([Issue #569], [PR #570])
+* Warn when a partition is signed with an AOSP test key in `avbroot ota verify` ([Issue #569], [PR #571])
 
 ### Version 3.25.0
 
@@ -692,3 +693,4 @@ Behind-the-scenes changes:
 [PR #564]: https://github.com/chenxiaolong/avbroot/pull/564
 [PR #565]: https://github.com/chenxiaolong/avbroot/pull/565
 [PR #570]: https://github.com/chenxiaolong/avbroot/pull/570
+[PR #571]: https://github.com/chenxiaolong/avbroot/pull/571
