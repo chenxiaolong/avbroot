@@ -429,7 +429,7 @@ This set of commands is for working with raw OTA zip files. They are intentional
 ### Unpacking an OTA zip
 
 ```bash
-avbroot ota unpack -i <input OTA>
+avbroot zip unpack -i <input OTA>
 ```
 
 This subcommand unpacks the OTA metadata to `ota.toml` and the OTA files to the `ota_files` directory.
@@ -437,7 +437,7 @@ This subcommand unpacks the OTA metadata to `ota.toml` and the OTA files to the 
 ### Packing an OTA zip
 
 ```bash
-avbroot ota pack -o <output OTA> -k <OTA private key>
+avbroot zip pack -o <output OTA> -k <OTA private key>
 ```
 
 This subcommand packs a new OTA zip from the `ota.toml` file and `ota_files` directory. Any files in the `ota_files` directory that don't have a corresponding entry in `ota.toml` are silently ignored.
@@ -447,19 +447,19 @@ When packing an OTA zip, the `metadata.property_files` field in `ota.toml` may p
 ### Repacking an OTA zip
 
 ```bash
-avbroot ota repack -i <input OTA> -o <output OTA> -k <OTA private key>
+avbroot zip repack -i <input OTA> -o <output OTA> -k <OTA private key>
 ```
 
-This subcommand is logically equivalent to `avbroot ota unpack` followed by `avbroot ota pack`, except more efficient.
+This subcommand is logically equivalent to `avbroot zip unpack` followed by `avbroot zip pack`, except more efficient.
 
 **WARNING**: This is generally not a useful command. Resigning the OTA zip without also resigning the payload binary inside results in an invalid OTA.
 
 ### Showing OTA metadata
 
 ```bash
-avbroot ota info -i <input OTA>
+avbroot zip info -i <input OTA>
 ```
 
 This subcommand shows all of the OTA metadata fields. If both the modern protobuf metadata and the legacy plain text metadata exist, the protobuf metadata takes precedence.
 
-(All of the `ota` subcommands show this information. This specific subcommand just does so without performing any other operation.)
+(All of the `zip` subcommands show this information. This specific subcommand just does so without performing any other operation.)
