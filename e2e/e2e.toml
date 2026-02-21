@@ -53,11 +53,11 @@ data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v4_gki.hashes_streaming]
 original = "ea96196191e3a4133db4aff45d47aa3468514e29e0a724faac8081cbf4adf808"
-patched = "179923431ff94148186d8b0a457636c8a60057d047d55a4fc4da3a162e73eeed"
+patched = "c073cbb271099aaf338a8c70f3565ec70db47a87b4c9bb3efffd96ccee1a0c27"
 
 [profile.pixel_v4_gki.hashes_seekable]
 original = "f6615ae355eba38689d24aa535981d09175d4832e7c65c04cdd89aa95d21f09d"
-patched = "b006858b78cddef0e3db1d77454cd945111ce15708121e3a483ff711abedec8b"
+patched = "65ce91a95574a308ffc5279696efe7f6f7e4e847795dc9ae43d9ffd012a7ce3f"
 
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)

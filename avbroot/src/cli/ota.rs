@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2022-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2022-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -23,7 +23,7 @@ use rawzip::{
 use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
 use tempfile::{NamedTempFile, TempDir};
 use topological_sort::TopologicalSort;
-use tracing::{debug_span, error, info, warn};
+use tracing::{Span, debug_span, error, info, warn};
 use x509_cert::Certificate;
 
 use crate::{
@@ -35,7 +35,6 @@ use crate::{
     format::{
         avb::{self, Descriptor, Header},
         ota::{self, SigningWriter, ZipEntry, ZipMode},
-        padding,
         payload::{self, CowVersion, PayloadHeader, PayloadWriter, VabcAlgo, VabcParams},
         zip::{
             self, ReaderAtWrapper, ZipArchiveReadAtExt, ZipEntriesSafeExt, ZipFileHeaderRecordExt,
@@ -53,7 +52,7 @@ use crate::{
     },
     stream::{
         self, FromReader, HashingWriter, MutexFile, ReadAt, ReadSeek, SectionReader,
-        SectionReaderAt, ToWriter, UserPosFile, WriteAt, WriteSeek,
+        SectionReaderAt, UserPosFile, WriteAt, WriteSeek,
     },
     util,
 };
@@ -155,19 +154,23 @@ enum InputFileState {
     Modified,
 }
 
+#[derive(Clone)]
 struct InputFile {
     file: Arc<File>,
     state: InputFileState,
 }
 
-/// Open all input files listed in `required_images`. If an image has a path
-/// in `external_images`, that file is opened. Otherwise, the image is extracted
-/// from the payload into a temporary file (that is unnamed if supported by the
-/// operating system).
+/// Open all input files listed in `required_images` and `re_sign_images`. If an
+/// image has a path in `external_images`, that file is opened. Otherwise, the
+/// image is extracted from the payload into a temporary file (that is unnamed
+/// if supported by the operating system). Images that are destined to be
+/// re-signed do not get copied to a temporary file until later when it can be
+/// determined that it wasn't already modified and re-signed due to patching.
 fn open_input_files(
     payload: &(dyn ReadAt + Sync),
     required_images: &HashMap<String, PartitionFlags>,
     external_images: &HashMap<String, PathBuf>,
+    re_sign_images: &HashSet<String>,
     header: &PayloadHeader,
     cancel_signal: &AtomicBool,
 ) -> Result<HashMap<String, InputFile>> {
@@ -178,6 +181,7 @@ fn open_input_files(
     let all_images = required_images
         .keys()
         .chain(external_images.keys())
+        .chain(re_sign_images.iter())
         .collect::<HashSet<_>>();
 
     for name in all_images {
@@ -323,6 +327,102 @@ fn patch_system_image<'a>(
     ranges.extend(other_ranges);
 
     Ok((target, ranges))
+}
+
+/// Re-sign the images listed in `re_sign_images` if they aren't already
+/// modified by the patching process. If the original image is signed, then it
+/// will be re-signed with `key_avb`. Otherwise, it is left untouched. If the
+/// original image is external, then it will be copied to a temporary file.
+fn re_sign_unmodified_images(
+    re_sign_images: &HashSet<String>,
+    input_files: &mut HashMap<String, InputFile>,
+    key_avb: &RsaSigningKey,
+    block_size: u64,
+    cancel_signal: &AtomicBool,
+) -> Result<()> {
+    let parent_span = Span::current();
+    let input_files = Mutex::new(input_files);
+
+    re_sign_images
+        .par_iter()
+        .try_for_each(|name| -> Result<()> {
+            let _span = debug_span!(parent: &parent_span, "image", name).entered();
+
+            let mut input_file = input_files.lock().unwrap()[name].clone();
+
+            if input_file.state == InputFileState::Modified {
+                // Already re-signed by some other patching operation.
+                return Ok(());
+            }
+
+            let (mut header, footer, image_size) = avb::load_image(&mut input_file.file)
+                .with_context(|| format!("Failed to load AVB metadata: {name}"))?;
+            let orig_header = header.clone();
+
+            if !header.public_key.is_empty() {
+                header
+                    .set_algo_for_key(key_avb)
+                    .with_context(|| format!("Failed to set signature algorithm: {name}"))?;
+                header
+                    .sign(key_avb)
+                    .with_context(|| format!("Failed to sign AVB metadata: {name}"))?;
+            }
+
+            if header == orig_header {
+                return Ok(());
+            }
+
+            if input_file.state == InputFileState::External {
+                info!("Copying external image for re-signing: {name}");
+
+                // Need to make a copy so that the user's original file doesn't
+                // get modified.
+                let mut temp_file = tempfile::tempfile()
+                    .with_context(|| format!("Failed to create temp file for: {name}"))?;
+
+                input_file
+                    .file
+                    .rewind()
+                    .with_context(|| format!("Failed to rewind file: {name}"))?;
+
+                stream::copy(&mut input_file.file.clone(), &mut temp_file, cancel_signal)
+                    .with_context(|| format!("Failed to copy file: {name}"))?;
+
+                input_file.file = Arc::new(temp_file);
+            }
+
+            info!("Re-signing image: {name}");
+
+            let original_image_size = footer
+                .as_ref()
+                .map(|f| f.original_image_size)
+                .unwrap_or_default();
+            input_file
+                .file
+                .rewind()
+                .with_context(|| format!("Failed to rewind file: {name}"))?;
+            input_file
+                .file
+                .set_len(original_image_size)
+                .with_context(|| format!("Failed to truncate file: {name}"))?;
+
+            if let Some(mut footer) = footer {
+                avb::write_appended_image(
+                    &mut input_file.file,
+                    &header,
+                    &mut footer,
+                    Some(image_size),
+                )
+            } else {
+                avb::write_root_image(&mut input_file.file, &header, block_size)
+            }
+            .with_context(|| format!("Failed to write AVB metadata: {name}"))?;
+
+            input_file.state = InputFileState::Modified;
+            *input_files.lock().unwrap().get_mut(name).unwrap() = input_file;
+
+            Ok(())
+        })
 }
 
 /// Load the specified vbmeta image headers. If an image has a vbmeta footer,
@@ -723,7 +823,7 @@ fn update_vbmeta_headers(
         //
         // The root vbmeta image is always signed because it is possible to
         // invoke avbroot is a way that no modifications are made (rootless +
-        // skipping recovery otacerts.zip patch). We still want the result to be
+        // skipping both otacerts.zip patches). We still want the result to be
         // bootable.
         if parent_header != &orig_parent_header || name == "vbmeta" {
             parent_header
@@ -735,12 +835,8 @@ fn update_vbmeta_headers(
 
             let mut writer = tempfile::tempfile()
                 .with_context(|| format!("Failed to create temp file for: {name}"))?;
-            parent_header
-                .to_writer(&mut writer)
+            avb::write_root_image(&mut writer, parent_header, block_size)
                 .with_context(|| format!("Failed to write vbmeta image: {name}"))?;
-
-            padding::write_zeros(&mut writer, block_size)
-                .with_context(|| format!("Failed to write vbmeta padding: {name}"))?;
 
             let input_file = images.get_mut(name).unwrap();
             input_file.file = Arc::new(writer);
@@ -909,6 +1005,7 @@ fn patch_ota_payload(
     payload: &(dyn ReadAt + Sync),
     writer: impl Write,
     external_images: &HashMap<String, PathBuf>,
+    re_sign_images: &HashSet<String>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     skip_system_ota_cert: bool,
     clear_vbmeta_flags: bool,
@@ -949,6 +1046,12 @@ fn patch_ota_payload(
         }
     }
 
+    for name in re_sign_images {
+        if !all_partitions.contains(name.as_str()) {
+            bail!("Cannot re-sign non-existent {name} partition");
+        }
+    }
+
     let required_images = get_required_images(&header.manifest, required_flags);
     let vbmeta_images = required_images
         .iter()
@@ -970,6 +1073,7 @@ fn patch_ota_payload(
         payload,
         &required_images,
         external_images,
+        re_sign_images,
         &header,
         cancel_signal,
     )?;
@@ -993,6 +1097,14 @@ fn patch_ota_payload(
             cancel_signal,
         )?)
     };
+
+    re_sign_unmodified_images(
+        re_sign_images,
+        &mut input_files,
+        key_avb,
+        header.manifest.block_size().into(),
+        cancel_signal,
+    )?;
 
     let mut vbmeta_headers = load_vbmeta_images(&mut input_files, &vbmeta_images)?;
 
@@ -1129,6 +1241,7 @@ fn patch_ota_zip(
     zip_reader: &ZipArchive<ReaderAtWrapper<&File>>,
     zip_writer: &mut ZipArchiveWriter<impl Write>,
     external_images: &HashMap<String, PathBuf>,
+    re_sign_images: &HashSet<String>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     skip_system_ota_cert: bool,
     clear_vbmeta_flags: bool,
@@ -1295,6 +1408,7 @@ fn patch_ota_zip(
                     &payload_reader,
                     &mut data_writer,
                     external_images,
+                    re_sign_images,
                     boot_patchers,
                     skip_system_ota_cert,
                     clear_vbmeta_flags,
@@ -1519,6 +1633,8 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         external_images.insert(name.to_owned(), path.to_owned());
     }
 
+    let re_sign_images = cli.re_sign.iter().cloned().collect::<HashSet<_>>();
+
     let mut boot_patchers = Vec::<Box<dyn BootImagePatch + Sync>>::new();
 
     if let Some(magisk) = &cli.root.magisk {
@@ -1582,6 +1698,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &zip_reader,
         &mut zip_writer,
         &external_images,
+        &re_sign_images,
         &boot_patchers,
         cli.skip_system_ota_cert,
         cli.clear_vbmeta_flags,
@@ -2275,6 +2392,19 @@ pub struct PatchCli {
         help_heading = HEADING_PATH,
     )]
     pub replace: Vec<OsString>,
+
+    /// Re-sign unmodified partition image.
+    ///
+    /// Modified partition images are always re-signed. This option forces the
+    /// specified image to be re-signed, even if it was unmodified. When used
+    /// with --replace, a copy of the replacement image will be re-signed, not
+    /// the original file.
+    ///
+    /// This option only has an effect if the specified partition image is
+    /// originally signed. If it is unsigned because the AVB descriptors are
+    /// embedded in another signed vbmeta image, then this option is a no-op.
+    #[arg(long, value_names = ["PARTITION"], help_heading = HEADING_PATH)]
+    pub re_sign: Vec<String>,
 
     #[command(flatten)]
     pub root: RootGroup,

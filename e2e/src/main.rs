@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-FileCopyrightText: 2023 Pascal Roeleven
 // SPDX-License-Identifier: GPL-3.0-only
 
@@ -1067,6 +1067,8 @@ fn patch_image(
         OsStr::new("--replace"),
         OsStr::new("system"),
         system_image_file.as_os_str(),
+        OsStr::new("--re-sign"),
+        OsStr::new("boot"),
         OsStr::new("--key-avb"),
         avb_key_file.as_os_str(),
         OsStr::new("--pass-avb-file"),

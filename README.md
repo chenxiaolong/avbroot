@@ -421,6 +421,10 @@ The only behavior this changes is where the partition is read from. When using `
 
 This has no impact on what patches are applied. For example, when using Magisk, the root patch is applied to the boot partition, no matter if the partition came from the original `payload.bin` or from `--replace`.
 
+### Re-signing partitions
+
+avbroot will automatically re-sign any partitions in the OTA that it modifies. However, partitions that are otherwise unmodified can also be re-signed with `--re-sign <partition name>`. This is useful, for example, when the OTA contains partitions signed with the public AOSP test key.
+
 ### Booting signed GSIs
 
 Android's [Dynamic System Updates (DSU)](https://developer.android.com/topic/dsu) feature uses a different root of trust than the regular system. Instead of using the bootloader's `avb_custom_key`, it obtains the trusted keys from the `first_stage_ramdisk/avb/*.avbpubkey` files inside the `init_boot` or `vendor_boot` ramdisk. These files are encoded in the same binary format as `avb_pkmd.bin`.
