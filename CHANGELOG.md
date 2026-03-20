@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update dependencies ([PR #579])
+
 ### Version 3.26.1
 
 * Add support for Magisk 30700 ([PR #573])
@@ -699,3 +703,4 @@ Behind-the-scenes changes:
 [PR #570]: https://github.com/chenxiaolong/avbroot/pull/570
 [PR #571]: https://github.com/chenxiaolong/avbroot/pull/571
 [PR #573]: https://github.com/chenxiaolong/avbroot/pull/573
+[PR #579]: https://github.com/chenxiaolong/avbroot/pull/579
