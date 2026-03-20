@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::io::{self, Read, Seek, Write};
@@ -9,7 +9,7 @@ use flate2::{
     write::{DeflateEncoder, GzEncoder},
 };
 use lz4_flex::frame::FrameDecoder;
-use lzma_rust2::{CheckType, XzOptions, XzReader, XzWriter};
+use lzma_rust2::{CheckType, LzmaOptions, LzmaReader, LzmaWriter, XzOptions, XzReader, XzWriter};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -18,6 +18,14 @@ use crate::stream::ReadFixedSizeExt;
 static GZIP_MAGIC: &[u8; 2] = b"\x1f\x8b";
 static LZ4_LEGACY_MAGIC: &[u8; 4] = b"\x02\x21\x4c\x18";
 static XZ_MAGIC: &[u8; 6] = b"\xfd\x37\x7a\x58\x5a\x00";
+// This is not actually a magic value, but is good enough. The first byte
+// encodes (lc=3, lp=0, pb=2) and the next two bytes are two of the U32LE bytes
+// encoding the dictionary size. If this heuristic is good enough for libmagic,
+// then it's good enough for us too.
+// https://nigeltao.github.io/blog/2024/xz-lzma-part-5-xz.html
+static LZMA_MAGIC: &[u8; 3] = b"\x5d\x00\x00";
+
+const LZMA_MAX_MEMORY_KIB: u32 = 16 * 1024;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -26,9 +34,13 @@ pub enum Error {
     #[error("I/O error when autodetecting compression format")]
     AutoDetect(#[source] io::Error),
     #[error("Failed to initialize legacy LZ4 encoder")]
-    Lz4Init(#[source] io::Error),
+    Lz4EncodeInit(#[source] io::Error),
     #[error("Failed to initialize XZ encoder")]
-    XzInit(#[source] io::Error),
+    XzEncodeInit(#[source] io::Error),
+    #[error("Failed to initialize LZMA decoder")]
+    LzmaDecodeInit(#[source] io::Error),
+    #[error("Failed to initialize LZMA encoder")]
+    LzmaEncodeInit(#[source] io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -113,6 +125,7 @@ pub enum CompressedFormat {
     Gzip,
     Lz4Legacy,
     Xz,
+    Lzma,
 }
 
 pub enum CompressedReader<R: Read> {
@@ -123,16 +136,21 @@ pub enum CompressedReader<R: Read> {
     Lz4(FrameDecoder<R>),
     /// Boxed because the [`XzReader`] is nearly 4 KiB.
     Xz(Box<XzReader<R>>),
+    Lzma(Box<LzmaReader<R>>),
 }
 
 impl<R: Read> CompressedReader<R> {
-    pub fn with_format(reader: R, format: CompressedFormat) -> Self {
+    pub fn with_format(reader: R, format: CompressedFormat) -> Result<Self> {
         match format {
-            CompressedFormat::None => Self::None(reader),
-            CompressedFormat::Deflate => Self::Deflate(DeflateDecoder::new(reader)),
-            CompressedFormat::Gzip => Self::Gzip(GzDecoder::new(reader)),
-            CompressedFormat::Lz4Legacy => Self::Lz4(FrameDecoder::new(reader)),
-            CompressedFormat::Xz => Self::Xz(Box::new(XzReader::new(reader, false))),
+            CompressedFormat::None => Ok(Self::None(reader)),
+            CompressedFormat::Deflate => Ok(Self::Deflate(DeflateDecoder::new(reader))),
+            CompressedFormat::Gzip => Ok(Self::Gzip(GzDecoder::new(reader))),
+            CompressedFormat::Lz4Legacy => Ok(Self::Lz4(FrameDecoder::new(reader))),
+            CompressedFormat::Xz => Ok(Self::Xz(Box::new(XzReader::new(reader, false)))),
+            CompressedFormat::Lzma => Ok(Self::Lzma(Box::new(
+                LzmaReader::new_mem_limit(reader, LZMA_MAX_MEMORY_KIB, None)
+                    .map_err(Error::LzmaDecodeInit)?,
+            ))),
         }
     }
 
@@ -143,6 +161,7 @@ impl<R: Read> CompressedReader<R> {
             Self::Gzip(_) => CompressedFormat::Gzip,
             Self::Lz4(_) => CompressedFormat::Lz4Legacy,
             Self::Xz(_) => CompressedFormat::Xz,
+            Self::Lzma(_) => CompressedFormat::Lzma,
         }
     }
 
@@ -153,6 +172,7 @@ impl<R: Read> CompressedReader<R> {
             Self::Gzip(r) => r.into_inner(),
             Self::Lz4(r) => r.into_inner(),
             Self::Xz(r) => r.into_inner(),
+            Self::Lzma(r) => r.into_inner(),
         }
     }
 }
@@ -163,17 +183,21 @@ impl<R: Read + Seek> CompressedReader<R> {
 
         reader.rewind().map_err(Error::AutoDetect)?;
 
-        if &magic[0..2] == GZIP_MAGIC {
-            Ok(Self::Gzip(GzDecoder::new(reader)))
+        let format = if &magic[0..2] == GZIP_MAGIC {
+            CompressedFormat::Gzip
         } else if &magic[0..4] == LZ4_LEGACY_MAGIC {
-            Ok(Self::Lz4(FrameDecoder::new(reader)))
+            CompressedFormat::Lz4Legacy
         } else if &magic == XZ_MAGIC {
-            Ok(Self::Xz(Box::new(XzReader::new(reader, false))))
+            CompressedFormat::Xz
+        } else if &magic[0..3] == LZMA_MAGIC {
+            CompressedFormat::Lzma
         } else if raw_if_unknown {
-            Ok(Self::None(reader))
+            CompressedFormat::None
         } else {
-            Err(Error::UnknownFormat)
-        }
+            return Err(Error::UnknownFormat);
+        };
+
+        Self::with_format(reader, format)
     }
 }
 
@@ -185,6 +209,7 @@ impl<R: Read> Read for CompressedReader<R> {
             Self::Gzip(r) => r.read(buf),
             Self::Lz4(r) => r.read(buf),
             Self::Xz(r) => r.read(buf),
+            Self::Lzma(r) => r.read(buf),
         }
     }
 }
@@ -195,7 +220,8 @@ pub enum CompressedWriter<W: Write> {
     Deflate(DeflateEncoder<W>),
     Gzip(GzEncoder<W>),
     Lz4Legacy(Lz4LegacyEncoder<W>),
-    Xz(XzWriter<W>),
+    Xz(Box<XzWriter<W>>),
+    Lzma(Box<LzmaWriter<W>>),
 }
 
 impl<W: Write> CompressedWriter<W> {
@@ -210,7 +236,7 @@ impl<W: Write> CompressedWriter<W> {
                 Ok(Self::Gzip(GzEncoder::new(writer, Compression::default())))
             }
             CompressedFormat::Lz4Legacy => {
-                let encoder = Lz4LegacyEncoder::new(writer).map_err(Error::Lz4Init)?;
+                let encoder = Lz4LegacyEncoder::new(writer).map_err(Error::Lz4EncodeInit)?;
                 Ok(Self::Lz4Legacy(encoder))
             }
             CompressedFormat::Xz => {
@@ -218,8 +244,17 @@ impl<W: Write> CompressedWriter<W> {
                 let mut options = XzOptions::with_preset(6);
                 options.set_check_sum_type(CheckType::Crc32);
 
-                let xz_writer = XzWriter::new(writer, options).map_err(Error::XzInit)?;
-                Ok(Self::Xz(xz_writer))
+                let xz_writer = XzWriter::new(writer, options).map_err(Error::XzEncodeInit)?;
+                Ok(Self::Xz(Box::new(xz_writer)))
+            }
+            CompressedFormat::Lzma => {
+                // Defaults are already (lc=3, lp=0, pb=2) and has preset 6.
+                let options = LzmaOptions::default();
+
+                // We only support streaming output.
+                let lzma_writer = LzmaWriter::new_use_header(writer, &options, None)
+                    .map_err(Error::LzmaEncodeInit)?;
+                Ok(Self::Lzma(Box::new(lzma_writer)))
             }
         }
     }
@@ -231,6 +266,7 @@ impl<W: Write> CompressedWriter<W> {
             Self::Gzip(_) => CompressedFormat::Gzip,
             Self::Lz4Legacy(_) => CompressedFormat::Lz4Legacy,
             Self::Xz(_) => CompressedFormat::Xz,
+            Self::Lzma(_) => CompressedFormat::Lzma,
         }
     }
 
@@ -241,6 +277,7 @@ impl<W: Write> CompressedWriter<W> {
             Self::Gzip(w) => w.finish(),
             Self::Lz4Legacy(w) => w.finish(),
             Self::Xz(w) => w.finish(),
+            Self::Lzma(w) => w.finish(),
         }
     }
 }
@@ -253,6 +290,7 @@ impl<W: Write> Write for CompressedWriter<W> {
             Self::Gzip(w) => w.write(buf),
             Self::Lz4Legacy(w) => w.write(buf),
             Self::Xz(w) => w.write(buf),
+            Self::Lzma(w) => w.write(buf),
         }
     }
 
@@ -263,6 +301,79 @@ impl<W: Write> Write for CompressedWriter<W> {
             Self::Gzip(w) => w.flush(),
             Self::Lz4Legacy(w) => w.flush(),
             Self::Xz(w) => w.flush(),
+            Self::Lzma(w) => w.flush(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use rand::Rng;
+
+    use super::*;
+
+    fn round_trip(format: CompressedFormat, can_autodetect: bool) {
+        let mut data = vec![0u8; 1024 * 1024];
+        rand::thread_rng().fill(data.as_mut_slice());
+
+        let mut writer = CompressedWriter::new(Cursor::new(Vec::new()), format).unwrap();
+        writer.write_all(&data).unwrap();
+
+        let mut compressed = writer.finish().unwrap();
+        compressed.rewind().unwrap();
+
+        let mut reader = if can_autodetect {
+            CompressedReader::new(compressed, true).unwrap()
+        } else {
+            CompressedReader::with_format(compressed, format).unwrap()
+        };
+        assert_eq!(reader.format(), format);
+
+        let mut buf = [0u8; 8192];
+        let mut total_read = 0;
+
+        loop {
+            let n = reader.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+
+            assert_eq!(&buf[..n], &data[total_read..][..n]);
+            total_read += n;
+        }
+
+        assert_eq!(total_read, data.len());
+    }
+
+    #[test]
+    fn round_trip_none() {
+        round_trip(CompressedFormat::None, true);
+    }
+
+    #[test]
+    fn round_trip_deflate() {
+        round_trip(CompressedFormat::Deflate, false);
+    }
+
+    #[test]
+    fn round_trip_gzip() {
+        round_trip(CompressedFormat::Gzip, true);
+    }
+
+    #[test]
+    fn round_trip_lz4_legacy() {
+        round_trip(CompressedFormat::Lz4Legacy, true);
+    }
+
+    #[test]
+    fn round_trip_xz() {
+        round_trip(CompressedFormat::Xz, true);
+    }
+
+    #[test]
+    fn round_trip_lzma() {
+        round_trip(CompressedFormat::Lzma, true);
     }
 }

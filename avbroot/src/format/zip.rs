@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2025-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -249,7 +249,8 @@ pub fn compressed_reader<'archive, R: ReaderAt>(
 ) -> Result<CompressedReader<ZipReader<&'archive R>>, rawzip::Error> {
     let format = compression_method_to_format(compression_method)?;
 
-    Ok(CompressedReader::with_format(entry.reader(), format))
+    CompressedReader::with_format(entry.reader(), format)
+        .map_err(|e| rawzip::ErrorKind::InvalidInput { msg: e.to_string() }.into())
 }
 
 pub fn compressed_slice_reader<'archive>(
@@ -259,7 +260,8 @@ pub fn compressed_slice_reader<'archive>(
     let format = compression_method_to_format(compression_method)?;
     let raw_reader = Cursor::new(entry.data());
 
-    Ok(CompressedReader::with_format(raw_reader, format))
+    CompressedReader::with_format(raw_reader, format)
+        .map_err(|e| rawzip::ErrorKind::InvalidInput { msg: e.to_string() }.into())
 }
 
 pub fn verifying_reader<'archive, R: ReaderAt>(
@@ -286,7 +288,12 @@ pub fn compressed_writer<W: Write>(
 
     match CompressedWriter::new(writer, format) {
         Ok(w) => Ok(w),
-        Err(Error::Lz4Init(e) | Error::XzInit(e)) => Err(e.into()),
+        Err(
+            Error::Lz4EncodeInit(e)
+            | Error::XzEncodeInit(e)
+            | Error::LzmaDecodeInit(e)
+            | Error::LzmaEncodeInit(e),
+        ) => Err(e.into()),
         Err(Error::UnknownFormat | Error::AutoDetect(_)) => unreachable!(),
     }
 }
