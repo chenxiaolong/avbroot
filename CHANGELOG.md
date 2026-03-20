@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.27.0
 
 * Add support for LZMA compression for ramdisks ([Issue #578], [PR #580])
 * Update dependencies ([PR #579])
