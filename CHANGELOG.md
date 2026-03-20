@@ -9,6 +9,7 @@
 
 ### Unreleased
 
+* Add support for LZMA compression for ramdisks ([Issue #578], [PR #580])
 * Update dependencies ([PR #579])
 
 ### Version 3.26.1
@@ -478,6 +479,7 @@ Behind-the-scenes changes:
 [Issue #537]: https://github.com/chenxiaolong/avbroot/issues/537
 [Issue #554]: https://github.com/chenxiaolong/avbroot/issues/554
 [Issue #569]: https://github.com/chenxiaolong/avbroot/issues/569
+[Issue #578]: https://github.com/chenxiaolong/avbroot/issues/578
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -704,3 +706,4 @@ Behind-the-scenes changes:
 [PR #571]: https://github.com/chenxiaolong/avbroot/pull/571
 [PR #573]: https://github.com/chenxiaolong/avbroot/pull/573
 [PR #579]: https://github.com/chenxiaolong/avbroot/pull/579
+[PR #580]: https://github.com/chenxiaolong/avbroot/pull/580
