@@ -22,15 +22,12 @@ use crate::{
     util,
 };
 
-fn open_reader(path: &Path, allow_delta: bool) -> Result<(BufReader<File>, PayloadHeader)> {
+fn open_reader(path: &Path) -> Result<(BufReader<File>, PayloadHeader)> {
     let mut reader = File::open(path)
         .map(BufReader::new)
         .with_context(|| format!("Failed to open payload for reading: {path:?}"))?;
     let header = PayloadHeader::from_reader(&mut reader)
         .with_context(|| format!("Failed to read payload header: {path:?}"))?;
-    if !allow_delta && !header.is_full_ota() {
-        bail!("Payload is a delta OTA, not a full OTA");
-    }
 
     Ok((reader, header))
 }
@@ -104,7 +101,7 @@ fn unpack_subcommand(
     cli: &UnpackCli,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let (mut reader, header) = open_reader(&cli.input, false)?;
+    let (mut reader, header) = open_reader(&cli.input)?;
     let payload_size = reader
         .seek(SeekFrom::End(0))
         .with_context(|| format!("Failed to get file size: {:?}", cli.input))?;
@@ -114,6 +111,10 @@ fn unpack_subcommand(
     write_info(&cli.output_info, &header)?;
 
     if !cli.no_output_images {
+        if !header.is_full_ota() {
+            bail!("Cannot extract images from a delta payload");
+        }
+
         fs::create_dir_all(&cli.output_images)
             .with_context(|| format!("Failed to create directory: {:?}", cli.output_images))?;
 
@@ -260,7 +261,7 @@ fn repack_subcommand(
 ) -> Result<()> {
     let signing_key = load_key(&cli.key)?;
 
-    let (mut reader, header) = open_reader(&cli.input, true)?;
+    let (mut reader, header) = open_reader(&cli.input)?;
 
     info!("Generating new OTA payload");
 
@@ -316,7 +317,7 @@ fn repack_subcommand(
 }
 
 fn info_subcommand(payload_cli: &PayloadCli, cli: &InfoCli) -> Result<()> {
-    let (_, header) = open_reader(&cli.input, true)?;
+    let (_, header) = open_reader(&cli.input)?;
 
     display_header(payload_cli, &header);
 
