@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.28.0
 
 * Add support for unpacking metadata from delta payloads in `avbroot payload unpack` ([Discussion #582], [PR #584])
 
