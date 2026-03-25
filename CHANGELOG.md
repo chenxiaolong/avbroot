@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for unpacking metadata from delta payloads in `avbroot payload unpack` ([Discussion #582], [PR #584])
+
 ### Version 3.27.0
 
 * Add support for LZMA compression for ramdisks ([Issue #578], [PR #580])
@@ -441,6 +445,7 @@ Behind-the-scenes changes:
 [Discussion #294]: https://github.com/chenxiaolong/avbroot/discussions/294
 [Discussion #417]: https://github.com/chenxiaolong/avbroot/discussions/417
 [Discussion #426]: https://github.com/chenxiaolong/avbroot/discussions/426
+[Discussion #582]: https://github.com/chenxiaolong/avbroot/discussions/582
 [Issue #138]: https://github.com/chenxiaolong/avbroot/issues/138
 [Issue #144]: https://github.com/chenxiaolong/avbroot/issues/144
 [Issue #145]: https://github.com/chenxiaolong/avbroot/issues/145
@@ -707,3 +712,4 @@ Behind-the-scenes changes:
 [PR #573]: https://github.com/chenxiaolong/avbroot/pull/573
 [PR #579]: https://github.com/chenxiaolong/avbroot/pull/579
 [PR #580]: https://github.com/chenxiaolong/avbroot/pull/580
+[PR #584]: https://github.com/chenxiaolong/avbroot/pull/584
