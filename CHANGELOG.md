@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Add support for unpacking/packing payloads at the same time as the OTA in `avbroot zip {unpack,pack}` ([Discussion #582], [PR #586])
+* Add new `--skeleton` option to `avbroot payload unpack` ([Discussion #582], [PR #587])
 
 ### Version 3.28.0
 
@@ -718,3 +719,4 @@ Behind-the-scenes changes:
 [PR #580]: https://github.com/chenxiaolong/avbroot/pull/580
 [PR #584]: https://github.com/chenxiaolong/avbroot/pull/584
 [PR #586]: https://github.com/chenxiaolong/avbroot/pull/586
+[PR #587]: https://github.com/chenxiaolong/avbroot/pull/587
