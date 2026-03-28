@@ -303,6 +303,7 @@ fn unpack_subcommand(zip_cli: &ZipCli, cli: &UnpackCli, cancel_signal: &AtomicBo
                 &cli.output_payload_info,
                 &cli.output_payload_images,
                 cli.no_output_payload_images,
+                cli.payload_skeleton,
                 &zip_reader.get_ref().0,
                 payload_offset,
                 payload_size,
@@ -625,8 +626,16 @@ struct UnpackCli {
     output_payload_images: PathBuf,
 
     /// Do not output payload images.
-    #[arg(long, conflicts_with = "output_payload_images", requires = "payload")]
+    #[arg(
+        long,
+        conflicts_with_all = ["output_payload_images", "payload_skeleton"],
+        requires = "payload"
+    )]
     no_output_payload_images: bool,
+
+    /// Only create empty sparse files for output payload images.
+    #[arg(long, requires = "payload")]
+    payload_skeleton: bool,
 }
 
 /// Pack an OTA zip.

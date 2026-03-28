@@ -108,6 +108,7 @@ pub fn unpack_payload(
     output_info: &Path,
     output_images: &Path,
     no_output_images: bool,
+    skeleton: bool,
     reader: &File,
     payload_offset: u64,
     payload_size: u64,
@@ -123,28 +124,46 @@ pub fn unpack_payload(
     write_info(output_info, &header)?;
 
     if !no_output_images {
-        if !header.is_full_ota() {
-            bail!("Cannot extract images from a delta payload");
-        }
-
         fs::create_dir_all(output_images)
             .with_context(|| format!("Failed to create directory: {output_images:?}"))?;
 
-        ota::extract_payload(
-            reader,
-            output_images,
-            payload_offset,
-            payload_size,
-            &header,
-            &header
-                .manifest
-                .partitions
-                .iter()
-                .map(|p| &p.partition_name)
-                .cloned()
-                .collect(),
-            cancel_signal,
-        )?;
+        if skeleton {
+            for partition in &header.manifest.partitions {
+                let name = &partition.partition_name;
+                let path = util::path_join_single(output_images, format!("{name}.img"))?;
+                let size = partition
+                    .new_partition_info
+                    .as_ref()
+                    .and_then(|info| info.size)
+                    .ok_or_else(|| anyhow!("Size not found for partition: {name}"))?;
+
+                let file = File::create(&path)
+                    .with_context(|| format!("Failed to create file: {path:?}"))?;
+
+                file.set_len(size)
+                    .with_context(|| format!("Failed to truncate file: {path:?}"))?;
+            }
+        } else {
+            if !header.is_full_ota() {
+                bail!("Cannot extract images from a delta payload");
+            }
+
+            ota::extract_payload(
+                reader,
+                output_images,
+                payload_offset,
+                payload_size,
+                &header,
+                &header
+                    .manifest
+                    .partitions
+                    .iter()
+                    .map(|p| &p.partition_name)
+                    .cloned()
+                    .collect(),
+                cancel_signal,
+            )?;
+        }
     }
 
     Ok(())
@@ -165,6 +184,7 @@ fn unpack_subcommand(
         &cli.output_info,
         &cli.output_images,
         cli.no_output_images,
+        cli.skeleton,
         &reader,
         0,
         payload_size,
@@ -448,8 +468,12 @@ struct UnpackCli {
     output_images: PathBuf,
 
     /// Do not output images.
-    #[arg(long, conflicts_with = "output_images")]
+    #[arg(long, conflicts_with_all = ["output_images", "skeleton"])]
     no_output_images: bool,
+
+    /// Only create empty sparse files for output images.
+    #[arg(long)]
+    skeleton: bool,
 }
 
 /// Pack a payload binary.

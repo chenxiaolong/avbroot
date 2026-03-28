@@ -340,7 +340,7 @@ avbroot payload unpack -i <input payload>
 
 This subcommand unpacks the payload header information to `payload.toml` and the partition images to the `payload_images` directory.
 
-Only full payload binaries can be unpacked. Delta payload binaries from incremental OTAs are not supported.
+Data can only be unpacked from full payload binaries. For delta payloads, either use `--no-output-images` to skip image extraction or use `--skeleton` to create properly sized sparse files with no data.
 
 ### Packing a payload binary
 
