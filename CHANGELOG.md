@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.29.0
 
 * Add support for unpacking/packing payloads at the same time as the OTA in `avbroot zip {unpack,pack}` ([Discussion #582], [PR #586])
 * Add new `--skeleton` option to `avbroot payload unpack` ([Discussion #582], [PR #587])
