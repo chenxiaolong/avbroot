@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for unpacking/packing payloads at the same time as the OTA in `avbroot zip {unpack,pack}` ([Discussion #582], [PR #586])
+
 ### Version 3.28.0
 
 * Add support for unpacking metadata from delta payloads in `avbroot payload unpack` ([Discussion #582], [PR #584])
@@ -713,3 +717,4 @@ Behind-the-scenes changes:
 [PR #579]: https://github.com/chenxiaolong/avbroot/pull/579
 [PR #580]: https://github.com/chenxiaolong/avbroot/pull/580
 [PR #584]: https://github.com/chenxiaolong/avbroot/pull/584
+[PR #586]: https://github.com/chenxiaolong/avbroot/pull/586
