@@ -704,11 +704,11 @@ fn create_payload(
             .with_context(|| format!("Failed to copy from image: {name}"))?;
     }
 
-    let (_, _, properties, metadata_size) = payload_writer
+    let (_, header, properties) = payload_writer
         .finish()
         .context("Failed to finalize payload")?;
 
-    Ok((properties, metadata_size))
+    Ok((properties, header.blob_offset))
 }
 
 #[allow(clippy::too_many_arguments)]

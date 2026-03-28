@@ -313,7 +313,7 @@ pub trait ZipArchiveReadAtExt {
 
 impl ZipArchiveReadAtExt for ZipArchive<()> {}
 
-pub struct ReaderAtWrapper<R: ReadAt>(R);
+pub struct ReaderAtWrapper<R: ReadAt>(pub R);
 
 impl<R: ReadAt> ReaderAt for ReaderAtWrapper<R> {
     fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {

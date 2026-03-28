@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2022-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2022-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -436,11 +436,11 @@ impl<W: Write> PayloadWriter<W> {
 
     /// Finalize the payload. If this function is not called, the payload will
     /// be left in an incomplete state. Returns the original writer, the final
-    /// header, the contents that should be written for `payload_properties.txt`
-    /// and the length of the header + manifest + manifest signature sections
-    /// (for constructing the `payload_metadata.bin` OTA metadata property files
-    /// entry).
-    pub fn finish(mut self) -> Result<(W, PayloadHeader, String, u64)> {
+    /// header and the data that should be written for `payload_properties.txt`.
+    /// [`PayloadHeader::blob_offset`] indicates the length of the header +
+    /// manifest + manifest signature sections (for constructing the
+    /// `payload_metadata.bin` OTA metadata property files entry).
+    pub fn finish(mut self) -> Result<(W, PayloadHeader, String)> {
         // Append payload signature.
         let payload_partial_hash = self.h_partial.clone().finish();
         let payload_sig = sign_digest(payload_partial_hash.as_ref(), &self.key)?;
@@ -465,7 +465,9 @@ impl<W: Write> PayloadWriter<W> {
             self.metadata_size as u64,
         );
 
-        Ok((self.inner, self.header, properties, metadata_with_sig_size))
+        self.header.blob_offset = metadata_with_sig_size;
+
+        Ok((self.inner, self.header, properties))
     }
 
     /// Prepare for writing the next source data blob corresponding to an

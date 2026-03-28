@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2024-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
     collections::HashMap,
     ffi::OsString,
     fs::{self, File},
-    io::{BufReader, BufWriter, Seek, SeekFrom},
+    io::{BufReader, BufWriter, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
 };
@@ -18,18 +18,26 @@ use crate::{
     cli::ota,
     crypto::{self, PassphraseSource, RsaSigningKey},
     format::payload::{PayloadHeader, PayloadWriter},
-    stream::{self, FromReader},
+    stream::{self, FromReader, SectionReader},
     util,
 };
 
+fn open_raw_reader(path: &Path) -> Result<File> {
+    File::open(path).with_context(|| format!("Failed to open payload for reading: {path:?}"))
+}
+
 fn open_reader(path: &Path) -> Result<(BufReader<File>, PayloadHeader)> {
-    let mut reader = File::open(path)
-        .map(BufReader::new)
-        .with_context(|| format!("Failed to open payload for reading: {path:?}"))?;
+    let mut reader = open_raw_reader(path).map(BufReader::new)?;
     let header = PayloadHeader::from_reader(&mut reader)
         .with_context(|| format!("Failed to read payload header: {path:?}"))?;
 
     Ok((reader, header))
+}
+
+fn open_raw_writer(path: &Path) -> Result<BufWriter<File>> {
+    File::create(path)
+        .map(BufWriter::new)
+        .with_context(|| format!("Failed to open payload for writing: {path:?}"))
 }
 
 fn open_writer(
@@ -37,9 +45,7 @@ fn open_writer(
     header: PayloadHeader,
     key: RsaSigningKey,
 ) -> Result<PayloadWriter<BufWriter<File>>> {
-    let writer = File::create(path)
-        .map(BufWriter::new)
-        .with_context(|| format!("Failed to open payload for writing: {path:?}"))?;
+    let writer = open_raw_writer(path)?;
     let payload_writer = PayloadWriter::new(writer, header, key)
         .with_context(|| format!("Failed to write payload header: {path:?}"))?;
 
@@ -64,8 +70,8 @@ fn write_info(path: &Path, manifest: &PayloadHeader) -> Result<()> {
     Ok(())
 }
 
-fn display_header(cli: &PayloadCli, header: &PayloadHeader) {
-    if !cli.quiet {
+fn display_header(quiet: bool, header: &PayloadHeader) {
+    if !quiet {
         println!("{header:#?}");
     }
 }
@@ -96,32 +102,38 @@ fn load_key(group: &KeyGroup) -> Result<RsaSigningKey> {
     Ok(signing_key)
 }
 
-fn unpack_subcommand(
-    payload_cli: &PayloadCli,
-    cli: &UnpackCli,
+#[allow(clippy::too_many_arguments)]
+pub fn unpack_payload(
+    quiet: bool,
+    output_info: &Path,
+    output_images: &Path,
+    no_output_images: bool,
+    reader: &File,
+    payload_offset: u64,
+    payload_size: u64,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let (mut reader, header) = open_reader(&cli.input)?;
-    let payload_size = reader
-        .seek(SeekFrom::End(0))
-        .with_context(|| format!("Failed to get file size: {:?}", cli.input))?;
+    let section_reader = SectionReader::new(reader, payload_offset, payload_size)
+        .context("Failed to directly open payload section")?;
+    let header =
+        PayloadHeader::from_reader(section_reader).context("Failed to read payload header")?;
 
-    display_header(payload_cli, &header);
+    display_header(quiet, &header);
 
-    write_info(&cli.output_info, &header)?;
+    write_info(output_info, &header)?;
 
-    if !cli.no_output_images {
+    if !no_output_images {
         if !header.is_full_ota() {
             bail!("Cannot extract images from a delta payload");
         }
 
-        fs::create_dir_all(&cli.output_images)
-            .with_context(|| format!("Failed to create directory: {:?}", cli.output_images))?;
+        fs::create_dir_all(output_images)
+            .with_context(|| format!("Failed to create directory: {output_images:?}"))?;
 
         ota::extract_payload(
-            &reader.into_inner(),
-            &cli.output_images,
-            0,
+            reader,
+            output_images,
+            payload_offset,
             payload_size,
             &header,
             &header
@@ -138,14 +150,37 @@ fn unpack_subcommand(
     Ok(())
 }
 
-fn pack_subcommand(
+fn unpack_subcommand(
     payload_cli: &PayloadCli,
-    cli: &PackCli,
+    cli: &UnpackCli,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let signing_key = load_key(&cli.key)?;
+    let mut reader = open_raw_reader(&cli.input)?;
+    let payload_size = reader
+        .seek(SeekFrom::End(0))
+        .with_context(|| format!("Failed to get file size: {:?}", cli.input))?;
 
-    let mut header = read_info(&cli.input_info)?;
+    unpack_payload(
+        payload_cli.quiet,
+        &cli.output_info,
+        &cli.output_images,
+        cli.no_output_images,
+        &reader,
+        0,
+        payload_size,
+        cancel_signal,
+    )
+}
+
+pub fn pack_payload(
+    quiet: bool,
+    input_info: &Path,
+    input_images: &Path,
+    writer: &mut dyn Write,
+    signing_key: &RsaSigningKey,
+    cancel_signal: &AtomicBool,
+) -> Result<(String, u64)> {
+    let mut header = read_info(input_info)?;
 
     // Pre-open all of the image files.
     let input_files = header
@@ -153,8 +188,7 @@ fn pack_subcommand(
         .partitions
         .iter()
         .map(|p| {
-            let path =
-                util::path_join_single(&cli.input_images, format!("{}.img", p.partition_name))?;
+            let path = util::path_join_single(input_images, format!("{}.img", p.partition_name))?;
             let file = File::open(&path)
                 .map(Arc::new)
                 .with_context(|| format!("Failed to open file: {path:?}"))?;
@@ -200,7 +234,8 @@ fn pack_subcommand(
 
     // Now we can write the actual payload. With everything precomputed, this is
     // mostly just a simple copy.
-    let mut payload_writer = open_writer(&cli.output, header.clone(), signing_key)?;
+    let mut payload_writer = PayloadWriter::new(writer, header.clone(), signing_key.clone())
+        .context("Failed to write payload header")?;
 
     while payload_writer
         .begin_next_operation()
@@ -236,14 +271,35 @@ fn pack_subcommand(
             .with_context(|| format!("Failed to copy from replacement image: {name}"))?;
     }
 
-    let (raw_writer, header, properties, _) = payload_writer
+    let (_, header, properties) = payload_writer
         .finish()
         .context("Failed to finalize payload")?;
 
-    raw_writer.into_inner().context("Failed to flush payload")?;
-
     // Display the header information now that it has been finalized.
-    display_header(payload_cli, &header);
+    display_header(quiet, &header);
+
+    Ok((properties, header.blob_offset))
+}
+
+fn pack_subcommand(
+    payload_cli: &PayloadCli,
+    cli: &PackCli,
+    cancel_signal: &AtomicBool,
+) -> Result<()> {
+    let signing_key = load_key(&cli.key)?;
+
+    let mut writer = open_raw_writer(&cli.output)?;
+
+    let (properties, _) = pack_payload(
+        payload_cli.quiet,
+        &cli.input_info,
+        &cli.input_images,
+        &mut writer,
+        &signing_key,
+        cancel_signal,
+    )?;
+
+    writer.into_inner().context("Failed to flush payload")?;
 
     // Optionally, write payload_properties.txt.
     if let Some(path) = &cli.output_properties {
@@ -300,12 +356,12 @@ fn repack_subcommand(
             .with_context(|| format!("Failed to copy from original payload: {name}"))?;
     }
 
-    let (_, header, properties, _) = payload_writer
+    let (_, header, properties) = payload_writer
         .finish()
         .context("Failed to finalize payload")?;
 
     // Display the header information now that it has been finalized.
-    display_header(payload_cli, &header);
+    display_header(payload_cli.quiet, &header);
 
     // Optionally, write payload_properties.txt.
     if let Some(path) = &cli.output_properties {
@@ -319,7 +375,7 @@ fn repack_subcommand(
 fn info_subcommand(payload_cli: &PayloadCli, cli: &InfoCli) -> Result<()> {
     let (_, header) = open_reader(&cli.input)?;
 
-    display_header(payload_cli, &header);
+    display_header(payload_cli.quiet, &header);
 
     Ok(())
 }

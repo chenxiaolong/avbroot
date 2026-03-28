@@ -5,7 +5,7 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     fs::{self, File, OpenOptions},
-    io::{BufReader, Seek},
+    io::{BufReader, Seek, Write},
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
 };
@@ -21,6 +21,7 @@ use tracing::warn;
 use x509_cert::Certificate;
 
 use crate::{
+    cli::payload,
     crypto::{self, PassphraseSource, RsaSigningKey},
     format::{
         ota::{self, SigningWriter, ZipEntry, ZipMode},
@@ -137,8 +138,8 @@ fn write_info(path: &Path, info: &OtaInfo) -> Result<()> {
     Ok(())
 }
 
-fn display_info(cli: &ZipCli, info: &OtaInfo) {
-    if !cli.quiet {
+fn display_info(quiet: bool, info: &OtaInfo) {
+    if !quiet {
         println!("{info:#?}");
     }
 }
@@ -285,11 +286,32 @@ fn finalize_ota(
 fn unpack_subcommand(zip_cli: &ZipCli, cli: &UnpackCli, cancel_signal: &AtomicBool) -> Result<()> {
     let (zip_reader, metadata, input_entries) = open_reader(&cli.input)?;
 
-    if !cli.no_output_files {
-        for (path, input_entry) in &input_entries {
-            let entry = zip_reader
-                .get_entry(input_entry.wayfinder)
-                .with_context(|| format!("Failed to open zip entry: {path}"))?;
+    for (path, input_entry) in &input_entries {
+        let entry = zip_reader
+            .get_entry(input_entry.wayfinder)
+            .with_context(|| format!("Failed to open zip entry: {path}"))?;
+
+        if cli.payload && path == ota::PATH_PAYLOAD {
+            let (payload_offset, payload_size) = {
+                let range = entry.compressed_data_range();
+
+                (range.0, range.1 - range.0)
+            };
+
+            payload::unpack_payload(
+                zip_cli.quiet,
+                &cli.output_payload_info,
+                &cli.output_payload_images,
+                cli.no_output_payload_images,
+                &zip_reader.get_ref().0,
+                payload_offset,
+                payload_size,
+                cancel_signal,
+            )?;
+        } else if cli.payload && path == ota::PATH_PROPERTIES {
+            // We intentionally ignore this since it's recomputed when
+            // packing with --payload.
+        } else if !cli.no_output_files {
             let mut entry_reader = zip::verifying_reader(&entry, input_entry.compression_method)
                 .with_context(|| format!("Failed to open zip entry: {path}"))?;
 
@@ -312,7 +334,7 @@ fn unpack_subcommand(zip_cli: &ZipCli, cli: &UnpackCli, cancel_signal: &AtomicBo
         files: input_entries.into_keys().collect(),
     };
 
-    display_info(zip_cli, &info);
+    display_info(zip_cli.quiet, &info);
     write_info(&cli.output_info, &info)?;
 
     Ok(())
@@ -331,10 +353,15 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
             continue;
         }
 
-        let input_path = util::path_join(&cli.input_files, path)?;
-        let input_size = fs::metadata(&input_path)
-            .map(|m| m.len())
-            .with_context(|| format!("Failed to get file size: {input_path:?}"))?;
+        let input_size =
+            if cli.payload && (path == ota::PATH_PAYLOAD || path == ota::PATH_PROPERTIES) {
+                0
+            } else {
+                let input_path = util::path_join(&cli.input_files, path)?;
+                fs::metadata(&input_path)
+                    .map(|m| m.len())
+                    .with_context(|| format!("Failed to get file size: {input_path:?}"))?
+            };
 
         input_entries.insert(path, input_size >= 0xffffffff);
     }
@@ -342,27 +369,55 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
     let mut payload_metadata_size = None;
     let mut metadata_entries = vec![];
 
+    // Only used when packing the zip and payload at the same time.
+    let mut payload_properties = None;
+
     for (&path, &is_zip64) in &input_entries {
         let (offset, mut data_writer) =
             start_entry(&mut zip_writer, path, cli.zip_mode.zip_mode, is_zip64)?;
 
-        let input_path = util::path_join(&cli.input_files, path)?;
-        let mut input_file = File::open(&input_path)
-            .with_context(|| format!("Failed to open for reading: {input_path:?}"))?;
+        if path == ota::PATH_PAYLOAD && cli.payload {
+            // Pack the payload directly into the zip.
+            let (properties, metadata_size) = payload::pack_payload(
+                zip_cli.quiet,
+                &cli.input_payload_info,
+                &cli.input_payload_images,
+                &mut data_writer,
+                &signing_key,
+                cancel_signal,
+            )?;
 
-        if path == ota::PATH_PAYLOAD {
-            let header = PayloadHeader::from_reader(&mut input_file)
-                .with_context(|| format!("Failed to read payload header: {input_path:?}"))?;
+            payload_metadata_size = Some(metadata_size);
+            payload_properties = Some(properties);
+        } else if path == ota::PATH_PROPERTIES && cli.payload {
+            // We process files in order, so this would only happen if the file
+            // list did not contain the payload.
+            let properties = payload_properties
+                .as_ref()
+                .ok_or_else(|| anyhow!("Payload has not been processed yet"))?;
 
-            payload_metadata_size = Some(header.blob_offset);
+            data_writer
+                .write_all(properties.as_bytes())
+                .with_context(|| format!("Failed to write zip entry: {path}"))?;
+        } else {
+            let input_path = util::path_join(&cli.input_files, path)?;
+            let mut input_file = File::open(&input_path)
+                .with_context(|| format!("Failed to open for reading: {input_path:?}"))?;
 
-            input_file
-                .rewind()
-                .with_context(|| format!("Failed to seek file: {input_path:?}"))?;
+            if path == ota::PATH_PAYLOAD {
+                let header = PayloadHeader::from_reader(&mut input_file)
+                    .with_context(|| format!("Failed to read payload header: {input_path:?}"))?;
+
+                payload_metadata_size = Some(header.blob_offset);
+
+                input_file
+                    .rewind()
+                    .with_context(|| format!("Failed to seek file: {input_path:?}"))?;
+            }
+
+            stream::copy(&mut input_file, &mut data_writer, cancel_signal)
+                .with_context(|| format!("Failed to copy zip entry: {path}"))?;
         }
-
-        stream::copy(&mut input_file, &mut data_writer, cancel_signal)
-            .with_context(|| format!("Failed to copy zip entry: {path}"))?;
 
         finalize_entry(path, offset, data_writer, &mut metadata_entries)?;
     }
@@ -382,7 +437,7 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
     info.files.retain(|p| !is_excluded_path(p));
     info.files.sort();
 
-    display_info(zip_cli, &info);
+    display_info(zip_cli.quiet, &info);
 
     if let Some(path) = &cli.output_info {
         write_info(path, &info)?;
@@ -446,7 +501,7 @@ fn repack_subcommand(zip_cli: &ZipCli, cli: &RepackCli, cancel_signal: &AtomicBo
         files: input_entries.into_keys().collect(),
     };
 
-    display_info(zip_cli, &info);
+    display_info(zip_cli.quiet, &info);
 
     Ok(())
 }
@@ -458,7 +513,7 @@ fn info_subcommand(zip_cli: &ZipCli, cli: &InfoCli) -> Result<()> {
         files: input_entries.into_keys().collect(),
     };
 
-    display_info(zip_cli, &info);
+    display_info(zip_cli.quiet, &info);
 
     Ok(())
 }
@@ -541,6 +596,37 @@ struct UnpackCli {
     /// Do not output files.
     #[arg(long, conflicts_with = "output_files")]
     no_output_files: bool,
+
+    /// Also unpack the payload in the OTA.
+    ///
+    /// Unpacking the zip and payload at the same time is more efficient than
+    /// unpacking them separately.
+    #[arg(long)]
+    payload: bool,
+
+    /// Path to output payload info TOML.
+    #[arg(
+        long,
+        value_name = "FILE",
+        value_parser,
+        default_value = "payload.toml",
+        requires = "payload"
+    )]
+    output_payload_info: PathBuf,
+
+    /// Path to output payload images directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        value_parser,
+        default_value = "payload_images",
+        requires = "payload"
+    )]
+    output_payload_images: PathBuf,
+
+    /// Do not output payload images.
+    #[arg(long, conflicts_with = "output_payload_images", requires = "payload")]
+    no_output_payload_images: bool,
 }
 
 /// Pack an OTA zip.
@@ -572,6 +658,33 @@ struct PackCli {
     /// Path to input files directory.
     #[arg(long, value_name = "DIR", value_parser, default_value = "ota_files")]
     input_files: PathBuf,
+
+    /// Also pack the payload in the OTA.
+    ///
+    /// Packing the zip and payload at the same time is more efficient than
+    /// packing them separately.
+    #[arg(long)]
+    payload: bool,
+
+    /// Path to input payload info TOML.
+    #[arg(
+        long,
+        value_name = "FILE",
+        value_parser,
+        default_value = "payload.toml",
+        requires = "payload"
+    )]
+    input_payload_info: PathBuf,
+
+    /// Path to input payload images directory.
+    #[arg(
+        long,
+        value_name = "DIR",
+        value_parser,
+        default_value = "payload_images",
+        requires = "payload"
+    )]
+    input_payload_images: PathBuf,
 
     #[command(flatten)]
     key: KeyGroup,

@@ -429,18 +429,22 @@ This set of commands is for working with raw OTA zip files. They are intentional
 ### Unpacking an OTA zip
 
 ```bash
-avbroot zip unpack -i <input OTA>
+avbroot zip unpack -i <input OTA> [--payload]
 ```
 
 This subcommand unpacks the OTA metadata to `ota.toml` and the OTA files to the `ota_files` directory.
 
+When `--payload` is specified, the payload and OTA zip will be unpacked at the same time, which is significantly more efficient that unpack the payload and OTA zip separately. The payload unpacking process writes to the same `payload.toml` and `payload_images` outputs as `avbroot payload unpack`.
+
 ### Packing an OTA zip
 
 ```bash
-avbroot zip pack -o <output OTA> -k <OTA private key>
+avbroot zip pack -o <output OTA> -k <OTA private key> [--payload]
 ```
 
 This subcommand packs a new OTA zip from the `ota.toml` file and `ota_files` directory. Any files in the `ota_files` directory that don't have a corresponding entry in `ota.toml` are silently ignored.
+
+When `--payload` is specified, the payload and OTA zip will be packed at the same time, which is significantly more efficient than packing the payload and OTA zip separately. The payload packing process reads the same `payload.toml` and `payload_images` inputs as `avbroot payload pack`.
 
 When packing an OTA zip, the `metadata.property_files` field in `ota.toml` may potentially be recomputed. To write a TOML file containing the new values, use `--output-info <output TOML>`. It is safe to overwrite the existing `ota.toml` if desired.
 
