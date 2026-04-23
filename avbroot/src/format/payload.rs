@@ -45,7 +45,7 @@ use crate::{
 const PAYLOAD_MAGIC: &[u8; 4] = b"CrAU";
 const PAYLOAD_VERSION: u64 = 2;
 
-const MANIFEST_MAX_SIZE: usize = 4 * 1024 * 1024;
+const MANIFEST_MAX_SIZE: usize = 16 * 1024 * 1024;
 
 /// Size of each extent. This matches what AOSP's delta_generator does. We also
 /// require this to be a multiple of the block size and a multiple of the
