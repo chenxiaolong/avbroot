@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.29.1
 
 * Increase memory limit for payload manifest size to 16 MiB ([Issue #593], [PR #594])
 
