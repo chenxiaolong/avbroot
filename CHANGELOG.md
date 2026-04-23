@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Increase memory limit for payload manifest size to 16 MiB ([Issue #593], [PR #594])
+
 ### Version 3.29.0
 
 * Add support for unpacking/packing payloads at the same time as the OTA in `avbroot zip {unpack,pack}` ([Discussion #582], [PR #586])
@@ -490,6 +494,7 @@ Behind-the-scenes changes:
 [Issue #554]: https://github.com/chenxiaolong/avbroot/issues/554
 [Issue #569]: https://github.com/chenxiaolong/avbroot/issues/569
 [Issue #578]: https://github.com/chenxiaolong/avbroot/issues/578
+[Issue #593]: https://github.com/chenxiaolong/avbroot/issues/593
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -720,3 +725,4 @@ Behind-the-scenes changes:
 [PR #584]: https://github.com/chenxiaolong/avbroot/pull/584
 [PR #586]: https://github.com/chenxiaolong/avbroot/pull/586
 [PR #587]: https://github.com/chenxiaolong/avbroot/pull/587
+[PR #594]: https://github.com/chenxiaolong/avbroot/pull/594
