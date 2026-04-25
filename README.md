@@ -614,4 +614,4 @@ Contributions are welcome! However, I'm unlikely to accept changes for supportin
 
 ## License
 
-avbroot is licensed under GPLv3. Please see [`LICENSE`](./LICENSE) for the full license text.
+avbroot is licensed under GPL-3.0-only. Please see [`LICENSE`](./LICENSE) for the full license text.
