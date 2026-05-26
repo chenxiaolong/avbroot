@@ -136,7 +136,7 @@ If you lose your AVB or OTA signing key, you will no longer be able to sign new 
 
 ## Initial setup
 
-1. Make sure that the version of fastboot is 34 or newer. Older versions have bugs that prevent the `fastboot flashall` command (required later) from working properly.
+1. Make sure that the version of fastboot is 35 or newer. Older versions have bugs that prevent the `fastboot flashall` command (required later) from working properly.
 
     ```bash
     fastboot --version
