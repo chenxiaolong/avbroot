@@ -1459,7 +1459,7 @@ pub fn compress_image(
             .collect::<io::Result<Vec<_>>>()
             .map_err(Error::ChunkWrite)?;
 
-        operations.extend(group_operations.into_iter());
+        operations.extend(group_operations);
     }
 
     let digest_uncompressed = context_uncompressed.finish();

@@ -1415,7 +1415,7 @@ pub fn patch_boot_images<'a>(
 
     // Regroup data so we can parallelize by target.
     let mut groups = HashMap::<&str, (BootImageInfo, Vec<&Box<dyn BootImagePatch + Sync>>)>::new();
-    for (patcher, targets) in patchers.iter().zip(all_targets.into_iter()) {
+    for (patcher, targets) in patchers.iter().zip(all_targets) {
         for target in targets {
             groups
                 .entry(target)
