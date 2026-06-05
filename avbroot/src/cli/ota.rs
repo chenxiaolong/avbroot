@@ -2254,11 +2254,58 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     Ok(())
 }
 
+pub fn list_subcommand(cli: &ListCli) -> Result<()> {
+    let raw_reader = File::open(&cli.input)
+        .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
+    let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
+    let zip = ZipArchive::from_read_at(&raw_reader, &mut buffer)
+        .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
+    let mut entries = zip.entries_safe(&mut buffer);
+
+    while let Some((cd_entry, _)) =
+        entries.next_entry().context("Failed to list zip entries")?
+    {
+        let path = cd_entry
+            .file_path_utf8()
+            .context("Zip contains non-UTF-8 paths")?;
+
+        if path != ota::PATH_PAYLOAD {
+            continue;
+        }
+
+        let entry_reader = zip
+            .get_entry(cd_entry.wayfinder())
+            .and_then(|e| zip::verifying_reader(&e, cd_entry.compression_method()))
+            .with_context(|| format!("Failed to open zip entry: {path}"))?;
+        let header = PayloadHeader::from_reader(entry_reader)
+            .context("Failed to load OTA payload header")?;
+
+        for partition in header.manifest.partitions {
+            let name = &partition.partition_name;
+
+            util::path_ensure_single(name)?;
+
+            // Ensure the output cannot be misparsed since we use newlines as a
+            // separator.
+            if name.contains('\n') {
+                bail!("Partition name contains newline: {name:?}");
+            }
+
+            println!("{name}");
+        }
+
+        return Ok(());
+    }
+
+    bail!("Zip entry not found: {}", ota::PATH_PAYLOAD);
+}
+
 pub fn ota_main(cli: &OtaCli, cancel_signal: &AtomicBool) -> Result<()> {
     match &cli.command {
         OtaCommand::Patch(c) => patch_subcommand(c, cancel_signal),
         OtaCommand::Extract(c) => extract_subcommand(c, cancel_signal),
         OtaCommand::Verify(c) => verify_subcommand(c, cancel_signal),
+        OtaCommand::List(c) => list_subcommand(c),
     }
 }
 
@@ -2612,12 +2659,22 @@ pub struct VerifyCli {
     fail_if_missing: bool,
 }
 
+/// List partitions contained in an OTA.
+#[derive(Debug, Parser)]
+pub struct ListCli {
+    /// Path to OTA zip.
+    #[arg(short, long, value_name = "FILE", value_parser)]
+    pub input: PathBuf,
+}
+
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 enum OtaCommand {
     Patch(PatchCli),
     Extract(ExtractCli),
     Verify(VerifyCli),
+    List(ListCli),
 }
 
 /// Patch or extract OTA images.

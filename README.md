@@ -520,6 +520,16 @@ By default, this only extracts the images that could potentially be patched by a
 
 This command also supports extracting the embedded OTA certificate and AVB public key using the `--cert-ota` and `--public-key-avb` options. To extract only these components, pass in `--none` to skip extracting partition images.
 
+### Listing partitions in OTA
+
+To list all partitions in an OTA, run:
+
+```bash
+avbroot ota list --input ota.zip
+```
+
+The output format is one partition per line with no formatting.
+
 ### Zip write mode
 
 By default, avbroot uses streaming writes for the output OTA during patching. This means it computes the sha256 digest for the digital signature as the file is being written. This mode causes the zip file to contain data descriptors, which is part of the zip standard and works on the vast majority of devices. However, some devices may have broken zip file parsers and fail to properly read OTA zip files containing data descriptors. If this is the case, pass in `--zip-mode seekable` when patching.
