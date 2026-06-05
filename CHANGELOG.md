@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.30.0
 
 * Add `avbroot ota list` subcommand to list all partitions in an OTA ([Issue #603], [PR #606])
 * Update dependencies ([PR #605])
