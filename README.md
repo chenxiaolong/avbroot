@@ -134,6 +134,23 @@ The commands above are provided for convenience. avbroot is compatible with any 
 
 If you lose your AVB or OTA signing key, you will no longer be able to sign new OTA zips. You will have to generate new signing keys and unlock your bootloader again (triggering a data wipe). Follow the [Usage section](#usage) as if doing an initial setup.
 
+### AOSP keys
+
+If you're building Android from source, this is how avbroot's keys correspond to AOSP's keys:
+
+| avbroot        | AOSP                  |
+|----------------|-----------------------|
+| `avb.key`      | `avb.pem`             |
+| `avb_pkmd.bin` | `avb_pkmd.bin`        |
+| `ota.key`      | `releasekey.pk8`      |
+| `ota.crt`      | `releasekey.x509.pem` |
+
+To use an AOSP `releasekey.pk8` key with avbroot, it must be converted from DER to PEM first:
+
+```bash
+openssl pkcs8 -topk8 -scrypt -in releasekey.pk8 -out ota.key -outform PEM
+```
+
 ## Initial setup
 
 1. Make sure that the version of fastboot is 35 or newer. Older versions have bugs that prevent the `fastboot flashall` command (required later) from working properly.
