@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update dependencies ([PR #605])
+
 ### Version 3.29.1
 
 * Increase memory limit for payload manifest size to 16 MiB ([Issue #593], [PR #594])
@@ -726,3 +730,4 @@ Behind-the-scenes changes:
 [PR #586]: https://github.com/chenxiaolong/avbroot/pull/586
 [PR #587]: https://github.com/chenxiaolong/avbroot/pull/587
 [PR #594]: https://github.com/chenxiaolong/avbroot/pull/594
+[PR #605]: https://github.com/chenxiaolong/avbroot/pull/605
