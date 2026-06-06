@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.30.1
 
 * Fix `avbroot payload pack` and `avbroot zip pack --payload` for non-VABC devices ([Issue #607], [PR #608])
 
