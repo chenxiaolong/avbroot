@@ -219,8 +219,11 @@ pub fn pack_payload(
 
     for (name, input_file) in &input_files {
         let Some(dpm) = &header.manifest.dynamic_partition_metadata else {
-            continue;
+            break;
         };
+        if !dpm.vabc_enabled() {
+            break;
+        }
 
         if !dpm.groups.iter().any(|g| g.partition_names.contains(name)) {
             continue;
