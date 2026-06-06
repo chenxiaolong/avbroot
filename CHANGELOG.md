@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix `avbroot payload pack` and `avbroot zip pack --payload` for non-VABC devices ([Issue #607], [PR #608])
+
 ### Version 3.30.0
 
 * Add `avbroot ota list` subcommand to list all partitions in an OTA ([Issue #603], [PR #606])
@@ -501,6 +505,7 @@ Behind-the-scenes changes:
 [Issue #578]: https://github.com/chenxiaolong/avbroot/issues/578
 [Issue #593]: https://github.com/chenxiaolong/avbroot/issues/593
 [Issue #603]: https://github.com/chenxiaolong/avbroot/issues/603
+[Issue #607]: https://github.com/chenxiaolong/avbroot/issues/607
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -734,3 +739,4 @@ Behind-the-scenes changes:
 [PR #594]: https://github.com/chenxiaolong/avbroot/pull/594
 [PR #605]: https://github.com/chenxiaolong/avbroot/pull/605
 [PR #606]: https://github.com/chenxiaolong/avbroot/pull/606
+[PR #608]: https://github.com/chenxiaolong/avbroot/pull/608
