@@ -32,7 +32,7 @@ use crate::{
         avb::{self, AppendedDescriptorMut, Footer, Header},
         bootimage::{self, BootImage, BootImageExt, RamdiskMeta},
         compression::{self, CompressedFormat, CompressedReader, CompressedWriter},
-        cpio::{self, CpioEntry, CpioEntryData},
+        cpio::{self, CpioEntry, CpioEntryData, CpioEntryType},
         zip::{self, ZipEntriesSafeExt, ZipFileHeaderRecordExt, ZipSliceEntriesSafeExt},
     },
     patch::otacert::{self, OtaCertBuildFlags},
@@ -407,7 +407,10 @@ impl MagiskRootPatcher {
             let mut new_path = b".backup/".to_vec();
             new_path.extend(&old_entry.path);
 
-            let new_data = if xz_compress && let CpioEntryData::Data(data) = &old_entry.data {
+            let new_data = if xz_compress
+                && old_entry.file_type == CpioEntryType::Regular
+                && let CpioEntryData::Data(data) = &old_entry.data
+            {
                 new_path.extend(b".xz");
 
                 let reader = Cursor::new(data);
