@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.30.2
 
 * Fix the symlink target path being incorrectly XZ-compressed when the Magisk patcher replaces a symlink with a regular file ([Issue #610], [PR #611])
 
