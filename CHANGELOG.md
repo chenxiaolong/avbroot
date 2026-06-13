@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix the symlink target path being incorrectly XZ-compressed when the Magisk patcher replaces a symlink with a regular file ([Issue #610], [PR #611])
+
 ### Version 3.30.1
 
 * Fix `avbroot payload pack` and `avbroot zip pack --payload` for non-VABC devices ([Issue #607], [PR #608])
@@ -506,6 +510,7 @@ Behind-the-scenes changes:
 [Issue #593]: https://github.com/chenxiaolong/avbroot/issues/593
 [Issue #603]: https://github.com/chenxiaolong/avbroot/issues/603
 [Issue #607]: https://github.com/chenxiaolong/avbroot/issues/607
+[Issue #610]: https://github.com/chenxiaolong/avbroot/issues/610
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -740,3 +745,4 @@ Behind-the-scenes changes:
 [PR #605]: https://github.com/chenxiaolong/avbroot/pull/605
 [PR #606]: https://github.com/chenxiaolong/avbroot/pull/606
 [PR #608]: https://github.com/chenxiaolong/avbroot/pull/608
+[PR #611]: https://github.com/chenxiaolong/avbroot/pull/611
