@@ -664,6 +664,7 @@ fn create_payload(
                     CowVersion::V2 => v.force_compression_factor.then_some(64 * 1024),
                     CowVersion::V3 { compression_factor } => Some(compression_factor.into()),
                 }),
+                disable_ublk: None,
             }),
             partial_update: None,
             apex_info: vec![],
@@ -820,7 +821,6 @@ fn create_ota(
             security_patch_level: ota_info.security_patch_level.clone(),
             partition_state: vec![],
         }),
-        retrofit_dynamic_partitions: false,
         required_cache: 0,
         spl_downgrade: false,
     };

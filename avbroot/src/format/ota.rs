@@ -172,9 +172,6 @@ pub fn parse_legacy_metadata(data: &str) -> Result<OtaMetadata> {
                 }
             }
             "ota-wipe" => metadata.wipe = parse_yes()?,
-            "ota-retrofit-dynamic-partitions" => {
-                metadata.retrofit_dynamic_partitions = parse_yes()?;
-            }
             "ota-downgrade" => metadata.downgrade = parse_yes()?,
             "ota-required-cache" => {
                 metadata.required_cache = value.parse().map_err(|_| unsupported())?;
@@ -239,12 +236,6 @@ fn serialize_metadata(metadata: &OtaMetadata) -> (String, Vec<u8>) {
     }
     if metadata.wipe {
         pairs.insert("ota-wipe".to_owned(), "yes".to_owned());
-    }
-    if metadata.retrofit_dynamic_partitions {
-        pairs.insert(
-            "ota-retrofit-dynamic-partitions".to_owned(),
-            "yes".to_owned(),
-        );
     }
     if metadata.downgrade {
         pairs.insert("ota-downgrade".to_owned(), "yes".to_owned());

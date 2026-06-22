@@ -104,9 +104,10 @@ message OtaMetadata {
   // The expected device state after the update.
   DeviceState postcondition = 6;
 
-  // True if the ota that updates a device to support dynamic partitions, where
-  // the source build doesn't support it.
-  bool retrofit_dynamic_partitions = 7;
+  // This was previously a boolean flag called retrofit_dynamic_partitions, but
+  // is no longer used or supported.
+  reserved 7;
+
   // The required size of the cache partition, only valid for non-A/B update.
   int64 required_cache = 8;
 

@@ -82,6 +82,8 @@
 // - REPLACE_XZ: Replace the dst_extents with the contents of the attached
 //   xz file after decompression. The xz file should only use crc32 or no crc at
 //   all to be compatible with xz-embedded.
+// - REPLACE_ZSTD: Replace the dst_extents with the contents of the attached
+//   zstd file after decompression.
 // - PUFFDIFF: Read the data in src_extents in the old partition, perform
 //   puffpatch with the attached data and write the new data to dst_extents in
 //   the new partition.
@@ -174,6 +176,9 @@ message InstallOperation {
     // On minor version 9 or newer, these operations are supported:
     LZ4DIFF_BSDIFF = 12;
     LZ4DIFF_PUFFDIFF = 13;
+
+    // On minor version 10 or newer, these operations are supported:
+    REPLACE_ZSTD = 14;
   }
   required Type type = 1;
 
@@ -376,6 +381,10 @@ message DynamicPartitionMetadata {
   // Max bytes to be compressed at once during ota. Options: 4k, 8k, 16k, 32k,
   // 64k, 128k
   optional uint64 compression_factor = 7;
+
+  // Whether to disable UBLK for OTA. This will force dm-user as OTA backend
+  // choice even if device was configured for UBLK based snapshots.
+  optional bool disable_ublk = 8;
 }
 
 // Definition has been duplicated from
