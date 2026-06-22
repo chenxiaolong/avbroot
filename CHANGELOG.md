@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.31.0
 
 * Update OTA metadata and payload manifest protobufs from AOSP `android-17.0.0_r1` release ([PR #613])
 
