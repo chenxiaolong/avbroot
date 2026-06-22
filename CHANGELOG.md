@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update OTA metadata and payload manifest protobufs from AOSP `android-17.0.0_r1` release ([PR #613])
+
 ### Version 3.30.2
 
 * Fix the symlink target path being incorrectly XZ-compressed when the Magisk patcher replaces a symlink with a regular file ([Issue #610], [PR #611])
@@ -746,3 +750,4 @@ Behind-the-scenes changes:
 [PR #606]: https://github.com/chenxiaolong/avbroot/pull/606
 [PR #608]: https://github.com/chenxiaolong/avbroot/pull/608
 [PR #611]: https://github.com/chenxiaolong/avbroot/pull/611
+[PR #613]: https://github.com/chenxiaolong/avbroot/pull/613
