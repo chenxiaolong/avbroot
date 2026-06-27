@@ -51,29 +51,31 @@ pub const FOOTER_MAGIC: [u8; 4] = *b"AVBf";
 pub const HEADER_MAX_SIZE: u64 = 64 * 1024;
 
 /// Maximum hash tree size. The current limit equals the hash tree size for an
-/// 8GiB image using SHA256 digests and a block size of 4096. This is equal to:
+/// 16GiB image using SHA256 digests and a block size of 4096. This is equal to:
 ///
 /// ```rust
 /// use avbroot::format::hashtree::HashTree;
 /// let size = HashTree::new(4096, &ring::digest::SHA256, b"")
-///     .compute_level_offsets(8 * 1024 * 1024 * 1024)
+///     .compute_level_offsets(16 * 1024 * 1024 * 1024)
 ///     .unwrap()
 ///    .first()
 ///    .map(|r| r.end)
 ///    .unwrap_or(0);
+/// assert_eq!(size, 135_278_592);
 /// ```
-pub const HASH_TREE_MAX_SIZE: u64 = 67_637_248;
+pub const HASH_TREE_MAX_SIZE: u64 = 135_278_592;
 
 /// Maximum FEC data size. The current limit equals the FEC data size for an
-/// 8GiB image using 2 parity bytes per codeword. This is equal to:
+/// 16GiB image using 2 parity bytes per codeword. This is equal to:
 ///
 /// ```rust
 /// use avbroot::format::fec::Fec;
-/// let size = Fec::new(8 * 1024 * 1024 * 1024, 4096, 2)
+/// let size = Fec::new(16 * 1024 * 1024 * 1024, 4096, 2)
 ///     .unwrap()
 ///     .fec_size();
+/// assert_eq!(size, 135_815_168);
 /// ```
-pub const FEC_DATA_MAX_SIZE: u64 = 67_911_680;
+pub const FEC_DATA_MAX_SIZE: u64 = 135_815_168;
 
 #[derive(Debug, Error)]
 pub enum Error {
