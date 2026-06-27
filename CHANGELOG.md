@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Increase memory limits in AVB parser to allow verifying images larger than 8 GIB (limit is now 16 GiB) ([PR #616])
+
 ### Version 3.31.0
 
 * Update OTA metadata and payload manifest protobufs from AOSP `android-17.0.0_r1` release ([PR #613])
@@ -751,3 +755,4 @@ Behind-the-scenes changes:
 [PR #608]: https://github.com/chenxiaolong/avbroot/pull/608
 [PR #611]: https://github.com/chenxiaolong/avbroot/pull/611
 [PR #613]: https://github.com/chenxiaolong/avbroot/pull/613
+[PR #616]: https://github.com/chenxiaolong/avbroot/pull/616
