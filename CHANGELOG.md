@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Increase memory limits in AVB parser to allow verifying images larger than 8 GIB (limit is now 16 GiB) ([PR #616])
+* Update dependencies ([PR #620])
 
 ### Version 3.31.0
 
@@ -756,3 +757,4 @@ Behind-the-scenes changes:
 [PR #611]: https://github.com/chenxiaolong/avbroot/pull/611
 [PR #613]: https://github.com/chenxiaolong/avbroot/pull/613
 [PR #616]: https://github.com/chenxiaolong/avbroot/pull/616
+[PR #620]: https://github.com/chenxiaolong/avbroot/pull/620
