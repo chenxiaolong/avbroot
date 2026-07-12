@@ -77,9 +77,9 @@ pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8
     let mut writer = ZipArchiveWriter::new(raw_writer);
 
     let compression_method = if flags.contains(OtaCertBuildFlags::COMPRESS_DEFLATE) {
-        CompressionMethod::Deflate
+        CompressionMethod::DEFLATE
     } else {
-        CompressionMethod::Store
+        CompressionMethod::STORE
     };
 
     let name = "ota.x509.pem";

@@ -181,7 +181,7 @@ fn start_entry<'a>(
 ) -> Result<(u64, ZipDataWriter<ZipEntryWriter<'a, SigningWriter<File>>>)> {
     let mut builder = zip_writer
         .new_file(path)
-        .compression_method(CompressionMethod::Store);
+        .compression_method(CompressionMethod::STORE);
 
     if zip_mode == ZipMode::Seekable && is_zip64 {
         // We need to reserve space for the ZIP64 extra field when doing the
@@ -208,7 +208,7 @@ fn finalize_entry(
     data_writer: ZipDataWriter<ZipEntryWriter<SigningWriter<File>>>,
     metadata_entries: &mut Vec<ZipEntry>,
 ) -> Result<()> {
-    let size = data_writer
+    let written = data_writer
         .finish()
         .and_then(|(w, d)| w.finish(d))
         .with_context(|| format!("Failed to finalize zip entry: {path}"))?;
@@ -216,7 +216,7 @@ fn finalize_entry(
     metadata_entries.push(ZipEntry {
         path: path.to_owned(),
         offset,
-        size,
+        size: written.compressed_size(),
     });
 
     Ok(())

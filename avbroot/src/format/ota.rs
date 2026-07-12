@@ -519,12 +519,12 @@ pub fn add_metadata(
             .write_all(data)
             .map_err(|e| Error::ZipEntryWrite(path.into(), e))?;
 
-        let data_size = data_writer
+        let written = data_writer
             .finish()
             .and_then(|(w, d)| w.finish(d))
             .map_err(|e| Error::ZipEntryFinish(path.into(), e))?;
 
-        Ok((data_offset, data_size))
+        Ok((data_offset, written.compressed_size()))
     }
 
     let mut metadata = metadata.clone();
@@ -602,7 +602,7 @@ pub fn verify_metadata(
     let mut entries = archive.entries_safe(&mut buffer);
 
     while let Some((cd_entry, entry)) = entries.next_entry().map_err(Error::ZipEntryList)? {
-        if cd_entry.compression_method() != CompressionMethod::Store {
+        if cd_entry.compression_method() != CompressionMethod::STORE {
             continue;
         }
 

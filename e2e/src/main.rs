@@ -786,7 +786,7 @@ fn create_ota(
             _ => unreachable!(),
         }
 
-        let size = data_writer
+        let written = data_writer
             .finish()
             .and_then(|(w, d)| w.finish(d))
             .with_context(|| format!("Failed to finalize zip entry: {path}"))?;
@@ -794,7 +794,7 @@ fn create_ota(
         entries.push(ZipEntry {
             path: path.to_owned(),
             offset,
-            size,
+            size: written.compressed_size(),
         });
     }
 
@@ -859,7 +859,7 @@ fn create_fake_magisk(output: &Path) -> Result<()> {
         .open(output)
         .with_context(|| format!("Failed to open for writing: {output:?}"))?;
     let mut zip_writer = ZipArchiveWriter::new(raw_writer);
-    let compression_method = CompressionMethod::Deflate;
+    let compression_method = CompressionMethod::DEFLATE;
 
     for path in [
         "assets/stub.apk",

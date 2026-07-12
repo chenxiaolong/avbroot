@@ -234,8 +234,8 @@ fn compression_method_to_format(
     compression_method: CompressionMethod,
 ) -> Result<CompressedFormat, rawzip::Error> {
     match compression_method {
-        CompressionMethod::Store => Ok(CompressedFormat::None),
-        CompressionMethod::Deflate => Ok(CompressedFormat::Deflate),
+        CompressionMethod::STORE => Ok(CompressedFormat::None),
+        CompressionMethod::DEFLATE => Ok(CompressedFormat::Deflate),
         c => Err(rawzip::ErrorKind::InvalidInput {
             msg: format!("Unsupported compression method: {c:?}"),
         }
@@ -267,7 +267,7 @@ pub fn compressed_slice_reader<'archive>(
 pub fn verifying_reader<'archive, R: ReaderAt>(
     entry: &ZipEntry<'archive, R>,
     compression_method: CompressionMethod,
-) -> Result<ZipVerifier<CompressedReader<ZipReader<&'archive R>>, &'archive R>, rawzip::Error> {
+) -> Result<ZipVerifier<CompressedReader<ZipReader<&'archive R>>>, rawzip::Error> {
     compressed_reader(entry, compression_method).map(|r| entry.verifying_reader(r))
 }
 

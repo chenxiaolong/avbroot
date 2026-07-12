@@ -17,8 +17,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use bitflags::bitflags;
 use clap::{ArgAction, Args, Parser, Subcommand, value_parser};
 use rawzip::{
-    CompressionMethod, RECOMMENDED_BUFFER_SIZE, ZipArchive, ZipArchiveEntryWayfinder,
-    ZipArchiveWriter, extra_fields::ExtraFieldId,
+    CompressionMethod, Crc32Option, DataDescriptorOutput, RECOMMENDED_BUFFER_SIZE, ZipArchive,
+    ZipArchiveEntryWayfinder, ZipArchiveWriter, extra_fields::ExtraFieldId,
 };
 use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
 use tempfile::{NamedTempFile, TempDir};
@@ -1254,7 +1254,7 @@ fn patch_ota_zip(
 ) -> Result<(OtaMetadata, u64)> {
     struct InputEntry {
         compression_method: CompressionMethod,
-        is_zip64: bool,
+        crc32: u32,
         // We can't store the rawzip::ZipEntry directly because of the lifetime
         // generic parameter. We'll need to read the local headers again later.
         wayfinder: ZipArchiveEntryWayfinder,
@@ -1281,11 +1281,7 @@ fn patch_ota_zip(
             path.to_owned(),
             InputEntry {
                 compression_method: cd_entry.compression_method(),
-                // We only check for the sizes here instead of the presence of
-                // the ZIP64 extra field. The central header's extra fields may
-                // have ZIP64 only for the local header offset.
-                is_zip64: cd_entry.compressed_size_hint() >= 0xffffffff
-                    || cd_entry.uncompressed_size_hint() >= 0xffffffff,
+                crc32: cd_entry.crc32(),
                 wayfinder: cd_entry.wayfinder(),
             },
         );
@@ -1310,6 +1306,19 @@ fn patch_ota_zip(
 
     for (path, input_entry) in &input_entries {
         let _span = debug_span!("zip", entry = path).entered();
+
+        // Paths we don't care about can be copied without recompression.
+        let raw_copy = path != ota::PATH_METADATA
+            && path != ota::PATH_METADATA_PB
+            && path != ota::PATH_OTACERT
+            && path != ota::PATH_PAYLOAD
+            && path != ota::PATH_PROPERTIES;
+
+        // We only check for the sizes here instead of the presence of the ZIP64
+        // extra field. The central header's extra fields may have ZIP64 only
+        // for the local header offset.
+        let is_zip64 = input_entry.wayfinder.compressed_size_hint() >= 0xffffffff
+            || input_entry.wayfinder.uncompressed_size_hint() >= 0xffffffff;
 
         let entry = zip_reader
             .get_entry(input_entry.wayfinder)
@@ -1360,7 +1369,7 @@ fn patch_ota_zip(
             .new_file(path)
             .compression_method(input_entry.compression_method);
 
-        if zip_mode == ZipMode::Seekable && input_entry.is_zip64 {
+        if zip_mode == ZipMode::Seekable && is_zip64 {
             // We need to reserve space for the ZIP64 extra field when doing the
             // post-processing to convert a streaming zip to a seekable one.
             builder = builder.extra_field(
@@ -1370,13 +1379,23 @@ fn patch_ota_zip(
             )?;
         }
 
+        // For simplicity, we still use the same types when writing the output.
+        // We'll just skip the invalid CRC32 calculation (on compressed data)
+        // and avoid double compression.
+        let write_compression_method: CompressionMethod;
+        if raw_copy {
+            builder = builder.crc32(Crc32Option::Skip);
+            write_compression_method = CompressionMethod::STORE;
+        } else {
+            write_compression_method = input_entry.compression_method;
+        }
+
         let (entry_writer, data_config) = builder
             .start()
             .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
         let offset = entry_writer.stream_offset();
-        let compressed_writer =
-            zip::compressed_writer(entry_writer, input_entry.compression_method)
-                .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
+        let compressed_writer = zip::compressed_writer(entry_writer, write_compression_method)
+            .with_context(|| format!("Failed to begin new zip entry: {path}"))?;
         let mut data_writer = data_config.wrap(compressed_writer);
 
         // All remaining entries are written immediately.
@@ -1391,7 +1410,7 @@ fn patch_ota_zip(
             ota::PATH_PAYLOAD => {
                 info!("Patching zip entry: {path}");
 
-                if input_entry.compression_method != CompressionMethod::Store {
+                if input_entry.compression_method != CompressionMethod::STORE {
                     bail!("{path} is not stored uncompressed");
                 }
 
@@ -1434,20 +1453,31 @@ fn patch_ota_zip(
             _ => {
                 info!("Copying zip entry: {path}");
 
-                stream::copy(&mut reader, &mut data_writer, cancel_signal)
+                drop(reader);
+
+                stream::copy(&mut entry.reader(), &mut data_writer, cancel_signal)
                     .with_context(|| format!("Failed to copy zip entry: {path}"))?;
             }
         }
 
-        let size = data_writer
+        let written = data_writer
             .finish()
-            .and_then(|(w, d)| w.finish()?.finish(d))
+            .and_then(|(w, mut d)| {
+                if raw_copy {
+                    d = DataDescriptorOutput::new(
+                        input_entry.crc32,
+                        input_entry.wayfinder.uncompressed_size_hint(),
+                    );
+                }
+
+                w.finish()?.finish(d)
+            })
             .with_context(|| format!("Failed to finalize zip entry: {path}"))?;
 
         metadata_entries.push(ZipEntry {
             path: path.clone(),
             offset,
-            size,
+            size: written.compressed_size(),
         });
     }
 
@@ -2262,9 +2292,7 @@ pub fn list_subcommand(cli: &ListCli) -> Result<()> {
         .with_context(|| format!("Failed to read zip: {:?}", cli.input))?;
     let mut entries = zip.entries_safe(&mut buffer);
 
-    while let Some((cd_entry, _)) =
-        entries.next_entry().context("Failed to list zip entries")?
-    {
+    while let Some((cd_entry, _)) = entries.next_entry().context("Failed to list zip entries")? {
         let path = cd_entry
             .file_path_utf8()
             .context("Zip contains non-UTF-8 paths")?;
@@ -2666,7 +2694,6 @@ pub struct ListCli {
     #[arg(short, long, value_name = "FILE", value_parser)]
     pub input: PathBuf,
 }
-
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]

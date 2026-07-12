@@ -1459,9 +1459,9 @@ dependencies = [
 
 [[package]]
 name = "rawzip"
-version = "0.4.4"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d9575f44c8cf85bc843ad666dcdf20d05a7753772bef56eb2a5140282b32150"
+checksum = "d661184e2add3106911b7c17e76b49328db021428c242ce0e577c3e8744d8130"
 
 [[package]]
 name = "rayon"
