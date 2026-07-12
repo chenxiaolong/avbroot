@@ -96,6 +96,8 @@ fn validate_compression_ratio(
 pub struct ZipEntriesSafe<'archive, 'buf, R> {
     archive: &'archive ZipArchive<R>,
     entries: ZipEntries<'archive, 'buf, R>,
+    cur_entry: u64,
+    num_entries: u64,
     compressed_ranges: Vec<(u64, u64)>,
 }
 
@@ -104,9 +106,11 @@ impl<R: ReaderAt> ZipEntriesSafe<'_, '_, R> {
     pub fn next_entry(
         &mut self,
     ) -> Result<Option<(ZipFileHeaderRecord<'_>, ZipEntry<'_, R>)>, rawzip::Error> {
-        let cd_entry = self.entries.next_entry()?;
-        let Some(cd_entry) = cd_entry else {
-            return Ok(None);
+        let cd_entry = match self.entries.next_entry() {
+            Ok(None) => return Ok(None),
+            Ok(Some(e)) => e,
+            Err(_) if self.cur_entry == self.num_entries => return Ok(None),
+            Err(e) => return Err(e),
         };
 
         validate_compression_ratio(
@@ -122,6 +126,8 @@ impl<R: ReaderAt> ZipEntriesSafe<'_, '_, R> {
             entry.compressed_data_range(),
             cd_entry.file_path().as_ref(),
         )?;
+
+        self.cur_entry += 1;
 
         Ok(Some((cd_entry, entry)))
     }
@@ -144,6 +150,8 @@ impl<R> ZipEntriesSafeExt<R> for ZipArchive<R> {
         ZipEntriesSafe {
             archive: self,
             entries,
+            cur_entry: 0,
+            num_entries: self.entries_hint(),
             compressed_ranges: Vec::new(),
         }
     }
@@ -171,6 +179,8 @@ impl<R, T: ZipEntriesSafeExt<R>> ZipEntriesSafeExt<R> for &mut T {
 pub struct ZipSliceEntriesSafe<'data, T: AsRef<[u8]>> {
     archive: &'data ZipSliceArchive<T>,
     entries: ZipSliceEntries<'data>,
+    cur_entry: u64,
+    num_entries: u64,
     compressed_ranges: Vec<(u64, u64)>,
 }
 
@@ -179,9 +189,11 @@ impl<'data, T: AsRef<[u8]>> ZipSliceEntriesSafe<'data, T> {
     pub fn next_entry(
         &mut self,
     ) -> Result<Option<(ZipFileHeaderRecord<'data>, ZipSliceEntry<'data>)>, rawzip::Error> {
-        let cd_entry = self.entries.next_entry()?;
-        let Some(cd_entry) = cd_entry else {
-            return Ok(None);
+        let cd_entry = match self.entries.next_entry() {
+            Ok(None) => return Ok(None),
+            Ok(Some(e)) => e,
+            Err(_) if self.cur_entry == self.num_entries => return Ok(None),
+            Err(e) => return Err(e),
         };
 
         validate_compression_ratio(
@@ -198,6 +210,8 @@ impl<'data, T: AsRef<[u8]>> ZipSliceEntriesSafe<'data, T> {
             cd_entry.file_path().as_ref(),
         )?;
 
+        self.num_entries += 1;
+
         Ok(Some((cd_entry, entry)))
     }
 }
@@ -213,6 +227,8 @@ impl<T: AsRef<[u8]>> ZipSliceEntriesSafeExt<T> for ZipSliceArchive<T> {
         ZipSliceEntriesSafe {
             archive: self,
             entries,
+            cur_entry: 0,
+            num_entries: self.entries_hint(),
             compressed_ranges: Vec::new(),
         }
     }
