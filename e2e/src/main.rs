@@ -50,8 +50,9 @@ use avbroot::{
     util,
 };
 use clap::Parser;
+use rand::rngs::SysRng;
 use rawzip::{CompressionMethod, ZipArchiveWriter};
-use rsa::{BigUint, rand_core::OsRng, traits::PublicKeyParts};
+use rsa::{BoxedUint, traits::PublicKeyParts};
 use tempfile::TempDir;
 use topological_sort::TopologicalSort;
 use tracing::{info, info_span};
@@ -1404,11 +1405,12 @@ fn helper_mode() -> Result<()> {
     // The input is already padded, so perform a raw RSA signing operation.
     let mut signature = rsa::hazmat::rsa_decrypt_and_check(
         &private_key,
-        None::<&mut OsRng>,
-        &BigUint::from_bytes_be(&padded_digest),
+        None::<&mut SysRng>,
+        &BoxedUint::from_be_slice_vartime(&padded_digest),
     )
     .context("Failed to sign digest")?
-    .to_bytes_le();
+    .to_le_bytes()
+    .into_vec();
     signature.resize(private_key.size(), 0);
     signature.reverse();
 

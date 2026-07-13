@@ -1,13 +1,21 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{borrow::Cow, cmp::Ordering, io::Cursor, path::Path};
 
 use bitflags::bitflags;
+use der::{Decode, Encode, Sequence, ValueOrd, asn1::BitString};
 use rawzip::{CompressionMethod, ZipArchiveWriter};
 use thiserror::Error;
 use tracing::trace;
-use x509_cert::{Certificate, der::asn1::BitString};
+use x509_cert::{
+    AlgorithmIdentifier, Certificate, SubjectPublicKeyInfo, Version,
+    certificate::Rfc5280,
+    ext::Extensions,
+    name::{Name, RdnSequence},
+    serial_number::SerialNumber,
+    time::Validity,
+};
 
 use crate::{
     crypto,
@@ -22,6 +30,10 @@ pub enum Error {
     ZipTooLarge(usize),
     #[error("Failed to write otacerts zip")]
     ZipWrite(#[source] rawzip::Error),
+    #[error("Failed to deserialize cert from DER")]
+    DerRead(#[source] der::Error),
+    #[error("Failed to serialize cert to DER")]
+    DerWrite(#[source] der::Error),
     #[error("Failed to write certificate to otacerts zip")]
     CertWrite(#[source] crypto::Error),
 }
@@ -71,6 +83,37 @@ bitflags! {
     }
 }
 
+/// [`x509_cert::certificate::TbsCertificateInner`] with public fields.
+#[derive(Clone, Debug, Eq, PartialEq, Sequence, ValueOrd)]
+struct NonCompliantTbsCertificate {
+    #[asn1(context_specific = "0", default = "Default::default")]
+    version: Version,
+
+    serial_number: SerialNumber<Rfc5280>,
+    signature: AlgorithmIdentifier,
+    issuer: Name,
+    validity: Validity<Rfc5280>,
+    subject: Name,
+    subject_public_key_info: SubjectPublicKeyInfo,
+
+    #[asn1(context_specific = "1", tag_mode = "IMPLICIT", optional = "true")]
+    issuer_unique_id: Option<BitString>,
+
+    #[asn1(context_specific = "2", tag_mode = "IMPLICIT", optional = "true")]
+    subject_unique_id: Option<BitString>,
+
+    #[asn1(context_specific = "3", tag_mode = "EXPLICIT", optional = "true")]
+    extensions: Option<Extensions>,
+}
+
+/// [`x509_cert::certificate::CertificateInner`] with public fields.
+#[derive(Clone, Debug, Eq, PartialEq, Sequence, ValueOrd)]
+struct NonCompliantCertificate {
+    tbs_certificate: NonCompliantTbsCertificate,
+    signature_algorithm: AlgorithmIdentifier,
+    signature: BitString,
+}
+
 /// Create an `otacerts.zip` file containing the specified certificate.
 pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8>> {
     let raw_writer = Cursor::new(Vec::new());
@@ -95,7 +138,25 @@ pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8
     let cert = if flags.is_empty() {
         Cow::Borrowed(cert)
     } else {
-        let mut modified = cert.clone();
+        // x509-cert 0.3.0 no longer allows access to all these fields, so we
+        // have to convert to our own type for modification.
+        let cert_tbs = cert.tbs_certificate();
+        let mut modified = NonCompliantCertificate {
+            tbs_certificate: NonCompliantTbsCertificate {
+                version: cert_tbs.version(),
+                serial_number: cert_tbs.serial_number().clone(),
+                signature: cert_tbs.signature().clone(),
+                issuer: cert_tbs.issuer().clone(),
+                validity: *cert_tbs.validity(),
+                subject: cert_tbs.subject().clone(),
+                subject_public_key_info: cert_tbs.subject_public_key_info().clone(),
+                issuer_unique_id: cert_tbs.issuer_unique_id().clone(),
+                subject_unique_id: cert_tbs.subject_unique_id().clone(),
+                extensions: cert_tbs.extensions().cloned(),
+            },
+            signature_algorithm: cert.signature_algorithm().clone(),
+            signature: cert.signature().clone(),
+        };
 
         if flags.contains(OtaCertBuildFlags::REMOVE_SIGNATURE) {
             // An empty ASN.1 bit string is always valid.
@@ -108,15 +169,20 @@ pub fn create_zip(cert: &Certificate, flags: OtaCertBuildFlags) -> Result<Vec<u8
             extensions.clear();
         }
         if flags.contains(OtaCertBuildFlags::REMOVE_ISSUER) {
-            modified.tbs_certificate.issuer.0.clear();
+            modified.tbs_certificate.issuer =
+                Name::hazmat_from_rdn_sequence(RdnSequence::default());
             modified.tbs_certificate.issuer_unique_id = None;
         }
         if flags.contains(OtaCertBuildFlags::REMOVE_SUBJECT) {
-            modified.tbs_certificate.subject.0.clear();
+            modified.tbs_certificate.subject =
+                Name::hazmat_from_rdn_sequence(RdnSequence::default());
             modified.tbs_certificate.subject_unique_id = None;
         }
 
-        Cow::Owned(modified)
+        let modified_der = modified.to_der().map_err(Error::DerWrite)?;
+        let modified_cert = Certificate::from_der(&modified_der).unwrap();
+
+        Cow::Owned(modified_cert)
     };
 
     crypto::write_pem_cert(Path::new(name), &mut data_writer, &cert).map_err(Error::CertWrite)?;

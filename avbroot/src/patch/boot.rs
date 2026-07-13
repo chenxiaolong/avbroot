@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2022-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2022-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -682,6 +682,33 @@ impl OtaCertPatcher {
         Self { cert }
     }
 
+    pub fn read_certificates_from_zip(
+        data: &[u8],
+        certificates: &mut Vec<Certificate>,
+    ) -> Result<()> {
+        let archive = ZipArchive::from_slice(data)
+            .map_err(|e| Error::ZipOpen(Self::OTACERTS_PATH.into(), e))?;
+        let mut entries = archive.entries_safe();
+
+        while let Some((cd_entry, entry)) = entries.next_entry().map_err(Error::ZipEntryList)? {
+            let path = cd_entry.file_path_utf8().map_err(Error::ZipEntryList)?;
+
+            if !path.ends_with(".x509.pem") {
+                debug!("Skipping invalid entry path: {path:?}");
+                continue;
+            }
+
+            let reader = zip::verifying_slice_reader(&entry, cd_entry.compression_method())
+                .map_err(|e| Error::ZipEntryOpen(path.to_owned().into(), e))?;
+
+            let certificate =
+                crypto::read_pem_cert(Path::new(path), reader).map_err(Error::OtaCertLoad)?;
+            certificates.push(certificate);
+        }
+
+        Ok(())
+    }
+
     pub fn get_certificates(
         boot_image: &BootImage,
         cancel_signal: &AtomicBool,
@@ -712,25 +739,7 @@ impl OtaCertPatcher {
                 continue;
             };
 
-            let archive = ZipArchive::from_slice(data)
-                .map_err(|e| Error::ZipOpen(Self::OTACERTS_PATH.into(), e))?;
-            let mut entries = archive.entries_safe();
-
-            while let Some((cd_entry, entry)) = entries.next_entry().map_err(Error::ZipEntryList)? {
-                let path = cd_entry.file_path_utf8().map_err(Error::ZipEntryList)?;
-
-                if !path.ends_with(".x509.pem") {
-                    debug!("Skipping invalid entry path: {path:?}");
-                    continue;
-                }
-
-                let reader = zip::verifying_slice_reader(&entry, cd_entry.compression_method())
-                    .map_err(|e| Error::ZipEntryOpen(path.to_owned().into(), e))?;
-
-                let certificate =
-                    crypto::read_pem_cert(Path::new(path), reader).map_err(Error::OtaCertLoad)?;
-                certificates.push(certificate);
-            }
+            Self::read_certificates_from_zip(data, &mut certificates)?;
         }
 
         Ok(certificates)

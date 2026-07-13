@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -40,7 +40,7 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
                 .with_context(|| format!("Failed to load key: {:?}", c.key))?;
 
             let validity = Duration::from_secs(c.validity * 24 * 60 * 60);
-            let cert = crypto::generate_cert(&private_key, rand::random(), validity, &c.subject)
+            let cert = crypto::generate_cert(&private_key, validity, &c.subject)
                 .context("Failed to generate certificate")?;
 
             crypto::write_pem_cert_file(&c.output, &cert)

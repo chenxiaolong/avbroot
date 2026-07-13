@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -11,10 +11,9 @@ use std::{
 };
 
 use bstr::ByteSlice;
-use num_bigint_dig::{ModInverse, ToBigInt};
-use num_traits::{Pow, ToPrimitive};
+use crypto_bigint::{BitOps, modular::BoxedMontyParams};
 use ring::digest::{Algorithm, Context};
-use rsa::{BigUint, RsaPublicKey, traits::PublicKeyParts};
+use rsa::{BoxedUint, RsaPublicKey, traits::PublicKeyParts};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zerocopy::{FromBytes, IntoBytes, big_endian};
@@ -102,11 +101,11 @@ pub enum Error {
     #[error("Invalid VBMeta footer magic: {0:?}")]
     InvalidFooterMagic([u8; 4]),
     #[error("RSA public key exponent not supported by AVB binary public key format: {0}")]
-    UnsupportedRsaPublicExponent(BigUint),
+    UnsupportedRsaPublicExponent(BoxedUint),
     #[error("AVB binary public key data is too small")]
     BinaryPublicKeyTooSmall,
     #[error("Invalid RSA modulus: {0}")]
-    InvalidRsaModulus(BigUint, #[source] Box<rsa::Error>),
+    InvalidRsaModulus(BoxedUint, #[source] Box<rsa::Error>),
     #[error("Signature algorithm not supported: {0:?}")]
     UnsupportedAlgorithm(AlgorithmType),
     #[error("Hashing algorithm not supported: {0:?}")]
@@ -2003,45 +2002,36 @@ impl<W: Write> ToWriter<W> for Footer {
 #[repr(C, packed)]
 struct RawPublicKey {
     key_num_bits: big_endian::U32,
-    n0inv: big_endian::U32,
+    neg_mod_inv: big_endian::U32,
 }
 
 /// Encode a public key in the AVB binary format.
 pub fn encode_public_key(key: &RsaPublicKey) -> Result<Vec<u8>> {
-    if key.e() != &BigUint::from(65537u32) {
+    if key.e() != &BoxedUint::from(65537u32) {
         return Err(Error::UnsupportedRsaPublicExponent(key.e().clone()));
     }
 
-    // libavb expects certain values to be precomputed so that the bootloader's
-    // verification operations can run faster.
-    //
-    // Values:
-    //   n0inv = -1 / n[0] (mod 2 ^ 32)
-    //     - Guaranteed to fit in a u32
-    //   r = 2 ^ (key size in bits)
-    //   rr = r^2 (mod N)
-    //     - Guaranteed to fit in key size bits
+    // libavb expects to have both the original modulus and its representation
+    // as montgomery parameters with the negative inverse modulus being mod 32.
+    let monty_params = BoxedMontyParams::new(key.n().to_odd().unwrap());
 
-    let b = BigUint::from(2u64.pow(32));
-    let n0inv = b.to_bigint().unwrap() - key.n().mod_inverse(&b).unwrap();
-    let r = BigUint::from(2u32).pow(key.n().bits());
-    let rrmodn = r.modpow(&BigUint::from(2u32), key.n());
+    // crypto-bigint's mod_inv() is mod 64 and mod_neg_inv() returns the
+    // negative of the lowest limb, which is either 32 or 64 bits, depending on
+    // CPU architecture. We'll only grab the lowest 32 bits from this.
+    let n0inv32or64 = monty_params.as_ref().mod_neg_inv();
+    let n0inv_le = &n0inv32or64.to_le_bytes()[0..4];
+    let rrmodn = monty_params.as_ref().r2();
 
     let raw_header = RawPublicKey {
-        key_num_bits: (key.size() * 8).to_u32().unwrap().into(),
-        n0inv: n0inv.to_u32().unwrap().into(),
+        // Always has same size as the modulus.
+        key_num_bits: rrmodn.bits_precision().into(),
+        neg_mod_inv: u32::from_le_bytes(n0inv_le.try_into().unwrap()).into(),
     };
 
-    let mut data = vec![];
+    let mut data = Vec::with_capacity(raw_header.as_bytes().len() + 2 * rrmodn.bytes_precision());
     data.extend_from_slice(raw_header.as_bytes());
-
-    let modulus_raw = key.n().to_bytes_be();
-    data.resize(data.len() + key.size() - modulus_raw.len(), 0);
-    data.extend_from_slice(&modulus_raw);
-
-    let rrmodn_raw = rrmodn.to_bytes_be();
-    data.resize(data.len() + key.size() - rrmodn_raw.len(), 0);
-    data.extend_from_slice(&rrmodn_raw);
+    data.extend_from_slice(&key.n().to_be_bytes());
+    data.extend_from_slice(&rrmodn.to_be_bytes());
 
     Ok(data)
 }
@@ -2057,8 +2047,8 @@ pub fn decode_public_key(data: &[u8]) -> Result<RsaPublicKey> {
         return Err(Error::BinaryPublicKeyTooSmall);
     }
 
-    let modulus = BigUint::from_bytes_be(&suffix[..key_bits / 8]);
-    let public_key = RsaPublicKey::new(modulus.clone(), BigUint::from(65537u32))
+    let modulus = BoxedUint::from_be_slice_vartime(&suffix[..key_bits / 8]);
+    let public_key = RsaPublicKey::new(modulus.clone(), BoxedUint::from(65537u32))
         .map_err(|e| Error::InvalidRsaModulus(modulus, Box::new(e)))?;
 
     Ok(public_key)

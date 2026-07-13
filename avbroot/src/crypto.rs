@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -19,13 +19,17 @@ use cms::{
         SignedData, SignerIdentifier, SignerInfo, SignerInfos,
     },
 };
+use der::{Any, Decode, DecodePem, EncodePem, pem::PemLabel, referenced::OwnedToRef};
 use passterm::PromptError;
 use pkcs8::{
-    DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, EncryptedPrivateKeyInfo,
-    LineEnding, PrivateKeyInfo,
+    DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey,
+    EncryptedPrivateKeyInfoRef, LineEnding, PrivateKeyInfoRef, SubjectPublicKeyInfoRef,
     pkcs5::{pbes2, scrypt},
 };
-use rand::RngCore;
+use rand::{
+    Rng, SeedableRng,
+    rngs::{StdRng, SysRng},
+};
 use rsa::{
     Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey, pkcs1v15::SigningKey, traits::PublicKeyParts,
 };
@@ -34,9 +38,14 @@ use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
 use thiserror::Error;
 use x509_cert::{
-    Certificate,
-    builder::{Builder, CertificateBuilder, Profile},
-    der::{Any, Decode, DecodePem, EncodePem, pem::PemLabel, referenced::OwnedToRef},
+    Certificate, TbsCertificate,
+    builder::{Builder, CertificateBuilder, profile::BuilderProfile},
+    ext::ToExtension,
+    ext::{
+        Extension,
+        pkix::{AuthorityKeyIdentifier, BasicConstraints, SubjectKeyIdentifier},
+    },
+    name::Name,
     serial_number::SerialNumber,
     spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned},
     time::Validity,
@@ -83,9 +92,11 @@ pub enum Error {
     #[error("Failed to save RSA public key")]
     SavePubKey(#[source] pkcs8::spki::Error),
     #[error("Failed to load X509 certificate")]
-    LoadCert(#[source] x509_cert::der::Error),
+    LoadCert(#[source] der::Error),
     #[error("Failed to save X509 certificate")]
-    SaveCert(#[source] x509_cert::der::Error),
+    SaveCert(#[source] der::Error),
+    #[error("Failed to initialize RNG")]
+    RngInit(#[source] rand::rngs::SysError),
     #[error("Failed to generate RSA key")]
     RsaGenerate(#[source] Box<rsa::Error>),
     #[error("Failed to RSA sign digest")]
@@ -95,18 +106,18 @@ pub enum Error {
     #[error("Failed to generate X509 certificate")]
     CertGenerate(#[source] x509_cert::builder::Error),
     #[error("Invalid parameters for X509 certificate generation")]
-    CertParams(#[source] x509_cert::der::Error),
+    CertParams(#[source] der::Error),
     #[error("Failed to CMS sign digest")]
-    CmsSign(#[source] x509_cert::der::Error),
+    CmsSign(#[source] der::Error),
     #[error("Failed to parse CMS signature")]
-    CmsParse(#[source] x509_cert::der::Error),
+    CmsParse(#[source] der::Error),
     #[error("Failed to read file: {0:?}")]
     ReadFile(PathBuf, #[source] io::Error),
     #[error("Failed to write file: {0:?}")]
     WriteFile(PathBuf, #[source] io::Error),
 }
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum SignatureAlgorithm {
@@ -385,9 +396,14 @@ impl RsaPublicKeyExt for RsaPublicKey {
     }
 }
 
+/// Create a cryptographically secure random number generator.
+fn csprng() -> Result<StdRng> {
+    StdRng::try_from_rng(&mut SysRng).map_err(Error::RngInit)
+}
+
 /// Generate an 4096-bit RSA key pair.
 pub fn generate_rsa_key_pair() -> Result<RsaPrivateKey> {
-    let mut rng = rand::thread_rng();
+    let mut rng = csprng()?;
 
     // avbroot supports 4096-bit keys only.
     let key = RsaPrivateKey::new(&mut rng, 4096).map_err(|e| Error::RsaGenerate(Box::new(e)))?;
@@ -395,13 +411,69 @@ pub fn generate_rsa_key_pair() -> Result<RsaPrivateKey> {
     Ok(key)
 }
 
+/// Produce certs that match what AOSP's `development/tools/make_key` create.
+struct AndroidRootProfile {
+    subject: Name,
+}
+
+impl BuilderProfile for AndroidRootProfile {
+    fn get_issuer(&self, subject: &Name) -> Name {
+        subject.clone()
+    }
+
+    fn get_subject(&self) -> Name {
+        self.subject.clone()
+    }
+
+    fn build_extensions(
+        &self,
+        spk: SubjectPublicKeyInfoRef<'_>,
+        _issuer_spk: SubjectPublicKeyInfoRef<'_>,
+        tbs: &TbsCertificate,
+    ) -> Result<Vec<Extension>, x509_cert::builder::Error> {
+        let mut extensions = vec![];
+
+        let ski = SubjectKeyIdentifier::try_from(spk)?;
+
+        extensions.push(ski.to_extension(tbs.subject(), &extensions)?);
+
+        extensions.push(
+            AuthorityKeyIdentifier {
+                key_identifier: Some(ski.0),
+                ..Default::default()
+            }
+            .to_extension(tbs.subject(), &extensions)?,
+        );
+
+        extensions.push(
+            BasicConstraints {
+                ca: true,
+                path_len_constraint: None,
+            }
+            .to_extension(tbs.subject(), &extensions)?,
+        );
+
+        Ok(extensions)
+    }
+}
+
 /// Generate a self-signed certificate.
 pub fn generate_cert(
     key: &RsaPrivateKey,
-    serial: u64,
     validity: Duration,
     subject: &str,
 ) -> Result<Certificate> {
+    let mut rng = csprng()?;
+
+    // Must be positive.
+    let mut subject_bytes = [0u8; 20];
+    while subject_bytes[0] == 0 || subject_bytes[0] > 0x7f {
+        rng.fill_bytes(&mut subject_bytes);
+    }
+
+    let subject: Name = subject.parse().map_err(Error::CertParams)?;
+    let profile = AndroidRootProfile { subject };
+
     let public_key_der = key
         .to_public_key()
         .to_public_key_der()
@@ -409,19 +481,17 @@ pub fn generate_cert(
     let signing_key = SigningKey::<Sha256>::new(key.clone());
 
     let builder = CertificateBuilder::new(
-        Profile::Root,
-        SerialNumber::from(serial),
+        profile,
+        SerialNumber::new(&subject_bytes).unwrap(),
         Validity::from_now(validity).map_err(Error::CertParams)?,
-        subject.parse().map_err(Error::CertParams)?,
         SubjectPublicKeyInfoOwned::from_der(public_key_der.as_bytes())
             .map_err(Error::CertParams)?,
-        &signing_key,
     )
     .map_err(Error::CertGenerate)?;
 
-    let mut rng = rand::thread_rng();
+    let mut rng = csprng()?;
     let cert = builder
-        .build_with_rng(&mut rng)
+        .build_with_rng(&signing_key, &mut rng)
         .map_err(Error::CertGenerate)?;
 
     Ok(cert)
@@ -584,7 +654,7 @@ pub fn write_pem_key(
         key.to_pkcs8_pem(LineEnding::LF)
             .map_err(Error::SaveKeyUnencrypted)?
     } else {
-        let mut rng = rand::thread_rng();
+        let mut rng = csprng()?;
 
         // Normally, we'd just use key.to_pkcs8_encrypted_pem(). However, it
         // uses scrypt with n = 32768. This is high enough that openssl can no
@@ -605,19 +675,20 @@ pub fn write_pem_key(
         rng.fill_bytes(&mut iv);
 
         // 14 = log_2(16384), 32 bytes = 256 bits
-        let scrypt_params = scrypt::Params::new(14, 8, 1, 32).unwrap();
-        let pbes2_params = pbes2::Parameters::scrypt_aes256cbc(scrypt_params, &salt, &iv).unwrap();
+        let scrypt_params = scrypt::Params::new_with_output_len(14, 8, 1, 32).unwrap();
+        let pbes2_params =
+            pbes2::Parameters::generate_scrypt_aes256cbc(scrypt_params, &salt, iv).unwrap();
 
         let plain_text_der = key.to_pkcs8_der().map_err(Error::SaveKeyEncrypted)?;
-        let private_key_info =
-            PrivateKeyInfo::try_from(plain_text_der.as_bytes()).map_err(Error::SaveKeyEncrypted)?;
+        let private_key_info = PrivateKeyInfoRef::try_from(plain_text_der.as_bytes())
+            .map_err(Error::SaveKeyEncrypted)?;
 
         let secret_doc = private_key_info
             .encrypt_with_params(pbes2_params, passphrase)
             .map_err(Error::SaveKeyEncrypted)?;
 
         secret_doc
-            .to_pem(EncryptedPrivateKeyInfo::PEM_LABEL, LineEnding::LF)
+            .to_pem(EncryptedPrivateKeyInfoRef::PEM_LABEL, LineEnding::LF)
             .map_err(pkcs8::Error::Asn1)
             .map_err(Error::SaveKeyEncrypted)?
     };
@@ -662,9 +733,12 @@ pub fn write_pem_key_file(
 
 /// Get the RSA public key from a certificate.
 pub fn get_public_key(cert: &Certificate) -> Result<RsaPublicKey> {
-    let public_key =
-        RsaPublicKey::try_from(cert.tbs_certificate.subject_public_key_info.owned_to_ref())
-            .map_err(Error::LoadPubKey)?;
+    let public_key = RsaPublicKey::try_from(
+        cert.tbs_certificate()
+            .subject_public_key_info()
+            .owned_to_ref(),
+    )
+    .map_err(Error::LoadPubKey)?;
 
     Ok(public_key)
 }
@@ -734,8 +808,8 @@ pub fn cms_sign_external(
         signer_infos: SignerInfos::try_from(vec![SignerInfo {
             version: CmsVersion::V1,
             sid: SignerIdentifier::IssuerAndSerialNumber(IssuerAndSerialNumber {
-                issuer: cert.tbs_certificate.issuer.clone(),
-                serial_number: cert.tbs_certificate.serial_number.clone(),
+                issuer: cert.tbs_certificate().issuer().clone(),
+                serial_number: cert.tbs_certificate().serial_number().clone(),
             }),
             digest_alg: digest_algorithm,
             signed_attrs: None,

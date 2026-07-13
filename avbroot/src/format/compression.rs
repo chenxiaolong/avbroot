@@ -316,7 +316,7 @@ mod tests {
 
     fn round_trip(format: CompressedFormat, can_autodetect: bool) {
         let mut data = vec![0u8; 1024 * 1024];
-        rand::thread_rng().fill(data.as_mut_slice());
+        rand::rng().fill_bytes(data.as_mut_slice());
 
         let mut writer = CompressedWriter::new(Cursor::new(Vec::new()), format).unwrap();
         writer.write_all(&data).unwrap();

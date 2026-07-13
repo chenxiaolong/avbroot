@@ -15,16 +15,17 @@ avbroot = { path = "../avbroot" }
 clap = { version = "4.4.1", features = ["derive"] }
 ctrlc = "3.4.0"
 hex = { version = "0.4.3", features = ["serde"] }
+rand = "0.10.2"
 rawzip = "0.5.0"
 ring = "0.17.14"
-rsa = { version = "0.9.6", features = ["hazmat"] }
+rsa = { version = "0.10.0-rc.18", features = ["hazmat"] }
 serde = { version = "1.0.188", features = ["derive"] }
 tempfile = "3.8.0"
 toml = { version = "1.0.1", features = ["serde"] }
 topological-sort = "0.2.2"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
-x509-cert = "0.2.5"
+x509-cert = "0.3.0"
 
 [lints]
 workspace = true

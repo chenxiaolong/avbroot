@@ -1382,13 +1382,12 @@ fn patch_ota_zip(
         // For simplicity, we still use the same types when writing the output.
         // We'll just skip the invalid CRC32 calculation (on compressed data)
         // and avoid double compression.
-        let write_compression_method: CompressionMethod;
-        if raw_copy {
+        let write_compression_method = if raw_copy {
             builder = builder.crc32(Crc32Option::Skip);
-            write_compression_method = CompressionMethod::STORE;
+            CompressionMethod::STORE
         } else {
-            write_compression_method = input_entry.compression_method;
-        }
+            input_entry.compression_method
+        };
 
         let (entry_writer, data_config) = builder
             .start()

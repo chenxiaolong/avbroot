@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -803,7 +803,7 @@ mod tests {
     };
 
     use assert_matches::assert_matches;
-    use rand::RngCore;
+    use rand::Rng;
 
     use crate::stream::MutexFile;
 
@@ -858,7 +858,7 @@ mod tests {
 
         let orig_digest = {
             let mut buf = vec![0u8; size];
-            rand::thread_rng().fill_bytes(&mut buf);
+            rand::rng().fill_bytes(&mut buf);
             pos_file.write_all(&buf).unwrap();
             ring::digest::digest(&ring::digest::SHA256, &buf)
         };
@@ -926,7 +926,7 @@ mod tests {
 
         {
             let mut buf = [0u8; FEC_BLOCK_SIZE];
-            rand::thread_rng().fill_bytes(&mut buf);
+            rand::rng().fill_bytes(&mut buf);
             UserPosFile::new(&file).write_all(&buf).unwrap();
         }
 

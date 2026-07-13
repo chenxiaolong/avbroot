@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2022-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2022-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -16,12 +16,13 @@ use std::{
 use clap::ValueEnum;
 use cms::signed_data::SignedData;
 use const_oid::{ObjectIdentifier, db::rfc5912};
+use der::Encode;
 use memchr::memmem;
 use prost::Message;
 use rawzip::{CompressionMethod, RECOMMENDED_BUFFER_SIZE, ZipArchive, ZipArchiveWriter};
 use ring::digest::{Algorithm, Context};
 use thiserror::Error;
-use x509_cert::{Certificate, der::Encode};
+use x509_cert::Certificate;
 
 use crate::{
     crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
@@ -116,7 +117,7 @@ pub enum Error {
     #[error("Failed to load CMS signature")]
     CmsLoad(#[source] crypto::Error),
     #[error("Failed to save CMS signature")]
-    CmsSave(#[source] x509_cert::der::Error),
+    CmsSave(#[source] der::Error),
     #[error("Failed to generate CMS signature")]
     CmsSign(#[source] crypto::Error),
     #[error("Failed to verify CMS signature")]

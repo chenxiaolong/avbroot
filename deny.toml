@@ -68,4 +68,5 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
     "https://github.com/chenxiaolong/system-properties",
+    "https://github.com/RustCrypto/formats",
 ]
