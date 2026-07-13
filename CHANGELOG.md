@@ -11,7 +11,7 @@
 
 * Increase memory limits in AVB parser to allow verifying images larger than 8 GIB (limit is now 16 GiB) ([PR #616])
 * Extra files in OTAs are now copied to the output file without unnecessary decompression + recompression ([PR #624])
-* Update dependencies ([PR #620], [PR #624])
+* Update dependencies ([PR #620], [PR #624], [PR #626])
 
 ### Version 3.31.0
 
@@ -760,3 +760,4 @@ Behind-the-scenes changes:
 [PR #616]: https://github.com/chenxiaolong/avbroot/pull/616
 [PR #620]: https://github.com/chenxiaolong/avbroot/pull/620
 [PR #624]: https://github.com/chenxiaolong/avbroot/pull/624
+[PR #626]: https://github.com/chenxiaolong/avbroot/pull/626
