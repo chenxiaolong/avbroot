@@ -29,7 +29,7 @@ dlv-list = "0.6.0"
 flate2 = { version = "1.0.29", features = ["zlib-rs"] }
 gf256 = { version = "0.3.0", features = ["rs"] }
 hex = { version = "0.4.3", features = ["serde"] }
-lz4_flex = "0.13.0"
+lz4_flex = "0.14.0"
 lzma-rust2 = "0.16.1"
 memchr = "2.6.0"
 ml-dsa = { version = "0.1.1", features = ["rand_core"] }
