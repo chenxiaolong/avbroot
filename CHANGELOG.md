@@ -9,7 +9,7 @@
 
 ### Unreleased
 
-* Add support for post-quantum ML-DSA keys for AVB signing ([PR #628])
+* Add support for post-quantum ML-DSA keys for AVB signing ([Issue #585], [PR #628], [PR #629])
     * This was introduced in Android 17, but there are no known devices with bootloaders that support it yet.
 * Add support for RSA-8192 for both AVB and OTA signing ([PR #628])
 * Increase memory limits in AVB parser to allow verifying images larger than 8 GIB (limit is now 16 GiB) ([PR #616])
@@ -521,6 +521,7 @@ Behind-the-scenes changes:
 [Issue #554]: https://github.com/chenxiaolong/avbroot/issues/554
 [Issue #569]: https://github.com/chenxiaolong/avbroot/issues/569
 [Issue #578]: https://github.com/chenxiaolong/avbroot/issues/578
+[Issue #585]: https://github.com/chenxiaolong/avbroot/issues/585
 [Issue #593]: https://github.com/chenxiaolong/avbroot/issues/593
 [Issue #603]: https://github.com/chenxiaolong/avbroot/issues/603
 [Issue #607]: https://github.com/chenxiaolong/avbroot/issues/607
@@ -767,3 +768,4 @@ Behind-the-scenes changes:
 [PR #626]: https://github.com/chenxiaolong/avbroot/pull/626
 [PR #627]: https://github.com/chenxiaolong/avbroot/pull/627
 [PR #628]: https://github.com/chenxiaolong/avbroot/pull/628
+[PR #629]: https://github.com/chenxiaolong/avbroot/pull/629
