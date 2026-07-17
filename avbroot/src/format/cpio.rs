@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -347,13 +347,13 @@ impl fmt::Display for CpioEntry {
         writeln!(f, "Path:    {:?}", self.path.as_bstr())?;
         match &self.data {
             CpioEntryData::Size(s) => {
-                writeln!(f, "Data:    {:?}", &NumBytes(*s))?;
+                writeln!(f, "Data:    {:?}", NumBytes(*s))?;
             }
             CpioEntryData::Data(d) => {
                 if self.file_type == CpioEntryType::Symlink {
                     writeln!(f, "Data:    {:?}", d.as_bstr())?;
                 } else {
-                    writeln!(f, "Data:    {:?}", &NumBytes(d.len()))?;
+                    writeln!(f, "Data:    {:?}", NumBytes(d.len()))?;
                 }
             }
         }

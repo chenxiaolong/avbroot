@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -306,9 +306,9 @@ fn compute_dm_verity_cmdline(descriptor: &HashTreeDescriptor) -> String {
     // Hash algorithm.
     write!(&mut result, " {}", descriptor.hash_algorithm).unwrap();
     // Root digest.
-    write!(&mut result, " {}", &hex::encode(&descriptor.root_digest)).unwrap();
+    write!(&mut result, " {}", hex::encode(&descriptor.root_digest)).unwrap();
     // Salt.
-    write!(&mut result, " {}", &hex::encode(&descriptor.salt)).unwrap();
+    write!(&mut result, " {}", hex::encode(&descriptor.salt)).unwrap();
 
     // Number of optional arguments.
     let num_optional_args = if descriptor.fec_num_roots != 0 { 10 } else { 2 }

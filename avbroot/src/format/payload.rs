@@ -1148,7 +1148,7 @@ impl VabcAlgo {
     /// for each chunk is temporarily stored in memory, but discarded after each
     /// loop iteration.
     fn compressed_size(self, mut raw_data: &[u8], chunking: ChunkingParams) -> Result<CowEstimate> {
-        assert!(raw_data.len() as u64 % u64::from(chunking.block_size) == 0);
+        assert!((raw_data.len() as u64).is_multiple_of(chunking.block_size.into()));
 
         let mut size = 0;
         let mut num_ops = 0;
@@ -1246,17 +1246,20 @@ fn validate_partition_size(
     block_size: u32,
     compression_factor: Option<u32>,
 ) -> Result<()> {
-    if block_size == 0 || !block_size.is_power_of_two() || CHUNK_SIZE % u64::from(block_size) != 0 {
+    if block_size == 0
+        || !block_size.is_power_of_two()
+        || !CHUNK_SIZE.is_multiple_of(block_size.into())
+    {
         return Err(Error::InvalidBlockSize(block_size));
     }
 
     if let Some(factor) = compression_factor
-        && (factor == 0 || !factor.is_power_of_two() || CHUNK_SIZE % u64::from(factor) != 0)
+        && (factor == 0 || !factor.is_power_of_two() || !CHUNK_SIZE.is_multiple_of(factor.into()))
     {
         return Err(Error::InvalidMaxCompressionChunkSize(factor));
     }
 
-    if file_size % u64::from(block_size) != 0 {
+    if !file_size.is_multiple_of(block_size.into()) {
         return Err(Error::InvalidPartitionSize {
             name: partition_name.to_owned(),
             size: file_size,

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2024-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -344,7 +344,7 @@ fn pack_subcommand(
     cli: &PackCli,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    if cli.block_size == 0 || cli.block_size % 4 != 0 {
+    if cli.block_size == 0 || !cli.block_size.is_multiple_of(4) {
         bail!(
             "Block size must be a non-zero multiple of 4: {}",
             cli.block_size,

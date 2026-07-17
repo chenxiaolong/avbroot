@@ -160,7 +160,7 @@ impl Fec {
     pub fn new(file_size: u64, block_size: u32, parity: u8) -> Result<Self> {
         if file_size == 0 {
             return Err(Error::InputEmpty);
-        } else if file_size % u64::from(block_size) != 0 {
+        } else if !file_size.is_multiple_of(block_size.into()) {
             return Err(Error::NotBlockAligned {
                 input: file_size,
                 block: block_size,

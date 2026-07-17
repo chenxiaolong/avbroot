@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2024-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -308,7 +308,9 @@ impl RawGeometry {
             }
         }
 
-        if self.metadata_max_size.get() == 0 || self.metadata_max_size.get() % SECTOR_SIZE != 0 {
+        if self.metadata_max_size.get() == 0
+            || !self.metadata_max_size.get().is_multiple_of(SECTOR_SIZE)
+        {
             return Err(Error::MaxMetadataSizeUnaligned(
                 self.metadata_max_size.get(),
             ));
@@ -318,7 +320,7 @@ impl RawGeometry {
             return Err(Error::NoMetadataSlots);
         }
 
-        if self.logical_block_size.get() % SECTOR_SIZE != 0 {
+        if !self.logical_block_size.get().is_multiple_of(SECTOR_SIZE) {
             return Err(Error::LogicalBlockSizeUnaligned(
                 self.logical_block_size.get(),
             ));
@@ -504,7 +506,7 @@ impl RawHeader {
 
         if self.minor_version.get() < VERSION_FOR_EXPANDED_HEADER {
             // This would be an implementation error.
-            assert!(self.flags.get() == 0);
+            assert_eq!(self.flags.get(), 0);
             assert!(util::is_zero(&self.reserved));
         }
 
@@ -915,26 +917,30 @@ impl RawBlockDevice {
             return Err(Error::DeviceAlignmentIsZero {
                 name: DebugString::new(self.partition_name),
             });
-        } else if self.alignment.get() % SECTOR_SIZE != 0 {
+        } else if !self.alignment.get().is_multiple_of(SECTOR_SIZE) {
             return Err(Error::DeviceAlignmentNotSectorAligned {
                 name: DebugString::new(self.partition_name),
             });
         }
 
         let alignment_sectors = u64::from(self.alignment.get() / SECTOR_SIZE);
-        if self.first_logical_sector.get() % alignment_sectors != 0 {
+        if !self
+            .first_logical_sector
+            .get()
+            .is_multiple_of(alignment_sectors)
+        {
             return Err(Error::DeviceFirstSectorNotAligned {
                 name: DebugString::new(self.partition_name),
             });
         }
 
-        if self.alignment_offset.get() % SECTOR_SIZE != 0 {
+        if !self.alignment_offset.get().is_multiple_of(SECTOR_SIZE) {
             return Err(Error::DeviceOffsetNotSectorAligned {
                 name: DebugString::new(self.partition_name),
             });
         }
 
-        if self.size.get() % u64::from(SECTOR_SIZE) != 0 {
+        if !self.size.get().is_multiple_of(u64::from(SECTOR_SIZE)) {
             return Err(Error::DeviceSizeNotSectorAligned {
                 name: DebugString::new(self.partition_name),
             });

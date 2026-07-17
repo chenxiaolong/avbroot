@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2024-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -165,7 +165,7 @@ impl RawHeader {
             return Err(Error::InvalidChunkHeaderSize(self.chunk_hdr_sz.get()));
         }
 
-        if self.blk_sz.get() == 0 || self.blk_sz.get() % 4 != 0 {
+        if self.blk_sz.get() == 0 || !self.blk_sz.get().is_multiple_of(4) {
             return Err(Error::InvalidBlockSize(self.blk_sz.get()));
         }
 
@@ -248,7 +248,7 @@ impl RawChunk {
                 index,
                 end_block,
                 total_blocks: header.total_blks.get(),
-            })?;
+            });
         }
 
         if self.chunk_type.get() == CHUNK_TYPE_CRC32 && self.chunk_sz.get() != 0 {

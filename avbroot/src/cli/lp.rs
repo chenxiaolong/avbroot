@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2024-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -414,11 +414,11 @@ fn repack_subcommand(lp_cli: &LpCli, cli: &RepackCli, cancel_signal: &AtomicBool
         );
         error.insert(
             clap::error::ContextKind::ActualNumValues,
-            clap::error::ContextValue::Number(actual_len as isize),
+            clap::error::ContextValue::Number(actual_len.cast_signed()),
         );
         error.insert(
             clap::error::ContextKind::ExpectedNumValues,
-            clap::error::ContextValue::Number(expected_len as isize),
+            clap::error::ContextValue::Number(expected_len.cast_signed()),
         );
 
         // We don't show the usage because only Command::_build_subcommand() can
