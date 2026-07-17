@@ -16,7 +16,7 @@ use tracing::info;
 
 use crate::{
     cli::ota,
-    crypto::{self, PassphraseSource, RsaSigningKey},
+    crypto::{self, PassphraseSource, SigningPrivateKey},
     format::payload::{PayloadHeader, PayloadWriter},
     stream::{self, FromReader, SectionReader},
     util,
@@ -43,7 +43,7 @@ fn open_raw_writer(path: &Path) -> Result<BufWriter<File>> {
 fn open_writer(
     path: &Path,
     header: PayloadHeader,
-    key: RsaSigningKey,
+    key: SigningPrivateKey,
 ) -> Result<PayloadWriter<BufWriter<File>>> {
     let writer = open_raw_writer(path)?;
     let payload_writer = PayloadWriter::new(writer, header, key)
@@ -76,7 +76,7 @@ fn display_header(quiet: bool, header: &PayloadHeader) {
     }
 }
 
-fn load_key(group: &KeyGroup) -> Result<RsaSigningKey> {
+fn load_key(group: &KeyGroup) -> Result<SigningPrivateKey> {
     let source = PassphraseSource::new(
         &group.key,
         group.pass_file.as_deref(),
@@ -86,17 +86,15 @@ fn load_key(group: &KeyGroup) -> Result<RsaSigningKey> {
         let public_key = crypto::read_pem_public_key_file(&group.key)
             .with_context(|| format!("Failed to load key: {:?}", group.key))?;
 
-        RsaSigningKey::External {
+        SigningPrivateKey::External {
             program: helper.clone(),
             public_key_file: group.key.clone(),
             public_key,
             passphrase_source: source,
         }
     } else {
-        let private_key = crypto::read_pem_key_file(&group.key, &source)
-            .with_context(|| format!("Failed to load key: {:?}", group.key))?;
-
-        RsaSigningKey::Internal(private_key)
+        crypto::read_pem_private_key_file(&group.key, &source)
+            .with_context(|| format!("Failed to load key: {:?}", group.key))?
     };
 
     Ok(signing_key)
@@ -197,7 +195,7 @@ pub fn pack_payload(
     input_info: &Path,
     input_images: &Path,
     writer: &mut dyn Write,
-    signing_key: &RsaSigningKey,
+    signing_key: &SigningPrivateKey,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
     let mut header = read_info(input_info)?;

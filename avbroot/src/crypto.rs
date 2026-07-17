@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
+    borrow::Cow,
     env::{self, VarError},
     ffi::{OsStr, OsString},
     fs::{self, File, OpenOptions},
@@ -19,20 +20,23 @@ use cms::{
         SignedData, SignerIdentifier, SignerInfo, SignerInfos,
     },
 };
-use der::{Any, Decode, DecodePem, EncodePem, pem::PemLabel, referenced::OwnedToRef};
+use der::{
+    Any, Decode, DecodePem, EncodePem, SecretDocument, pem::PemLabel, referenced::OwnedToRef,
+};
+use ml_dsa::{
+    EncodedSignature, Generate, Keypair, MlDsa65, MlDsa87, Signer, Verifier, VerifyingKey,
+};
 use passterm::PromptError;
 use pkcs8::{
     DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey,
     EncryptedPrivateKeyInfoRef, LineEnding, PrivateKeyInfoRef, SubjectPublicKeyInfoRef,
-    pkcs5::{pbes2, scrypt},
+    spki::{self, AssociatedAlgorithmIdentifier},
 };
 use rand::{
     Rng, SeedableRng,
     rngs::{StdRng, SysRng},
 };
-use rsa::{
-    Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey, pkcs1v15::SigningKey, traits::PublicKeyParts,
-};
+use rsa::{Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey, pkcs1, pkcs1v15, traits::PublicKeyParts};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
@@ -57,8 +61,10 @@ use crate::util::DebugString;
 pub enum Error {
     #[error("Signature algorithm not supported: {0:?}")]
     UnsupportedAlgorithm(SignatureAlgorithm),
-    #[error("RSA key size ({}) not supported", .0 * 8)]
-    UnsupportedKeySize(usize),
+    #[error("ML-DSA does not support signing/verifying digests")]
+    UnsupportedMlDsaDigest,
+    #[error("Invalid signature algorithm {0:?} for key type: {1:?}")]
+    InvalidAlgorithmForKey(SignatureAlgorithm, SigningKeyType),
     #[error("Invalid digest length ({0} bytes) for {1:?}")]
     InvalidDigestLength(usize, SignatureAlgorithm),
     #[error("Invalid signature length ({0} bytes) for {1:?}")]
@@ -79,18 +85,20 @@ pub enum Error {
     InvalidEnvVar(OsString, #[source] VarError),
     #[error("PEM has start tag, but no end tag")]
     PemNoEndTag,
-    #[error("Failed to load encrypted RSA private key")]
+    #[error("Generating certificate from external key not supported")]
+    CertGenerateExternalKey,
+    #[error("Failed to load encrypted private key")]
     LoadKeyEncrypted(#[source] pkcs8::Error),
-    #[error("Failed to load unencrypted RSA private key")]
+    #[error("Failed to load unencrypted private key")]
     LoadKeyUnencrypted(#[source] pkcs8::Error),
-    #[error("Failed to save encrypted RSA private key")]
+    #[error("Failed to save encrypted private key")]
     SaveKeyEncrypted(#[source] pkcs8::Error),
-    #[error("Failed to save unencrypted RSA private key")]
+    #[error("Failed to save unencrypted private key")]
     SaveKeyUnencrypted(#[source] pkcs8::Error),
-    #[error("Failed to load RSA public key")]
-    LoadPubKey(#[source] pkcs8::spki::Error),
-    #[error("Failed to save RSA public key")]
-    SavePubKey(#[source] pkcs8::spki::Error),
+    #[error("Failed to load public key")]
+    LoadPubKey(#[source] spki::Error),
+    #[error("Failed to save public key")]
+    SavePubKey(#[source] spki::Error),
     #[error("Failed to load X509 certificate")]
     LoadCert(#[source] der::Error),
     #[error("Failed to save X509 certificate")]
@@ -99,10 +107,14 @@ pub enum Error {
     RngInit(#[source] rand::rngs::SysError),
     #[error("Failed to generate RSA key")]
     RsaGenerate(#[source] Box<rsa::Error>),
-    #[error("Failed to RSA sign digest")]
+    #[error("Failed to perform RSA signing")]
     RsaSign(#[source] Box<rsa::Error>),
-    #[error("Failed to RSA verify signature")]
+    #[error("Failed to perform RSA verification")]
     RsaVerify(#[source] Box<rsa::Error>),
+    #[error("Failed to perform ML-DSA signing")]
+    MlDsaSign(#[source] ml_dsa::Error),
+    #[error("Failed to perform ML-DSA verification")]
+    MlDsaVerify(#[source] ml_dsa::Error),
     #[error("Failed to generate X509 certificate")]
     CertGenerate(#[source] x509_cert::builder::Error),
     #[error("Invalid parameters for X509 certificate generation")]
@@ -124,6 +136,8 @@ pub enum SignatureAlgorithm {
     Sha1WithRsa,
     Sha256WithRsa,
     Sha512WithRsa,
+    MlDsa65,
+    MlDsa87,
 }
 
 impl SignatureAlgorithm {
@@ -133,6 +147,7 @@ impl SignatureAlgorithm {
             Self::Sha1WithRsa => Sha1::output_size(),
             Self::Sha256WithRsa => Sha256::output_size(),
             Self::Sha512WithRsa => Sha512::output_size(),
+            Self::MlDsa65 | Self::MlDsa87 => 0,
         }
     }
 
@@ -142,11 +157,12 @@ impl SignatureAlgorithm {
             Self::Sha1WithRsa => Sha1::digest(data).to_vec(),
             Self::Sha256WithRsa => Sha256::digest(data).to_vec(),
             Self::Sha512WithRsa => Sha512::digest(data).to_vec(),
+            Self::MlDsa65 | Self::MlDsa87 => vec![],
         }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PassphraseSource {
     Prompt(String),
     EnvVar(OsString),
@@ -211,15 +227,6 @@ impl PassphraseSource {
     }
 }
 
-fn check_key_size(size: usize) -> Result<()> {
-    // RustCrypto does not support 8192-bit keys.
-    if size > 4096 / 8 {
-        return Err(Error::UnsupportedKeySize(size));
-    }
-
-    Ok(())
-}
-
 /// Copied from rsa-0.9.6 since the function is not exported.
 fn pkcs1v15_sign_pad(prefix: &[u8], hashed: &[u8], k: usize) -> rsa::Result<Vec<u8>> {
     let hash_len = hashed.len();
@@ -239,176 +246,412 @@ fn pkcs1v15_sign_pad(prefix: &[u8], hashed: &[u8], k: usize) -> rsa::Result<Vec<
     Ok(em)
 }
 
-#[derive(Clone)]
-pub enum RsaSigningKey {
-    Internal(RsaPrivateKey),
-    External {
-        program: PathBuf,
-        public_key_file: PathBuf,
-        public_key: RsaPublicKey,
-        passphrase_source: PassphraseSource,
-    },
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SigningKeyType {
+    /// Size in bytes.
+    Rsa(usize),
+    MlDsa65,
+    MlDsa87,
 }
 
-impl RsaSigningKey {
-    /// Size of key in bytes.
-    pub fn size(&self) -> usize {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SigningContent<'a> {
+    Data(&'a [u8]),
+    Digest(&'a [u8]),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SigningPublicKey {
+    Rsa(RsaPublicKey),
+    MlDsa65(VerifyingKey<MlDsa65>),
+    MlDsa87(VerifyingKey<MlDsa87>),
+}
+
+impl SigningPublicKey {
+    pub fn key_type(&self) -> SigningKeyType {
         match self {
-            Self::Internal(key) => key.size(),
-            Self::External { public_key, .. } => public_key.size(),
+            Self::Rsa(key) => SigningKeyType::Rsa(key.size()),
+            Self::MlDsa65(_) => SigningKeyType::MlDsa65,
+            Self::MlDsa87(_) => SigningKeyType::MlDsa87,
         }
     }
 
-    /// Get the public key portion of the signing key.
-    pub fn to_public_key(&self) -> RsaPublicKey {
-        match self {
-            Self::Internal(key) => key.to_public_key(),
-            Self::External { public_key, .. } => public_key.clone(),
-        }
-    }
-
-    /// Sign the digest with the specified signature algorithm.
-    pub fn sign(&self, algo: SignatureAlgorithm, digest: &[u8]) -> Result<Vec<u8>> {
-        if digest.len() != algo.digest_len() {
-            return Err(Error::InvalidDigestLength(digest.len(), algo));
-        }
-
-        check_key_size(self.size())?;
-
-        let scheme = match algo {
-            // We don't support signing with insecure algorithms.
-            SignatureAlgorithm::Sha1WithRsa => return Err(Error::UnsupportedAlgorithm(algo)),
-            SignatureAlgorithm::Sha256WithRsa => Pkcs1v15Sign::new::<Sha256>(),
-            SignatureAlgorithm::Sha512WithRsa => Pkcs1v15Sign::new::<Sha512>(),
-        };
+    /// Verify the signature of the content.
+    ///
+    /// * [`SigningContent::Data`] is supported for both RSA and ML-DSA.
+    /// * [`SigningContent::Digest`] is only supported for RSA.
+    pub fn verify(
+        &self,
+        algo: SignatureAlgorithm,
+        content: SigningContent,
+        signature: &[u8],
+    ) -> Result<()> {
+        let key_type = self.key_type();
 
         match self {
-            Self::Internal(key) => key
-                .sign(scheme, digest)
-                .map_err(|e| Error::RsaSign(Box::new(e))),
-            Self::External {
-                program,
-                public_key,
-                public_key_file,
-                passphrase_source,
-            } => {
-                let key_bits = public_key.size() * 8;
-                let algo_str = match algo {
-                    SignatureAlgorithm::Sha1WithRsa => unreachable!(),
-                    SignatureAlgorithm::Sha256WithRsa => format!("SHA256_RSA{key_bits}"),
-                    SignatureAlgorithm::Sha512WithRsa => format!("SHA512_RSA{key_bits}"),
+            Self::Rsa(key) => {
+                let scheme = match algo {
+                    SignatureAlgorithm::Sha1WithRsa => Pkcs1v15Sign::new::<Sha1>(),
+                    SignatureAlgorithm::Sha256WithRsa => Pkcs1v15Sign::new::<Sha256>(),
+                    SignatureAlgorithm::Sha512WithRsa => Pkcs1v15Sign::new::<Sha512>(),
+                    _ => return Err(Error::InvalidAlgorithmForKey(algo, key_type)),
                 };
 
-                let mut command = Command::new(program);
-                command.arg(algo_str);
-                command.arg(public_key_file);
+                let digest = match content {
+                    SigningContent::Data(data) => Cow::Owned(algo.hash(data)),
+                    SigningContent::Digest(digest) => Cow::Borrowed(digest),
+                };
 
-                match passphrase_source {
-                    PassphraseSource::Prompt(_) => {}
-                    PassphraseSource::EnvVar(v) => {
-                        command.arg("env");
-                        command.arg(v);
-                    }
-                    PassphraseSource::File(p) => {
-                        command.arg("file");
-                        command.arg(p);
-                    }
+                // Check this explicitly to return a better error message.
+                if digest.len() != algo.digest_len() {
+                    return Err(Error::InvalidDigestLength(digest.len(), algo));
                 }
 
-                command.stdin(Stdio::piped());
-                command.stdout(Stdio::piped());
-                command.stderr(Stdio::inherit());
-
-                let mut child = command
-                    .spawn()
-                    .map_err(|e| Error::CommandSpawn(DebugString::new(&command), e))?;
-
-                // We don't bother with spawning a thread. The pipe capacity on
-                // all major OSs is significantly larger than the digest, so we
-                // don't risk deadlocking even if the process doesn't read from
-                // stdin.
-                //
-                // Pipe capacities:
-                // * Linux: 64 KiB
-                // * macOS: 4 KiB, 16 KiB (usually), or 64 KiB
-                // * Windows: 4 KiB
-
-                let padded_digest = pkcs1v15_sign_pad(&scheme.prefix, digest, public_key.size())
-                    .map_err(|e| Error::RsaSign(Box::new(e)))?;
-                child
-                    .stdin
-                    .as_mut()
-                    .unwrap()
-                    .write_all(&padded_digest)
-                    .map_err(|e| Error::WriteFile("<signing helper stdin>".into(), e))?;
-
-                let child = child
-                    .wait_with_output()
-                    .map_err(|e| Error::CommandSpawn(DebugString::new(&command), e))?;
-
-                if !child.status.success() {
-                    return Err(Error::CommandExecution(
-                        DebugString::new(&command),
-                        child.status,
-                    ));
-                } else if child.stdout.len() != self.size() {
-                    return Err(Error::InvalidSignatureLength(child.stdout.len(), algo));
+                key.verify(scheme, &digest, signature)
+                    .map_err(|e| Error::RsaSign(Box::new(e)))
+            }
+            Self::MlDsa65(key) => {
+                if algo != SignatureAlgorithm::MlDsa65 {
+                    return Err(Error::InvalidAlgorithmForKey(algo, key_type));
                 }
 
-                // Check that the helper signed with the proper key.
-                if let Err(e) = self.to_public_key().verify_sig(algo, digest, &child.stdout) {
-                    return match e {
-                        Error::RsaVerify(_) => {
-                            Err(Error::SigningHelperBadSignature(public_key_file.clone()))
-                        }
-                        e => Err(e),
-                    };
+                let SigningContent::Data(data) = content else {
+                    return Err(Error::UnsupportedMlDsaDigest);
+                };
+
+                let ml_dsa_signature = EncodedSignature::<MlDsa65>::try_from(signature)
+                    .ok()
+                    .and_then(|enc| ml_dsa::Signature::decode(&enc))
+                    .ok_or_else(|| Error::InvalidSignatureLength(signature.len(), algo))?;
+
+                key.verify(data, &ml_dsa_signature)
+                    .map_err(Error::MlDsaVerify)
+            }
+            Self::MlDsa87(key) => {
+                if algo != SignatureAlgorithm::MlDsa87 {
+                    return Err(Error::InvalidAlgorithmForKey(algo, key_type));
                 }
 
-                Ok(child.stdout)
+                let SigningContent::Data(data) = content else {
+                    return Err(Error::UnsupportedMlDsaDigest);
+                };
+
+                let ml_dsa_signature = EncodedSignature::<MlDsa87>::try_from(signature)
+                    .ok()
+                    .and_then(|enc| ml_dsa::Signature::decode(&enc))
+                    .ok_or_else(|| Error::InvalidSignatureLength(signature.len(), algo))?;
+
+                key.verify(data, &ml_dsa_signature)
+                    .map_err(Error::MlDsaVerify)
             }
         }
     }
 }
 
-pub trait RsaPublicKeyExt {
-    fn verify_sig(&self, algo: SignatureAlgorithm, digest: &[u8], signature: &[u8]) -> Result<()>;
+impl EncodePublicKey for SigningPublicKey {
+    fn to_public_key_der(&self) -> spki::Result<der::Document> {
+        match self {
+            Self::Rsa(key) => key.to_public_key_der(),
+            Self::MlDsa65(key) => key.to_public_key_der(),
+            Self::MlDsa87(key) => key.to_public_key_der(),
+        }
+    }
 }
 
-impl RsaPublicKeyExt for RsaPublicKey {
-    /// Verify the signature against the specified key.
-    fn verify_sig(&self, algo: SignatureAlgorithm, digest: &[u8], signature: &[u8]) -> Result<()> {
-        // Check this explicitly so we can provide a better error message.
-        if digest.len() != algo.digest_len() {
-            return Err(Error::InvalidDigestLength(digest.len(), algo));
+impl TryFrom<SubjectPublicKeyInfoRef<'_>> for SigningPublicKey {
+    type Error = spki::Error;
+
+    fn try_from(spki: SubjectPublicKeyInfoRef<'_>) -> Result<Self, Self::Error> {
+        match spki.algorithm {
+            a if a == pkcs1::ALGORITHM_ID => RsaPublicKey::try_from(spki).map(Self::Rsa),
+            a if a == MlDsa65::ALGORITHM_IDENTIFIER => {
+                VerifyingKey::try_from(spki).map(Self::MlDsa65)
+            }
+            a if a == MlDsa87::ALGORITHM_IDENTIFIER => {
+                VerifyingKey::try_from(spki).map(Self::MlDsa87)
+            }
+            a => Err(spki::Error::OidUnknown { oid: a.oid }),
         }
+    }
+}
 
-        check_key_size(self.size())?;
+#[derive(Clone, PartialEq)]
+pub enum SigningPrivateKey {
+    Rsa(RsaPrivateKey),
+    MlDsa65(ml_dsa::SigningKey<MlDsa65>),
+    MlDsa87(ml_dsa::SigningKey<MlDsa87>),
+    External {
+        program: PathBuf,
+        public_key_file: PathBuf,
+        public_key: SigningPublicKey,
+        passphrase_source: PassphraseSource,
+    },
+}
 
-        let scheme = match algo {
-            SignatureAlgorithm::Sha1WithRsa => Pkcs1v15Sign::new::<Sha1>(),
-            SignatureAlgorithm::Sha256WithRsa => Pkcs1v15Sign::new::<Sha256>(),
-            SignatureAlgorithm::Sha512WithRsa => Pkcs1v15Sign::new::<Sha512>(),
+impl SigningPrivateKey {
+    pub fn generate(key_type: SigningKeyType) -> Result<Self> {
+        let mut rng = csprng()?;
+
+        match key_type {
+            SigningKeyType::Rsa(bytes) => {
+                let key = RsaPrivateKey::new(&mut rng, bytes * 8)
+                    .map_err(|e| Error::RsaGenerate(Box::new(e)))?;
+
+                Ok(Self::Rsa(key))
+            }
+            SigningKeyType::MlDsa65 => {
+                let key = ml_dsa::SigningKey::generate_from_rng(&mut rng);
+
+                Ok(Self::MlDsa65(key))
+            }
+            SigningKeyType::MlDsa87 => {
+                let key = ml_dsa::SigningKey::generate_from_rng(&mut rng);
+
+                Ok(Self::MlDsa87(key))
+            }
+        }
+    }
+
+    pub fn key_type(&self) -> SigningKeyType {
+        self.to_public_key().key_type()
+    }
+
+    pub fn to_public_key(&self) -> SigningPublicKey {
+        match self {
+            Self::Rsa(key) => SigningPublicKey::Rsa(key.to_public_key()),
+            Self::MlDsa65(key) => SigningPublicKey::MlDsa65(key.verifying_key()),
+            Self::MlDsa87(key) => SigningPublicKey::MlDsa87(key.verifying_key()),
+            Self::External { public_key, .. } => public_key.clone(),
+        }
+    }
+
+    /// Sign the data using an external program. For compatibility with AOSP's
+    /// avbtool:
+    ///
+    /// * For RSA, a PKCS#1 v1.5 padded digest is passed to the program, which
+    ///   is expected to perform a raw RSA signing operation.
+    /// * For ML-DSA, the actual data is passed to the program.
+    ///
+    /// In either case, the resulting signature will be verified against the
+    /// public key before returning.
+    fn sign_external(&self, algo: SignatureAlgorithm, content: SigningContent) -> Result<Vec<u8>> {
+        let Self::External {
+            program,
+            public_key,
+            public_key_file,
+            passphrase_source,
+        } = self
+        else {
+            panic!("Not an external key");
         };
 
-        self.verify(scheme, digest, signature)
-            .map_err(|e| Error::RsaVerify(Box::new(e)))
+        let key_type = self.key_type();
+        let algo_str = match (algo, key_type) {
+            (SignatureAlgorithm::Sha1WithRsa, SigningKeyType::Rsa(_)) => {
+                return Err(Error::UnsupportedAlgorithm(algo));
+            }
+            (SignatureAlgorithm::Sha256WithRsa, SigningKeyType::Rsa(bytes)) => {
+                format!("SHA256_RSA{}", bytes * 8)
+            }
+            (SignatureAlgorithm::Sha512WithRsa, SigningKeyType::Rsa(bytes)) => {
+                format!("SHA512_RSA{}", bytes * 8)
+            }
+            (SignatureAlgorithm::MlDsa65, SigningKeyType::MlDsa65) => "MLDSA65".to_owned(),
+            (SignatureAlgorithm::MlDsa87, SigningKeyType::MlDsa87) => "MLDSA87".to_owned(),
+            (_, key_type) => return Err(Error::InvalidAlgorithmForKey(algo, key_type)),
+        };
+
+        let to_sign = match key_type {
+            SigningKeyType::Rsa(bytes) => {
+                let scheme = match algo {
+                    SignatureAlgorithm::Sha256WithRsa => Pkcs1v15Sign::new::<Sha256>(),
+                    SignatureAlgorithm::Sha512WithRsa => Pkcs1v15Sign::new::<Sha512>(),
+                    _ => unreachable!(),
+                };
+
+                let digest = match content {
+                    SigningContent::Data(data) => Cow::Owned(algo.hash(data)),
+                    SigningContent::Digest(digest) => Cow::Borrowed(digest),
+                };
+
+                if digest.len() != algo.digest_len() {
+                    return Err(Error::InvalidDigestLength(digest.len(), algo));
+                }
+
+                pkcs1v15_sign_pad(&scheme.prefix, &digest, bytes)
+                    .map(Cow::Owned)
+                    .map_err(|e| Error::RsaSign(Box::new(e)))?
+            }
+            SigningKeyType::MlDsa65 | SigningKeyType::MlDsa87 => {
+                let SigningContent::Data(data) = content else {
+                    return Err(Error::UnsupportedMlDsaDigest);
+                };
+
+                Cow::Borrowed(data)
+            }
+        };
+
+        let mut command = Command::new(program);
+        command.arg(algo_str);
+        command.arg(public_key_file);
+
+        match passphrase_source {
+            PassphraseSource::Prompt(_) => {}
+            PassphraseSource::EnvVar(v) => {
+                command.arg("env");
+                command.arg(v);
+            }
+            PassphraseSource::File(p) => {
+                command.arg("file");
+                command.arg(p);
+            }
+        }
+
+        command.stdin(Stdio::piped());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::inherit());
+
+        let mut child = command
+            .spawn()
+            .map_err(|e| Error::CommandSpawn(DebugString::new(&command), e))?;
+
+        let stdin_result = child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&to_sign)
+            .map_err(|e| Error::WriteFile("<signing helper stdin>".into(), e));
+
+        let result = child
+            .wait_with_output()
+            .map_err(|e| Error::CommandSpawn(DebugString::new(&command), e))?;
+
+        stdin_result?;
+
+        if !result.status.success() {
+            return Err(Error::CommandExecution(
+                DebugString::new(&command),
+                result.status,
+            ));
+        }
+
+        // Check that the helper signed with the proper key.
+        if let Err(e) = public_key.verify(algo, content, &result.stdout) {
+            return match e {
+                Error::RsaVerify(_) => {
+                    Err(Error::SigningHelperBadSignature(public_key_file.clone()))
+                }
+                e => Err(e),
+            };
+        }
+
+        Ok(result.stdout)
+    }
+
+    /// Sign the specified content.
+    ///
+    /// * [`SigningContent::Data`] is supported for both RSA and ML-DSA.
+    /// * [`SigningContent::Digest`] is only supported for RSA.
+    pub fn sign(&self, algo: SignatureAlgorithm, content: SigningContent) -> Result<Vec<u8>> {
+        let key_type = self.key_type();
+
+        match self {
+            Self::Rsa(key) => {
+                let scheme = match algo {
+                    // We don't support signing with insecure algorithms.
+                    SignatureAlgorithm::Sha1WithRsa => {
+                        return Err(Error::UnsupportedAlgorithm(algo));
+                    }
+                    SignatureAlgorithm::Sha256WithRsa => Pkcs1v15Sign::new::<Sha256>(),
+                    SignatureAlgorithm::Sha512WithRsa => Pkcs1v15Sign::new::<Sha512>(),
+                    _ => return Err(Error::InvalidAlgorithmForKey(algo, key_type)),
+                };
+
+                let digest = match content {
+                    SigningContent::Data(data) => Cow::Owned(algo.hash(data)),
+                    SigningContent::Digest(digest) => Cow::Borrowed(digest),
+                };
+
+                if digest.len() != algo.digest_len() {
+                    return Err(Error::InvalidDigestLength(digest.len(), algo));
+                }
+
+                key.sign(scheme, &digest)
+                    .map_err(|e| Error::RsaSign(Box::new(e)))
+            }
+            Self::MlDsa65(key) => {
+                if algo != SignatureAlgorithm::MlDsa65 {
+                    return Err(Error::InvalidAlgorithmForKey(algo, key_type));
+                }
+
+                let SigningContent::Data(data) = content else {
+                    return Err(Error::UnsupportedMlDsaDigest);
+                };
+
+                Ok(key
+                    .try_sign(data)
+                    .map_err(Error::MlDsaSign)?
+                    .encode()
+                    .into())
+            }
+            Self::MlDsa87(key) => {
+                if algo != SignatureAlgorithm::MlDsa87 {
+                    return Err(Error::InvalidAlgorithmForKey(algo, key_type));
+                }
+
+                let SigningContent::Data(data) = content else {
+                    return Err(Error::UnsupportedMlDsaDigest);
+                };
+
+                Ok(key
+                    .try_sign(data)
+                    .map_err(Error::MlDsaSign)?
+                    .encode()
+                    .into())
+            }
+            // sign_external() will check that the algorithm is compatible with
+            // the key.
+            Self::External { .. } => self.sign_external(algo, content),
+        }
+    }
+}
+
+impl EncodePrivateKey for SigningPrivateKey {
+    fn to_pkcs8_der(&self) -> pkcs8::Result<SecretDocument> {
+        match self {
+            Self::Rsa(key) => key.to_pkcs8_der(),
+            Self::MlDsa65(key) => key.to_pkcs8_der(),
+            Self::MlDsa87(key) => key.to_pkcs8_der(),
+            // There's not really a good error we can return here.
+            Self::External { .. } => Err(pkcs8::Error::KeyMalformed(pkcs8::KeyError::Invalid)),
+        }
+    }
+}
+
+impl TryFrom<PrivateKeyInfoRef<'_>> for SigningPrivateKey {
+    type Error = pkcs8::Error;
+
+    fn try_from(private_key_info: PrivateKeyInfoRef<'_>) -> Result<Self, Self::Error> {
+        match private_key_info.algorithm {
+            a if a == pkcs1::ALGORITHM_ID => {
+                RsaPrivateKey::try_from(private_key_info).map(Self::Rsa)
+            }
+            a if a == MlDsa65::ALGORITHM_IDENTIFIER => {
+                ml_dsa::SigningKey::try_from(private_key_info).map(Self::MlDsa65)
+            }
+            a if a == MlDsa87::ALGORITHM_IDENTIFIER => {
+                ml_dsa::SigningKey::try_from(private_key_info).map(Self::MlDsa87)
+            }
+            a => Err(pkcs8::Error::PublicKey(spki::Error::OidUnknown {
+                oid: a.oid,
+            })),
+        }
     }
 }
 
 /// Create a cryptographically secure random number generator.
 fn csprng() -> Result<StdRng> {
     StdRng::try_from_rng(&mut SysRng).map_err(Error::RngInit)
-}
-
-/// Generate an 4096-bit RSA key pair.
-pub fn generate_rsa_key_pair() -> Result<RsaPrivateKey> {
-    let mut rng = csprng()?;
-
-    // avbroot supports 4096-bit keys only.
-    let key = RsaPrivateKey::new(&mut rng, 4096).map_err(|e| Error::RsaGenerate(Box::new(e)))?;
-
-    Ok(key)
 }
 
 /// Produce certs that match what AOSP's `development/tools/make_key` create.
@@ -459,7 +702,7 @@ impl BuilderProfile for AndroidRootProfile {
 
 /// Generate a self-signed certificate.
 pub fn generate_cert(
-    key: &RsaPrivateKey,
+    key: &SigningPrivateKey,
     validity: Duration,
     subject: &str,
 ) -> Result<Certificate> {
@@ -478,7 +721,6 @@ pub fn generate_cert(
         .to_public_key()
         .to_public_key_der()
         .map_err(Error::SavePubKey)?;
-    let signing_key = SigningKey::<Sha256>::new(key.clone());
 
     let builder = CertificateBuilder::new(
         profile,
@@ -489,12 +731,22 @@ pub fn generate_cert(
     )
     .map_err(Error::CertGenerate)?;
 
-    let mut rng = csprng()?;
-    let cert = builder
-        .build_with_rng(&signing_key, &mut rng)
-        .map_err(Error::CertGenerate)?;
+    match key {
+        SigningPrivateKey::Rsa(rsa_key) => {
+            let signing_key = pkcs1v15::SigningKey::<Sha256>::new(rsa_key.clone());
 
-    Ok(cert)
+            builder
+                .build_with_rng(&signing_key, &mut rng)
+                .map_err(Error::CertGenerate)
+        }
+        SigningPrivateKey::MlDsa65(ml_dsa_key) => builder
+            .build_with_rng(ml_dsa_key.expanded_key(), &mut rng)
+            .map_err(Error::CertGenerate),
+        SigningPrivateKey::MlDsa87(ml_dsa_key) => builder
+            .build_with_rng(ml_dsa_key.expanded_key(), &mut rng)
+            .map_err(Error::CertGenerate),
+        SigningPrivateKey::External { .. } => Err(Error::CertGenerateExternalKey),
+    }
 }
 
 /// x509_cert/pem follow rfc7468 strictly instead of implementing a lenient
@@ -582,20 +834,22 @@ pub fn write_pem_cert_file(path: &Path, cert: &Certificate) -> Result<()> {
     write_pem_cert(path, writer, cert)
 }
 
-/// Read PEM-encoded PKCS8 public key from a reader.
-pub fn read_pem_public_key(path: &Path, mut reader: impl Read) -> Result<RsaPublicKey> {
+/// Read PEM-encoded SPKI public key from a reader.
+pub fn read_pem_public_key(path: &Path, mut reader: impl Read) -> Result<SigningPublicKey> {
     let mut data = String::new();
     reader
         .read_to_string(&mut data)
         .map_err(|e| Error::ReadFile(path.to_owned(), e))?;
 
-    let key = RsaPublicKey::from_public_key_pem(&data).map_err(Error::LoadPubKey)?;
-
-    Ok(key)
+    SigningPublicKey::from_public_key_pem(&data).map_err(Error::LoadPubKey)
 }
 
-/// Write PEM-encoded PKCS8 public key to a writer.
-pub fn write_pem_public_key(path: &Path, mut writer: impl Write, key: &RsaPublicKey) -> Result<()> {
+/// Write PEM-encoded SPKI public key to a writer.
+pub fn write_pem_public_key(
+    path: &Path,
+    mut writer: impl Write,
+    key: &SigningPublicKey,
+) -> Result<()> {
     let data = key
         .to_public_key_pem(LineEnding::LF)
         .map_err(Error::SavePubKey)?;
@@ -607,45 +861,49 @@ pub fn write_pem_public_key(path: &Path, mut writer: impl Write, key: &RsaPublic
     Ok(())
 }
 
-/// Read PEM-encoded PKCS8 public key from a file.
-pub fn read_pem_public_key_file(path: &Path) -> Result<RsaPublicKey> {
+/// Read PEM-encoded SPKI public key from a file.
+pub fn read_pem_public_key_file(path: &Path) -> Result<SigningPublicKey> {
     let reader = File::open(path).map_err(|e| Error::ReadFile(path.to_owned(), e))?;
 
     read_pem_public_key(path, reader)
 }
 
-/// Write PEM-encoded PKCS8 public key to a file.
-pub fn write_pem_public_key_file(path: &Path, key: &RsaPublicKey) -> Result<()> {
+/// Write PEM-encoded SPKI public key to a file.
+pub fn write_pem_public_key_file(path: &Path, key: &SigningPublicKey) -> Result<()> {
     let writer = File::create(path).map_err(|e| Error::WriteFile(path.to_owned(), e))?;
 
     write_pem_public_key(path, writer, key)
 }
 
 /// Read PEM-encoded PKCS8 private key from a reader.
-pub fn read_pem_key(
+pub fn read_pem_private_key(
     path: &Path,
     mut reader: impl Read,
     source: &PassphraseSource,
-) -> Result<RsaPrivateKey> {
+) -> Result<SigningPrivateKey> {
     let mut data = String::new();
     reader
         .read_to_string(&mut data)
         .map_err(|e| Error::ReadFile(path.to_owned(), e))?;
 
-    if data.contains("ENCRYPTED") {
+    let (label, doc) = SecretDocument::from_pem(&data)
+        .map_err(|e| Error::LoadKeyEncrypted(pkcs8::Error::Asn1(e)))?;
+
+    if label == EncryptedPrivateKeyInfoRef::PEM_LABEL {
         let passphrase = source.acquire(false)?;
 
-        RsaPrivateKey::from_pkcs8_encrypted_pem(&data, passphrase).map_err(Error::LoadKeyEncrypted)
+        SigningPrivateKey::from_pkcs8_encrypted_der(doc.as_bytes(), passphrase)
+            .map_err(Error::LoadKeyEncrypted)
     } else {
-        RsaPrivateKey::from_pkcs8_pem(&data).map_err(Error::LoadKeyUnencrypted)
+        SigningPrivateKey::from_pkcs8_der(doc.as_bytes()).map_err(Error::LoadKeyUnencrypted)
     }
 }
 
 /// Write PEM-encoded PKCS8 private key to a writer.
-pub fn write_pem_key(
+pub fn write_pem_private_key(
     path: &Path,
     mut writer: impl Write,
-    key: &RsaPrivateKey,
+    key: &SigningPrivateKey,
     source: &PassphraseSource,
 ) -> Result<()> {
     let passphrase = source.acquire(true)?;
@@ -654,42 +912,7 @@ pub fn write_pem_key(
         key.to_pkcs8_pem(LineEnding::LF)
             .map_err(Error::SaveKeyUnencrypted)?
     } else {
-        let mut rng = csprng()?;
-
-        // Normally, we'd just use key.to_pkcs8_encrypted_pem(). However, it
-        // uses scrypt with n = 32768. This is high enough that openssl can no
-        // longer read the file and craps out with `memory limit exceeded`.
-        // Although we can read those files just fine, let's match openssl's
-        // default parameters for better compatibility.
-        //
-        // Per `man openssl-pkcs8`: -scrypt  Uses the scrypt algorithm for
-        // private key encryption using default parameters: currently N=16384,
-        // r=8 and p=1 and AES in CBC mode with a 256 bit key.
-        //
-        // https://github.com/RustCrypto/formats/issues/1205
-
-        let mut salt = [0u8; 16];
-        rng.fill_bytes(&mut salt);
-
-        let mut iv = [0u8; 16];
-        rng.fill_bytes(&mut iv);
-
-        // 14 = log_2(16384), 32 bytes = 256 bits
-        let scrypt_params = scrypt::Params::new_with_output_len(14, 8, 1, 32).unwrap();
-        let pbes2_params =
-            pbes2::Parameters::generate_scrypt_aes256cbc(scrypt_params, &salt, iv).unwrap();
-
-        let plain_text_der = key.to_pkcs8_der().map_err(Error::SaveKeyEncrypted)?;
-        let private_key_info = PrivateKeyInfoRef::try_from(plain_text_der.as_bytes())
-            .map_err(Error::SaveKeyEncrypted)?;
-
-        let secret_doc = private_key_info
-            .encrypt_with_params(pbes2_params, passphrase)
-            .map_err(Error::SaveKeyEncrypted)?;
-
-        secret_doc
-            .to_pem(EncryptedPrivateKeyInfoRef::PEM_LABEL, LineEnding::LF)
-            .map_err(pkcs8::Error::Asn1)
+        key.to_pkcs8_encrypted_pem(&passphrase, LineEnding::LF)
             .map_err(Error::SaveKeyEncrypted)?
     };
 
@@ -701,16 +924,19 @@ pub fn write_pem_key(
 }
 
 /// Read PEM-encoded PKCS8 private key from a file.
-pub fn read_pem_key_file(path: &Path, source: &PassphraseSource) -> Result<RsaPrivateKey> {
+pub fn read_pem_private_key_file(
+    path: &Path,
+    source: &PassphraseSource,
+) -> Result<SigningPrivateKey> {
     let reader = File::open(path).map_err(|e| Error::ReadFile(path.to_owned(), e))?;
 
-    read_pem_key(path, reader, source)
+    read_pem_private_key(path, reader, source)
 }
 
 /// Save PEM-encoded PKCS8 private key to a file.
-pub fn write_pem_key_file(
+pub fn write_pem_private_key_file(
     path: &Path,
-    key: &RsaPrivateKey,
+    key: &SigningPrivateKey,
     source: &PassphraseSource,
 ) -> Result<()> {
     let mut options = OpenOptions::new();
@@ -728,12 +954,12 @@ pub fn write_pem_key_file(
         .open(path)
         .map_err(|e| Error::WriteFile(path.to_owned(), e))?;
 
-    write_pem_key(path, writer, key, source)
+    write_pem_private_key(path, writer, key, source)
 }
 
-/// Get the RSA public key from a certificate.
-pub fn get_public_key(cert: &Certificate) -> Result<RsaPublicKey> {
-    let public_key = RsaPublicKey::try_from(
+/// Get the public key from a certificate.
+pub fn get_public_key(cert: &Certificate) -> Result<SigningPublicKey> {
+    let public_key = SigningPublicKey::try_from(
         cert.tbs_certificate()
             .subject_public_key_info()
             .owned_to_ref(),
@@ -744,7 +970,7 @@ pub fn get_public_key(cert: &Certificate) -> Result<RsaPublicKey> {
 }
 
 /// Check if a certificate matches a private key.
-pub fn cert_matches_key(cert: &Certificate, key: &RsaSigningKey) -> Result<bool> {
+pub fn cert_matches_key(cert: &Certificate, key: &SigningPrivateKey) -> Result<bool> {
     let public_key = get_public_key(cert)?;
 
     Ok(key.to_public_key() == public_key)
@@ -780,12 +1006,17 @@ pub fn iter_cms_certs(sd: &SignedData) -> impl Iterator<Item = &Certificate> {
 /// actually CMS compliant. It simply uses the CMS [`SignedData`] structure as
 /// a transport mechanism for a raw signature. Thus, we need to ensure that the
 /// signature covers nothing but the raw data.
+///
+/// Currently, only RSA keys are supported.
 pub fn cms_sign_external(
-    key: &RsaSigningKey,
+    key: &SigningPrivateKey,
     cert: &Certificate,
     digest: &[u8],
 ) -> Result<ContentInfo> {
-    let signature = key.sign(SignatureAlgorithm::Sha256WithRsa, digest)?;
+    let signature = key.sign(
+        SignatureAlgorithm::Sha256WithRsa,
+        SigningContent::Digest(digest),
+    )?;
 
     let digest_algorithm = AlgorithmIdentifierOwned {
         oid: const_oid::db::rfc5912::ID_SHA_256,

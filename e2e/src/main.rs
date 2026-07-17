@@ -22,7 +22,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use avbroot::{
     cli::ota::{ExtractCli, PatchCli, VerifyCli},
-    crypto::{self, PassphraseSource, RsaSigningKey},
+    crypto::{self, PassphraseSource, SigningKeyType, SigningPrivateKey},
     format::{
         avb::{
             self, AlgorithmType, ChainPartitionDescriptor, Descriptor, Footer, HashDescriptor,
@@ -52,7 +52,7 @@ use avbroot::{
 use clap::Parser;
 use rand::rngs::SysRng;
 use rawzip::{CompressionMethod, ZipArchiveWriter};
-use rsa::{BoxedUint, traits::PublicKeyParts};
+use rsa::{BoxedUint, signature::Signer, traits::PublicKeyParts};
 use tempfile::TempDir;
 use topological_sort::TopologicalSort;
 use tracing::{info, info_span};
@@ -61,8 +61,8 @@ use x509_cert::Certificate;
 use crate::{
     cli::{Cli, Command, HelperCli, ListCli, PassSource, ProfileGroup, TestCli},
     config::{
-        Avb, BootData, BootVersion, Config, Data, DmVerityContent, DmVerityData, OtaInfo,
-        Partition, Profile, RamdiskContent, VbmetaData,
+        Avb, AvbKeyType, BootData, BootVersion, Config, Data, DmVerityContent, DmVerityData,
+        OtaInfo, Partition, Profile, RamdiskContent, VbmetaData,
     },
 };
 
@@ -103,7 +103,7 @@ fn append_avb(
     avb: Avb,
     hash_tree: bool,
     ota_info: &OtaInfo,
-    key_avb: &RsaSigningKey,
+    key_avb: &SigningPrivateKey,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let image_size = (&*file).seek(SeekFrom::End(0))?;
@@ -162,8 +162,11 @@ fn append_avb(
     ];
 
     let mut header = Header {
-        required_libavb_version_major: avb::VERSION_MAJOR,
-        required_libavb_version_minor: avb::VERSION_MINOR,
+        required_libavb_version_major: 1,
+        required_libavb_version_minor: match key_avb.key_type() {
+            SigningKeyType::Rsa(_) => 3,
+            SigningKeyType::MlDsa65 | SigningKeyType::MlDsa87 => 4,
+        },
         algorithm_type: AlgorithmType::None,
         hash: Vec::new(),
         signature: Vec::new(),
@@ -183,8 +186,8 @@ fn append_avb(
     }
 
     let mut footer = Footer {
-        version_major: avb::FOOTER_VERSION_MAJOR,
-        version_minor: avb::FOOTER_VERSION_MINOR,
+        version_major: 1,
+        version_minor: 0,
         original_image_size: image_size,
         vbmeta_offset: 0,
         vbmeta_size: 0,
@@ -301,7 +304,7 @@ fn create_boot_image(
     avb: Avb,
     boot_data: &BootData,
     ota_info: &OtaInfo,
-    key_avb: &RsaSigningKey,
+    key_avb: &SigningPrivateKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
@@ -428,7 +431,7 @@ fn create_dm_verity_image(
     avb: Avb,
     dm_verity_data: DmVerityData,
     ota_info: &OtaInfo,
-    key_avb: &RsaSigningKey,
+    key_avb: &SigningPrivateKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
@@ -457,7 +460,7 @@ fn create_vbmeta_image(
     avb: Avb,
     vbmeta_data: &VbmetaData,
     inputs: &BTreeMap<String, File>,
-    key: &RsaSigningKey,
+    key: &SigningPrivateKey,
 ) -> Result<()> {
     let mut descriptors = Vec::new();
 
@@ -479,8 +482,11 @@ fn create_vbmeta_image(
     }
 
     let mut header = Header {
-        required_libavb_version_major: avb::VERSION_MAJOR,
-        required_libavb_version_minor: avb::VERSION_MINOR,
+        required_libavb_version_major: 1,
+        required_libavb_version_minor: match key.key_type() {
+            SigningKeyType::Rsa(_) => 3,
+            SigningKeyType::MlDsa65 | SigningKeyType::MlDsa87 => 4,
+        },
         algorithm_type: AlgorithmType::None,
         hash: Vec::new(),
         signature: Vec::new(),
@@ -508,7 +514,7 @@ fn create_vbmeta_image(
 fn create_partition_images(
     partitions: &BTreeMap<String, Partition>,
     ota_info: &OtaInfo,
-    key_avb: &RsaSigningKey,
+    key_avb: &SigningPrivateKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<BTreeMap<String, File>> {
@@ -578,7 +584,7 @@ fn create_payload(
     inputs: &BTreeMap<String, File>,
     ota_info: &OtaInfo,
     profile: &Profile,
-    key_ota: &RsaSigningKey,
+    key_ota: &SigningPrivateKey,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
     let dynamic_partitions_names = partitions
@@ -719,8 +725,8 @@ fn create_ota(
     ota_info: &OtaInfo,
     profile: &Profile,
     zip_mode: ZipMode,
-    key_avb: &RsaSigningKey,
-    key_ota: &RsaSigningKey,
+    key_avb: &SigningPrivateKey,
+    key_ota: &SigningPrivateKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
@@ -908,8 +914,8 @@ fn create_fake_magisk(output: &Path) -> Result<()> {
 }
 
 struct KeySet {
-    avb_key: RsaSigningKey,
-    ota_key: RsaSigningKey,
+    avb_key: SigningPrivateKey,
+    ota_key: SigningPrivateKey,
     ota_cert: Certificate,
     _key_dir: TempDir,
     avb_key_file: PathBuf,
@@ -923,43 +929,49 @@ struct KeySet {
 }
 
 macro_rules! new_keys_with_prefix {
-    ($name:ident, $prefix:expr) => {
+    ($name:ident, $avb_key_type:expr, $prefix:expr) => {
         fn $name() -> Result<Self> {
             let avb_key = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/keys/",
+                "/keys/avb_",
+                $avb_key_type,
+                "/",
                 $prefix,
-                "avb.key",
+                ".key",
             ));
             let avb_pass = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/keys/",
+                "/keys/avb_",
+                $avb_key_type,
+                "/",
                 $prefix,
-                "avb.passphrase",
+                ".pass",
             ));
             let avb_pkmd = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/keys/",
+                "/keys/avb_",
+                $avb_key_type,
+                "/",
                 $prefix,
-                "avb_pkmd.bin",
+                ".pkmd",
             ));
             let ota_key = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/keys/",
+                "/keys/ota/",
                 $prefix,
-                "ota.key",
+                ".key",
             ));
             let ota_pass = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/keys/",
+                "/keys/ota/",
                 $prefix,
-                "ota.passphrase",
+                ".pass",
             ));
             let ota_cert = include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/keys/",
+                "/keys/ota/",
                 $prefix,
-                "ota.crt",
+                ".crt",
             ));
 
             Self::new_with_data(avb_key, avb_pass, avb_pkmd, ota_key, ota_pass, ota_cert)
@@ -997,18 +1009,16 @@ impl KeySet {
         Self::write(&ota_pass_file, ota_pass)?;
         Self::write(&ota_cert_file, ota_cert)?;
 
-        let avb_key = crypto::read_pem_key_file(
+        let avb_key = crypto::read_pem_private_key_file(
             &avb_key_file,
             &PassphraseSource::File(avb_pass_file.clone()),
         )
-        .map(RsaSigningKey::Internal)
         .context("Failed to load AVB test key")?;
 
-        let ota_key = crypto::read_pem_key_file(
+        let ota_key = crypto::read_pem_private_key_file(
             &ota_key_file,
             &PassphraseSource::File(ota_pass_file.clone()),
         )
-        .map(RsaSigningKey::Internal)
         .context("Failed to load OTA test key")?;
 
         crypto::write_pem_public_key_file(&avb_public_key_file, &avb_key.to_public_key())?;
@@ -1033,8 +1043,10 @@ impl KeySet {
         })
     }
 
-    new_keys_with_prefix!(new_for_orig, "ORIG_KEY_DO_NOT_USE_");
-    new_keys_with_prefix!(new_for_test, "TEST_KEY_DO_NOT_USE_");
+    new_keys_with_prefix!(new_for_orig_rsa, "rsa", "ORIG_KEY_DO_NOT_USE");
+    new_keys_with_prefix!(new_for_test_rsa, "rsa", "TEST_KEY_DO_NOT_USE");
+    new_keys_with_prefix!(new_for_orig_ml_dsa, "ml_dsa", "ORIG_KEY_DO_NOT_USE");
+    new_keys_with_prefix!(new_for_test_ml_dsa, "ml_dsa", "TEST_KEY_DO_NOT_USE");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1213,9 +1225,6 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
         bail!("No profiles selected");
     }
 
-    let orig_keys = KeySet::new_for_orig()?;
-    let test_keys = KeySet::new_for_test()?;
-
     let work_temp_dir = match &cli.config.work_dir {
         Some(_) => None,
         None => Some(TempDir::new().context("Failed to create temp directory")?),
@@ -1241,6 +1250,14 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
 
     for name in profiles {
         let profile = &config.profile[name];
+
+        let (orig_keys, test_keys) = match profile.avb_key_type {
+            AvbKeyType::Rsa => (KeySet::new_for_orig_rsa()?, KeySet::new_for_test_rsa()?),
+            AvbKeyType::MlDsa => (
+                KeySet::new_for_orig_ml_dsa()?,
+                KeySet::new_for_test_ml_dsa()?,
+            ),
+        };
 
         for (zip_mode, hashes) in [
             (ZipMode::Streaming, &profile.hashes_streaming),
@@ -1366,7 +1383,7 @@ fn helper_mode() -> Result<()> {
         PassSource::Env => PassphraseSource::EnvVar(cli.pass_source_value),
         PassSource::File => PassphraseSource::File(cli.pass_source_value.into()),
     };
-    let private_key = crypto::read_pem_key_file(&private_key_path, &source)
+    let private_key = crypto::read_pem_private_key_file(&private_key_path, &source)
         .with_context(|| format!("Failed to load private key: {private_key_path:?}"))?;
     let public_key = crypto::read_pem_public_key_file(&cli.public_key)
         .with_context(|| format!("Failed to load public key: {:?}", cli.public_key))?;
@@ -1375,44 +1392,57 @@ fn helper_mode() -> Result<()> {
         bail!("Private key does not match public key");
     }
 
-    let (hash_algo, key_algo) = cli
-        .algorithm
-        .split_once('_')
-        .ok_or_else(|| anyhow!("Unknown algorithm: {:?}", cli.algorithm))?;
+    let key_type = private_key.key_type();
 
-    if key_algo != format!("RSA{}", private_key.size() * 8) {
-        bail!(
-            "{key_algo} does not match key size ({})",
-            private_key.size() * 8
-        );
-    } else if hash_algo != "SHA256" && hash_algo != "SHA512" {
-        bail!("Unknown hash algorithm: {hash_algo}");
+    let algo_matches = match private_key.key_type() {
+        SigningKeyType::Rsa(bytes) => {
+            cli.algorithm == format!("SHA256_RSA{}", bytes * 8)
+                || cli.algorithm == format!("SHA512_RSA{}", bytes * 8)
+        }
+        SigningKeyType::MlDsa65 => cli.algorithm == "MLDSA65",
+        SigningKeyType::MlDsa87 => cli.algorithm == "MLDSA87",
+    };
+    if !algo_matches {
+        bail!("{:?} does not match key type ({key_type:?})", cli.algorithm);
     }
 
-    let mut padded_digest = vec![];
+    let mut input = vec![];
     io::stdin()
-        .read_to_end(&mut padded_digest)
-        .context("Failed to read padded digest from stdin")?;
+        .read_to_end(&mut input)
+        .context("Failed to read stdin")?;
 
-    if padded_digest.len() != private_key.size() {
-        bail!(
-            "Padded digest size ({}) bytes does not match key size ({})",
-            padded_digest.len(),
-            private_key.size()
-        );
-    }
+    let signature = match private_key {
+        SigningPrivateKey::Rsa(key) => {
+            if input.len() != key.size() {
+                bail!(
+                    "Padded digest size ({}) bytes does not match key size ({})",
+                    input.len(),
+                    key.size(),
+                );
+            }
 
-    // The input is already padded, so perform a raw RSA signing operation.
-    let mut signature = rsa::hazmat::rsa_decrypt_and_check(
-        &private_key,
-        None::<&mut SysRng>,
-        &BoxedUint::from_be_slice_vartime(&padded_digest),
-    )
-    .context("Failed to sign digest")?
-    .to_le_bytes()
-    .into_vec();
-    signature.resize(private_key.size(), 0);
-    signature.reverse();
+            // The input is already padded, so perform a raw RSA signing operation.
+            rsa::hazmat::rsa_decrypt_and_check(
+                &key,
+                None::<&mut SysRng>,
+                &BoxedUint::from_be_slice_vartime(&input),
+            )
+            .context("Failed to sign digest")?
+            .to_be_bytes()
+            .into_vec()
+        }
+        SigningPrivateKey::MlDsa65(key) => key
+            .try_sign(&input)
+            .context("Failed to sign data")?
+            .encode()
+            .into(),
+        SigningPrivateKey::MlDsa87(key) => key
+            .try_sign(&input)
+            .context("Failed to sign data")?
+            .encode()
+            .into(),
+        SigningPrivateKey::External { .. } => unreachable!(),
+    };
 
     io::stdout()
         .write_all(&signature)

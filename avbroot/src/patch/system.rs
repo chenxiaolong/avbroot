@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -15,7 +15,7 @@ use tracing::{Span, debug, debug_span, trace};
 use x509_cert::Certificate;
 
 use crate::{
-    crypto::RsaSigningKey,
+    crypto::SigningPrivateKey,
     format::{
         avb::{self, AppendedDescriptorMut, Footer},
         ota,
@@ -113,7 +113,7 @@ fn find_zip_bounds(data: &[u8], eocd_offset: usize) -> Option<Range<usize>> {
 pub fn patch_system_image(
     raw_file: &(dyn ReadWriteAt + Sync),
     certificate: &Certificate,
-    key: &RsaSigningKey,
+    key: &SigningPrivateKey,
     cancel_signal: &AtomicBool,
 ) -> Result<(Vec<Range<u64>>, Vec<Range<u64>>)> {
     // This must be a multiple of normal filesystem block sizes (eg. 4 KiB).

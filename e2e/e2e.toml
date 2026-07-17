@@ -9,8 +9,41 @@ android_version = "14"
 sdk_version = "34"
 security_patch_level = "2024-01-01"
 
+# Fake test device for ML-DSA signing.
+
+[profile.ml_dsa_test]
+avb_key_type = "ml_dsa"
+
+[profile.ml_dsa_test.partitions.boot]
+avb.signed = true
+data.type = "boot"
+data.version = "v4"
+data.kernel = true
+data.ramdisks = [["init", "otacerts", "first_stage", "dsu_key_dir"]]
+
+[profile.ml_dsa_test.partitions.system]
+avb.signed = false
+data.type = "dm_verity"
+data.content = "system_otacerts"
+
+[profile.ml_dsa_test.partitions.vbmeta]
+avb.signed = true
+data.type = "vbmeta"
+data.deps = ["boot", "system"]
+
+[profile.ml_dsa_test.hashes_streaming]
+original = "05646f0446bb0f186da6826488bdb116a76b3ae9d9878e023ea34ade92e44ec8"
+patched = "9dc678f678e259186bea9033017ec1785d26d0c1133e0d347791d5cc8562dbd2"
+
+[profile.ml_dsa_test.hashes_seekable]
+original = "e5a862ab4a8b4e78604affbb288b2a098351fa1ab9fbebc5bff069eac6d1a6f7"
+patched = "5306c4380e4d43646839c882f4e3e9a36d575f4960df997561cb3c6ff8b1447e"
+
 # Google Pixel 7 Pro
 # What's unique: init_boot (boot v4) + vendor_boot (vendor v4)
+
+[profile.pixel_v4_gki]
+avb_key_type = "rsa"
 
 [profile.pixel_v4_gki.vabc]
 # CoW v3 is used starting with the Google Pixel 9a.
@@ -62,6 +95,9 @@ patched = "e9c0b85a0f9384d3e022f3c83a4653511cd03bfbfa26e660b35cf52986dec888"
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
 
+[profile.pixel_v4_non_gki]
+avb_key_type = "rsa"
+
 [profile.pixel_v4_non_gki.vabc]
 version = "V2"
 algo = { kind = "Lz4" }
@@ -106,6 +142,9 @@ patched = "111fdfae91977d80cd141f6c3dc69f3af45bb7fcdf3e2e442bc3f0ad5fa77faa"
 # Google Pixel 4a 5G
 # What's unique: boot (boot v3) + vendor_boot (vendor v3)
 
+[profile.pixel_v3]
+avb_key_type = "rsa"
+
 [profile.pixel_v3.vabc]
 version = "V2"
 algo = { kind = "Gz" }
@@ -149,6 +188,9 @@ patched = "bd57432a97feb62c5e4116f0d5bc3b5db61dd46ffa6e436403d197f091a19a55"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)
+
+[profile.pixel_v2]
+avb_key_type = "rsa"
 
 [profile.pixel_v2.partitions.boot]
 avb.signed = false

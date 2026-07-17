@@ -11,7 +11,8 @@ use std::{
 };
 
 use bstr::ByteSlice;
-use crypto_bigint::{BitOps, modular::BoxedMontyParams};
+use crypto_bigint::modular::BoxedMontyParams;
+use ml_dsa::{EncodedVerifyingKey, MlDsa65, MlDsa87, VerifyingKey};
 use ring::digest::{Algorithm, Context};
 use rsa::{BoxedUint, RsaPublicKey, traits::PublicKeyParts};
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,10 @@ use zerocopy::{FromBytes, IntoBytes, big_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
-    crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
+    crypto::{
+        self, SignatureAlgorithm, SigningContent, SigningKeyType, SigningPrivateKey,
+        SigningPublicKey,
+    },
     escape,
     format::{
         fec::{self, Fec},
@@ -33,13 +37,6 @@ use crate::{
     },
     util::{self, OutOfBoundsError},
 };
-
-pub const VERSION_MAJOR: u32 = 1;
-pub const VERSION_MINOR: u32 = 3;
-pub const VERSION_SUB: u32 = 0;
-
-pub const FOOTER_VERSION_MAJOR: u32 = 1;
-pub const FOOTER_VERSION_MINOR: u32 = 0;
 
 pub const HEADER_MAGIC: [u8; 4] = *b"AVB0";
 pub const FOOTER_MAGIC: [u8; 4] = *b"AVBf";
@@ -102,18 +99,20 @@ pub enum Error {
     InvalidFooterMagic([u8; 4]),
     #[error("RSA public key exponent not supported by AVB binary public key format: {0}")]
     UnsupportedRsaPublicExponent(BoxedUint),
-    #[error("AVB binary public key data is too small")]
-    BinaryPublicKeyTooSmall,
     #[error("Invalid RSA modulus: {0}")]
     InvalidRsaModulus(BoxedUint, #[source] Box<rsa::Error>),
     #[error("Signature algorithm not supported: {0:?}")]
     UnsupportedAlgorithm(AlgorithmType),
     #[error("Hashing algorithm not supported: {0:?}")]
     UnsupportedHashAlgorithm(String),
-    #[error("Incorrect key size ({bits}) for algorithm {1:?}", bits = .0 * 8)]
-    IncorrectKeySize(usize, AlgorithmType),
-    #[error("RSA key size ({}) is not compatible with any AVB signing algorithm", .0 * 8)]
-    UnsupportedKeySize(usize),
+    #[error("Incorrect public key size ({0}) for algorithm {1:?}")]
+    IncorrectPublicKeySize(usize, AlgorithmType),
+    #[error("Public key size does not match any AVB signing algorithm")]
+    UnsupportedPublicKeySize(usize),
+    #[error("Incorrect key type ({0:?}) for algorithm {1:?}")]
+    IncorrectKeyType(SigningKeyType, AlgorithmType),
+    #[error("Key type ({0:?}) is not compatible with any AVB signing algorithm")]
+    UnsupportedKeyType(SigningKeyType),
     #[error("Hash tree does not immediately follow image data")]
     HashTreeGap,
     #[error("FEC data does not immediately follow hash tree")]
@@ -132,6 +131,8 @@ pub enum Error {
     HeaderSign(#[source] crypto::Error),
     #[error("Failed to verify AVB header signature")]
     HeaderVerify(#[source] crypto::Error),
+    #[error("Expected header digest {expected}, but have {actual}")]
+    InvalidHeaderDigest { expected: String, actual: String },
     #[error("Expected root digest {expected}, but have {actual}")]
     InvalidRootDigest { expected: String, actual: String },
     #[error("Failed to generate hash tree data")]
@@ -178,6 +179,8 @@ pub enum AlgorithmType {
     Sha512Rsa2048,
     Sha512Rsa4096,
     Sha512Rsa8192,
+    MlDsa65,
+    MlDsa87,
     #[serde(untagged)]
     Unknown(u32),
 }
@@ -192,6 +195,8 @@ impl AlgorithmType {
             4 => Self::Sha512Rsa2048,
             5 => Self::Sha512Rsa4096,
             6 => Self::Sha512Rsa8192,
+            7 => Self::MlDsa65,
+            8 => Self::MlDsa87,
             v => Self::Unknown(v),
         }
     }
@@ -205,11 +210,13 @@ impl AlgorithmType {
             Self::Sha512Rsa2048 => 4,
             Self::Sha512Rsa4096 => 5,
             Self::Sha512Rsa8192 => 6,
+            Self::MlDsa65 => 7,
+            Self::MlDsa87 => 8,
             Self::Unknown(v) => v,
         }
     }
 
-    pub fn to_digest_algorithm(self) -> Option<SignatureAlgorithm> {
+    pub fn to_signature_algorithm(self) -> Option<SignatureAlgorithm> {
         match self {
             Self::Sha256Rsa2048 | Self::Sha256Rsa4096 | Self::Sha256Rsa8192 => {
                 Some(SignatureAlgorithm::Sha256WithRsa)
@@ -217,12 +224,14 @@ impl AlgorithmType {
             Self::Sha512Rsa2048 | Self::Sha512Rsa4096 | Self::Sha512Rsa8192 => {
                 Some(SignatureAlgorithm::Sha512WithRsa)
             }
+            Self::MlDsa65 => Some(SignatureAlgorithm::MlDsa65),
+            Self::MlDsa87 => Some(SignatureAlgorithm::MlDsa87),
             _ => None,
         }
     }
 
     pub fn digest_len(self) -> usize {
-        self.to_digest_algorithm()
+        self.to_signature_algorithm()
             .map(|a| a.digest_len())
             .unwrap_or_default()
     }
@@ -233,6 +242,8 @@ impl AlgorithmType {
             Self::Sha256Rsa2048 | Self::Sha512Rsa2048 => 256,
             Self::Sha256Rsa4096 | Self::Sha512Rsa4096 => 512,
             Self::Sha256Rsa8192 | Self::Sha512Rsa8192 => 1024,
+            Self::MlDsa65 => 3309,
+            Self::MlDsa87 => 4627,
         }
     }
 
@@ -242,19 +253,21 @@ impl AlgorithmType {
             Self::Sha256Rsa2048 | Self::Sha512Rsa2048 => 8 + 2 * 2048 / 8,
             Self::Sha256Rsa4096 | Self::Sha512Rsa4096 => 8 + 2 * 4096 / 8,
             Self::Sha256Rsa8192 | Self::Sha512Rsa8192 => 8 + 2 * 8192 / 8,
+            Self::MlDsa65 => 4 + 1952,
+            Self::MlDsa87 => 4 + 2592,
         }
     }
 
     pub fn hash(self, data: &[u8]) -> Vec<u8> {
-        let Some(algo) = self.to_digest_algorithm() else {
+        let Some(algo) = self.to_signature_algorithm() else {
             return vec![];
         };
 
         algo.hash(data)
     }
 
-    pub fn sign(self, key: &RsaSigningKey, digest: &[u8]) -> Result<Vec<u8>> {
-        let Some(algo) = self.to_digest_algorithm() else {
+    pub fn sign(self, key: &SigningPrivateKey, data: &[u8]) -> Result<Vec<u8>> {
+        let Some(algo) = self.to_signature_algorithm() else {
             return if self == Self::None {
                 Ok(vec![])
             } else {
@@ -262,11 +275,12 @@ impl AlgorithmType {
             };
         };
 
-        key.sign(algo, digest).map_err(Error::HeaderSign)
+        key.sign(algo, SigningContent::Data(data))
+            .map_err(Error::HeaderSign)
     }
 
-    pub fn verify(self, key: &RsaPublicKey, digest: &[u8], signature: &[u8]) -> Result<()> {
-        let Some(algo) = self.to_digest_algorithm() else {
+    pub fn verify(self, key: &SigningPublicKey, data: &[u8], signature: &[u8]) -> Result<()> {
+        let Some(algo) = self.to_signature_algorithm() else {
             return if self == Self::None {
                 Ok(())
             } else {
@@ -274,7 +288,7 @@ impl AlgorithmType {
             };
         };
 
-        key.verify_sig(algo, digest, signature)
+        key.verify(algo, SigningContent::Data(data), signature)
             .map_err(Error::HeaderVerify)
     }
 }
@@ -1519,6 +1533,9 @@ impl fmt::Debug for Header {
 }
 
 impl Header {
+    pub const FLAG_HASHTREE_DISABLED: u32 = 1 << 0;
+    pub const FLAG_VERIFICATION_DISABLED: u32 = 1 << 1;
+
     pub const SIZE: usize = mem::size_of::<RawHeader>();
 
     fn to_writer_internal(&self, mut writer: impl Write, skip_auth_block: bool) -> Result<()> {
@@ -1688,17 +1705,23 @@ impl Header {
         result.ok_or(Error::NoAppendedDescriptor)
     }
 
-    pub fn set_algo_for_key(&mut self, key: &RsaSigningKey) -> Result<()> {
+    pub fn set_algo_for_key(&mut self, key: &SigningPrivateKey) -> Result<()> {
         let key_raw = encode_public_key(&key.to_public_key())?;
 
-        for algo in [AlgorithmType::Sha256Rsa2048, AlgorithmType::Sha256Rsa4096] {
+        for algo in [
+            AlgorithmType::Sha256Rsa2048,
+            AlgorithmType::Sha256Rsa4096,
+            AlgorithmType::Sha256Rsa8192,
+            AlgorithmType::MlDsa65,
+            AlgorithmType::MlDsa87,
+        ] {
             if key_raw.len() == algo.public_key_len() {
                 self.algorithm_type = algo;
                 return Ok(());
             }
         }
 
-        Err(Error::UnsupportedKeySize(key.size()))
+        Err(Error::UnsupportedKeyType(key.key_type()))
     }
 
     pub fn clear_sig(&mut self) {
@@ -1708,11 +1731,11 @@ impl Header {
         self.public_key_metadata.clear();
     }
 
-    pub fn sign(&mut self, key: &RsaSigningKey) -> Result<()> {
+    pub fn sign(&mut self, key: &SigningPrivateKey) -> Result<()> {
         let key_raw = encode_public_key(&key.to_public_key())?;
 
         if key_raw.len() != self.algorithm_type.public_key_len() {
-            return Err(Error::IncorrectKeySize(key.size(), self.algorithm_type));
+            return Err(Error::IncorrectKeyType(key.key_type(), self.algorithm_type));
         }
 
         // The public key and the sizes of the hash and signature are included
@@ -1727,7 +1750,7 @@ impl Header {
         let without_auth = without_auth_writer.into_inner();
 
         let hash = self.algorithm_type.hash(&without_auth);
-        let signature = self.algorithm_type.sign(key, &hash)?;
+        let signature = self.algorithm_type.sign(key, &without_auth)?;
 
         self.hash = hash;
         self.signature = signature;
@@ -1738,9 +1761,9 @@ impl Header {
     /// Verify the header's digest and signature against the embedded public key
     /// and return the public key. If the header is not signed, then `None` is
     /// returned.
-    pub fn verify(&self) -> Result<Option<RsaPublicKey>> {
+    pub fn verify(&self) -> Result<Option<SigningPublicKey>> {
         if self.public_key.len() != self.algorithm_type.public_key_len() {
-            return Err(Error::IncorrectKeySize(
+            return Err(Error::IncorrectPublicKeySize(
                 self.public_key.len(),
                 self.algorithm_type,
             ));
@@ -1758,8 +1781,15 @@ impl Header {
         let without_auth = without_auth_writer.into_inner();
 
         let hash = self.algorithm_type.hash(&without_auth);
+        if hash != self.hash {
+            return Err(Error::InvalidHeaderDigest {
+                expected: hex::encode(&self.hash),
+                actual: hex::encode(hash),
+            });
+        }
+
         self.algorithm_type
-            .verify(&public_key, &hash, &self.signature)?;
+            .verify(&public_key, &without_auth, &self.signature)?;
 
         Ok(Some(public_key))
     }
@@ -1997,61 +2027,97 @@ impl<W: Write> ToWriter<W> for Footer {
     }
 }
 
-/// Raw on-disk layout for the AVB binary public key header.
-#[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
-#[repr(C, packed)]
-struct RawPublicKey {
-    key_num_bits: big_endian::U32,
-    neg_mod_inv: big_endian::U32,
-}
-
 /// Encode a public key in the AVB binary format.
-pub fn encode_public_key(key: &RsaPublicKey) -> Result<Vec<u8>> {
-    if key.e() != &BoxedUint::from(65537u32) {
-        return Err(Error::UnsupportedRsaPublicExponent(key.e().clone()));
+pub fn encode_public_key(key: &SigningPublicKey) -> Result<Vec<u8>> {
+    match key {
+        SigningPublicKey::Rsa(rsa_key) => {
+            if rsa_key.e() != &BoxedUint::from(65537u32) {
+                return Err(Error::UnsupportedRsaPublicExponent(rsa_key.e().clone()));
+            }
+
+            // libavb expects to have access to both the original modulus and
+            // its representation as montgomery parameters with the negative
+            // inverse modulus being mod 32.
+            let monty_params = BoxedMontyParams::new(rsa_key.n().to_odd().unwrap());
+
+            // crypto-bigint's mod_inv() is mod 64 and mod_neg_inv() returns the
+            // negative of the lowest limb, which is either 32 or 64 bits,
+            // depending on CPU architecture. We'll only grab the lowest 32 bits
+            // from this.
+            let n0inv32or64 = monty_params.as_ref().mod_neg_inv();
+            let n0inv_le = &n0inv32or64.to_le_bytes()[0..4];
+            let rrmodn = monty_params.as_ref().r2();
+
+            // Always has same size as the modulus.
+            let key_num_bits = rrmodn.bits_precision();
+            let neg_mod_inv = u32::from_le_bytes(n0inv_le.try_into().unwrap());
+
+            let public_key_len = match key_num_bits {
+                2048 => AlgorithmType::Sha256Rsa2048.public_key_len(),
+                4096 => AlgorithmType::Sha256Rsa4096.public_key_len(),
+                8192 => AlgorithmType::Sha256Rsa8192.public_key_len(),
+                _ => return Err(Error::UnsupportedKeyType(key.key_type())),
+            };
+
+            let mut data = Vec::with_capacity(public_key_len);
+            data.extend_from_slice(&key_num_bits.to_be_bytes());
+            data.extend_from_slice(&neg_mod_inv.to_be_bytes());
+            data.extend_from_slice(&rsa_key.n().to_be_bytes());
+            data.extend_from_slice(&rrmodn.to_be_bytes());
+
+            Ok(data)
+        }
+        SigningPublicKey::MlDsa65(ml_dsa_key) => {
+            let mut data = Vec::with_capacity(AlgorithmType::MlDsa65.public_key_len());
+            let encoded = ml_dsa_key.encode();
+
+            data.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
+            data.extend_from_slice(&encoded);
+
+            Ok(data)
+        }
+        SigningPublicKey::MlDsa87(ml_dsa_key) => {
+            let mut data = Vec::with_capacity(AlgorithmType::MlDsa87.public_key_len());
+            let encoded = ml_dsa_key.encode();
+
+            data.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
+            data.extend_from_slice(&encoded);
+
+            Ok(data)
+        }
     }
-
-    // libavb expects to have both the original modulus and its representation
-    // as montgomery parameters with the negative inverse modulus being mod 32.
-    let monty_params = BoxedMontyParams::new(key.n().to_odd().unwrap());
-
-    // crypto-bigint's mod_inv() is mod 64 and mod_neg_inv() returns the
-    // negative of the lowest limb, which is either 32 or 64 bits, depending on
-    // CPU architecture. We'll only grab the lowest 32 bits from this.
-    let n0inv32or64 = monty_params.as_ref().mod_neg_inv();
-    let n0inv_le = &n0inv32or64.to_le_bytes()[0..4];
-    let rrmodn = monty_params.as_ref().r2();
-
-    let raw_header = RawPublicKey {
-        // Always has same size as the modulus.
-        key_num_bits: rrmodn.bits_precision().into(),
-        neg_mod_inv: u32::from_le_bytes(n0inv_le.try_into().unwrap()).into(),
-    };
-
-    let mut data = Vec::with_capacity(raw_header.as_bytes().len() + 2 * rrmodn.bytes_precision());
-    data.extend_from_slice(raw_header.as_bytes());
-    data.extend_from_slice(&key.n().to_be_bytes());
-    data.extend_from_slice(&rrmodn.to_be_bytes());
-
-    Ok(data)
 }
 
 /// Decode a public key from the AVB binary format.
-pub fn decode_public_key(data: &[u8]) -> Result<RsaPublicKey> {
-    let (raw_header, suffix) =
-        RawPublicKey::ref_from_prefix(data).map_err(|_| Error::BinaryPublicKeyTooSmall)?;
+pub fn decode_public_key(data: &[u8]) -> Result<SigningPublicKey> {
+    match data.len() {
+        l if l == AlgorithmType::Sha256Rsa2048.public_key_len()
+            || l == AlgorithmType::Sha256Rsa4096.public_key_len()
+            || l == AlgorithmType::Sha256Rsa8192.public_key_len() =>
+        {
+            let modulus_bytes = (l - 8) / 2;
+            let modulus_be = &data[8..8 + modulus_bytes];
+            let modulus = BoxedUint::from_be_slice_vartime(modulus_be);
 
-    let key_bits = raw_header.key_num_bits.get() as usize;
+            let public_key = RsaPublicKey::new(modulus.clone(), BoxedUint::from(65537u32))
+                .map_err(|e| Error::InvalidRsaModulus(modulus, Box::new(e)))?;
 
-    if suffix.len() < key_bits / 8 {
-        return Err(Error::BinaryPublicKeyTooSmall);
+            Ok(SigningPublicKey::Rsa(public_key))
+        }
+        l if l == AlgorithmType::MlDsa65.public_key_len() => {
+            let encoded = EncodedVerifyingKey::<MlDsa65>::try_from(&data[4..]).unwrap();
+            let public_key = VerifyingKey::decode(&encoded);
+
+            Ok(SigningPublicKey::MlDsa65(public_key))
+        }
+        l if l == AlgorithmType::MlDsa87.public_key_len() => {
+            let encoded = EncodedVerifyingKey::<MlDsa87>::try_from(&data[4..]).unwrap();
+            let public_key = VerifyingKey::decode(&encoded);
+
+            Ok(SigningPublicKey::MlDsa87(public_key))
+        }
+        l => Err(Error::UnsupportedPublicKeySize(l)),
     }
-
-    let modulus = BoxedUint::from_be_slice_vartime(&suffix[..key_bits / 8]);
-    let public_key = RsaPublicKey::new(modulus.clone(), BoxedUint::from(65537u32))
-        .map_err(|e| Error::InvalidRsaModulus(modulus, Box::new(e)))?;
-
-    Ok(public_key)
 }
 
 /// Load the vbmeta header and footer from the specified reader. A footer is

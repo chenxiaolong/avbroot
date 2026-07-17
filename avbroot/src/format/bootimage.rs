@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -17,7 +17,7 @@ use zerocopy::{FromBytes, IntoBytes, little_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
-    crypto::RsaSigningKey,
+    crypto::SigningPrivateKey,
     format::{
         avb::{self, Descriptor, Header},
         padding::{self, ZeroPadding},
@@ -883,7 +883,7 @@ impl BootImageV3Through4 {
     /// Sign the boot image with a legacy VTS signature. Returns true if the
     /// image was successfully signed. Returns false if there's no vbmeta
     /// structure to sign in [`V4Extra::signature`].
-    pub fn sign(&mut self, key: &RsaSigningKey) -> Result<bool> {
+    pub fn sign(&mut self, key: &SigningPrivateKey) -> Result<bool> {
         let mut context = Context::new(&ring::digest::SHA256);
         let image_size;
 

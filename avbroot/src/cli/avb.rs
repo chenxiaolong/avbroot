@@ -14,13 +14,12 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
-use rsa::RsaPublicKey;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{Span, debug_span, info, warn};
 
 use crate::{
-    crypto::{self, PassphraseSource, RsaSigningKey},
+    crypto::{self, PassphraseSource, SigningPrivateKey, SigningPublicKey},
     format::avb::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
         HashTreeDescriptor, Header, KernelCmdlineDescriptor,
@@ -29,9 +28,20 @@ use crate::{
     util,
 };
 
-/// SHA-256 digests of the AOSP test keys encoded in the AVB binary format. This
-/// excludes 8192-bit keys since RustCrypto doesn't support them anyway.
-const PUBLIC_PUBKEYS: [[u8; 32]; 7] = [
+/// SHA-256 digests of the AOSP test keys encoded in the AVB binary format.
+const PUBLIC_PUBKEYS: [[u8; 32]; 10] = [
+    // testkey_mldsa65.pem
+    [
+        0x61, 0xd6, 0x1e, 0xcc, 0x86, 0xc6, 0xe3, 0x8a, 0x30, 0xbc, 0x40, 0xc2, 0x59, 0x4d, 0xdc,
+        0x08, 0xf6, 0x35, 0x38, 0x98, 0x21, 0x8a, 0xbc, 0x55, 0xa7, 0x1f, 0xec, 0xb9, 0x3c, 0x7f,
+        0x2c, 0xb8,
+    ],
+    // testkey_mldsa87.pem
+    [
+        0xd5, 0xae, 0xac, 0x80, 0x15, 0x56, 0x88, 0xdc, 0xe5, 0x75, 0x97, 0xe7, 0x84, 0x49, 0xa6,
+        0x67, 0x94, 0x6b, 0x69, 0x4a, 0xc1, 0xe6, 0xff, 0xa4, 0xc6, 0xcb, 0x15, 0x3e, 0x43, 0x2e,
+        0x5a, 0xb2,
+    ],
     // testkey_cert_pik.pem
     [
         0xce, 0x46, 0x4c, 0x0f, 0xef, 0xc0, 0x23, 0x76, 0x0a, 0xdc, 0x3f, 0xe0, 0x20, 0x7c, 0x28,
@@ -73,6 +83,12 @@ const PUBLIC_PUBKEYS: [[u8; 32]; 7] = [
         0x77, 0x28, 0xe3, 0x0f, 0x50, 0xbf, 0xa5, 0xce, 0xa1, 0x65, 0xf4, 0x73, 0x17, 0x5a, 0x08,
         0x80, 0x3f, 0x6a, 0x83, 0x46, 0x64, 0x2b, 0x5a, 0xa1, 0x09, 0x13, 0xe9, 0xd9, 0xe6, 0xde,
         0xfe, 0xf6,
+    ],
+    // testkey_rsa8192.pem
+    [
+        0xa7, 0xa9, 0xb2, 0xea, 0xa8, 0xa3, 0x98, 0x67, 0xe6, 0xc0, 0x59, 0x2b, 0x52, 0x2f, 0x4e,
+        0x79, 0x21, 0x0f, 0xad, 0x5b, 0xdf, 0xdb, 0x61, 0x8e, 0xca, 0x16, 0x37, 0xb9, 0x5d, 0x99,
+        0x83, 0xec,
     ],
 ];
 
@@ -411,17 +427,15 @@ fn sign_or_clear(info: &mut AvbInfo, orig_header: &Header, key_group: &KeyGroup)
                 let public_key = crypto::read_pem_public_key_file(key_path)
                     .with_context(|| format!("Failed to load key: {key_path:?}"))?;
 
-                RsaSigningKey::External {
+                SigningPrivateKey::External {
                     program: helper.clone(),
                     public_key_file: key_path.clone(),
                     public_key,
                     passphrase_source: source,
                 }
             } else {
-                let private_key = crypto::read_pem_key_file(key_path, &source)
-                    .with_context(|| format!("Failed to load key: {key_path:?}"))?;
-
-                RsaSigningKey::Internal(private_key)
+                crypto::read_pem_private_key_file(key_path, &source)
+                    .with_context(|| format!("Failed to load key: {key_path:?}"))?
             };
 
             info.header
@@ -517,7 +531,7 @@ impl ImageOpener {
 
 #[derive(Debug, Clone)]
 pub enum TrustMethod {
-    Key(RsaPublicKey),
+    Key(SigningPublicKey),
     KeyDigest([u8; 32]),
     Anything,
 }

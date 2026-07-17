@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{collections::BTreeMap, fs, path::Path};
@@ -26,6 +26,13 @@ pub struct OtaInfo {
     pub android_version: String,
     pub sdk_version: String,
     pub security_patch_level: String,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AvbKeyType {
+    Rsa,
+    MlDsa,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -115,6 +122,7 @@ pub struct VabcSettings {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
+    pub avb_key_type: AvbKeyType,
     pub vabc: Option<VabcSettings>,
     pub partitions: BTreeMap<String, Partition>,
     pub hashes_streaming: Hashes,

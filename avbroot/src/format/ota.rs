@@ -25,7 +25,7 @@ use thiserror::Error;
 use x509_cert::Certificate;
 
 use crate::{
-    crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
+    crypto::{self, SignatureAlgorithm, SigningContent, SigningPrivateKey},
     format::{
         payload::{self, PayloadHeader},
         zip::{self, ZipEntriesSafeExt, ZipFileHeaderRecordExt},
@@ -793,7 +793,11 @@ impl OtaSignature {
 
         // Verify the signature against the public key.
         public_key
-            .verify_sig(self.sig_algo, digest.as_ref(), &self.sig)
+            .verify(
+                self.sig_algo,
+                SigningContent::Digest(digest.as_ref()),
+                &self.sig,
+            )
             .map_err(Error::CmsVerify)?;
 
         Ok(())
@@ -958,7 +962,7 @@ fn validate_eocd(eocd: &[u8]) -> Result<()> {
 /// size field and the comment itself. It should be written to the end of the
 /// zip file after truncating the original 2-byte comment size field.
 fn compute_signature_comment(
-    key: &RsaSigningKey,
+    key: &SigningPrivateKey,
     cert: &Certificate,
     digest: ring::digest::Digest,
 ) -> Result<Vec<u8>> {
@@ -1018,7 +1022,7 @@ impl<W: Write> StreamingSigningWriter<W> {
         }
     }
 
-    pub fn finish(mut self, key: &RsaSigningKey, cert: &Certificate) -> Result<W> {
+    pub fn finish(mut self, key: &SigningPrivateKey, cert: &Certificate) -> Result<W> {
         if self.used < self.queue.len() {
             return Err(Error::ZipTooSmall);
         }
@@ -1092,7 +1096,7 @@ impl<W: Read + Write + Seek> SeekableSigningWriter<W> {
 
     pub fn finish(
         mut self,
-        key: &RsaSigningKey,
+        key: &SigningPrivateKey,
         cert: &Certificate,
         cancel_signal: &AtomicBool,
     ) -> Result<W> {
@@ -1173,7 +1177,7 @@ enum SigningWriterInner<W> {
         /// available.
         finish: fn(
             SeekableSigningWriter<W>,
-            key: &RsaSigningKey,
+            key: &SigningPrivateKey,
             cert: &Certificate,
             cancel_signal: &AtomicBool,
         ) -> Result<W>,
@@ -1197,7 +1201,7 @@ impl<W: Write> SigningWriter<W> {
 
     pub fn finish(
         self,
-        key: &RsaSigningKey,
+        key: &SigningPrivateKey,
         cert: &Certificate,
         cancel_signal: &AtomicBool,
     ) -> Result<W> {

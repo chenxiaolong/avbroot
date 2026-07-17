@@ -30,7 +30,7 @@ use zerocopy::{FromBytes, IntoBytes, big_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
-    crypto::{self, RsaPublicKeyExt, RsaSigningKey, SignatureAlgorithm},
+    crypto::{self, SignatureAlgorithm, SigningContent, SigningPrivateKey},
     protobuf::chromeos_update_engine::{
         DeltaArchiveManifest, Extent, InstallOperation, PartitionInfo, PartitionUpdate, Signatures,
         install_operation::Type, signatures::Signature,
@@ -220,24 +220,21 @@ impl<R: Read> FromReader<R> for PayloadHeader {
     }
 }
 
-/// Sign `digest` with `key` and return a [`Signatures`] protobuf struct with
-/// the signature padded to the maximum size.
-fn sign_digest(digest: &[u8], key: &RsaSigningKey) -> Result<Signatures> {
-    let mut digest_signed = key
-        .sign(SignatureAlgorithm::Sha256WithRsa, digest)
+/// Sign `digest` with `key` and return a [`Signatures`] protobuf struct.
+fn sign_digest(digest: &[u8], key: &SigningPrivateKey) -> Result<Signatures> {
+    let digest_signed = key
+        .sign(
+            SignatureAlgorithm::Sha256WithRsa,
+            SigningContent::Digest(digest),
+        )
         .map_err(Error::SignatureGenerate)?;
-    assert!(
-        digest_signed.len() <= key.size(),
-        "Signature exceeds maximum size",
-    );
-
-    let unpadded_size = digest_signed.len();
-    digest_signed.resize(key.size(), 0);
+    let digest_signed_len = digest_signed.len();
 
     let signature = Signature {
         data: Some(digest_signed),
-        // Always fits in even a u16.
-        unpadded_signature_size: Some(unpadded_size as u32),
+        // Always fits in even a u16. There's no padding needed since the
+        // signature size is always equal to the key size with RSA.
+        unpadded_signature_size: Some(digest_signed_len as u32),
         ..Default::default()
     };
 
@@ -262,7 +259,11 @@ fn verify_digest(digest: &[u8], signatures: &Signatures, cert: &Certificate) -> 
             .map_or(data.len(), |s| s as usize);
         let without_padding = &data[..size];
 
-        match public_key.verify_sig(SignatureAlgorithm::Sha256WithRsa, digest, without_padding) {
+        match public_key.verify(
+            SignatureAlgorithm::Sha256WithRsa,
+            SigningContent::Digest(digest),
+            without_padding,
+        ) {
             Ok(()) => return Ok(()),
             Err(e) => last_error = Some(Error::SignatureVerify(e)),
         }
@@ -339,7 +340,7 @@ pub struct PayloadWriter<W: Write> {
     h_partial: Context,
     /// Includes signatures (hashes are for properties file).
     h_full: Context,
-    key: RsaSigningKey,
+    key: SigningPrivateKey,
 }
 
 /// Write data to a writer and one or more hashers.
@@ -362,7 +363,7 @@ impl<W: Write> PayloadWriter<W> {
     /// fields are ignored and internally recomputed to guarantee that there are
     /// no gaps. All partitions' install operation data is written to the blob
     /// section in order.
-    pub fn new(mut inner: W, mut header: PayloadHeader, key: RsaSigningKey) -> Result<Self> {
+    pub fn new(mut inner: W, mut header: PayloadHeader, key: SigningPrivateKey) -> Result<Self> {
         let mut blob_size = 0;
 
         // The blob must contain all data in sequential order with no gaps.

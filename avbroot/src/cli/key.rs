@@ -9,10 +9,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use tracing::warn;
 
 use crate::{
-    crypto::{self, PassphraseSource},
+    crypto::{self, PassphraseSource, SigningKeyType, SigningPrivateKey},
     format::avb,
 };
 
@@ -28,15 +29,31 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
     match &cli.command {
         KeyCommand::GenerateKey(c) => {
             let source = get_passphrase_source(&c.passphrase, &c.output);
-            let private_key =
-                crypto::generate_rsa_key_pair().context("Failed to generate RSA keypair")?;
+            let generate_key_type = c.key_type.unwrap_or_else(|| {
+                let default = GenerateKeyType::Rsa4096;
+                warn!(
+                    "Defaulting to {}; -t/--key-type will be required in avbroot 4.0",
+                    default.to_possible_value().unwrap().get_name(),
+                );
+                default
+            });
+            let key_type = match generate_key_type {
+                GenerateKeyType::Rsa2048 => SigningKeyType::Rsa(2048 / 8),
+                GenerateKeyType::Rsa4096 => SigningKeyType::Rsa(4096 / 8),
+                GenerateKeyType::Rsa8192 => SigningKeyType::Rsa(8192 / 8),
+                GenerateKeyType::MlDsa65 => SigningKeyType::MlDsa65,
+                GenerateKeyType::MlDsa87 => SigningKeyType::MlDsa87,
+            };
 
-            crypto::write_pem_key_file(&c.output, &private_key, &source)
+            let private_key =
+                SigningPrivateKey::generate(key_type).context("Failed to generate keypair")?;
+
+            crypto::write_pem_private_key_file(&c.output, &private_key, &source)
                 .with_context(|| format!("Failed to write private key: {:?}", c.output))?;
         }
         KeyCommand::GenerateCert(c) => {
             let source = get_passphrase_source(&c.passphrase, &c.key);
-            let private_key = crypto::read_pem_key_file(&c.key, &source)
+            let private_key = crypto::read_pem_private_key_file(&c.key, &source)
                 .with_context(|| format!("Failed to load key: {:?}", c.key))?;
 
             let validity = Duration::from_secs(c.validity * 24 * 60 * 60);
@@ -49,7 +66,7 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
         KeyCommand::ExtractAvb(c) | KeyCommand::EncodeAvb(c) => {
             let public_key = if let Some(p) = &c.input.key {
                 let passphrase = get_passphrase_source(&c.passphrase, p);
-                let private_key = crypto::read_pem_key_file(p, &passphrase)
+                let private_key = crypto::read_pem_private_key_file(p, &passphrase)
                     .with_context(|| format!("Failed to load key: {p:?}"))?;
 
                 private_key.to_public_key()
@@ -114,7 +131,17 @@ struct PassphraseGroup {
     pass_file: Option<PathBuf>,
 }
 
-/// Generate an 4096-bit RSA keypair.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[value(rename_all = "lower")]
+pub enum GenerateKeyType {
+    Rsa2048,
+    Rsa4096,
+    Rsa8192,
+    MlDsa65,
+    MlDsa87,
+}
+
+/// Generate a signing keypair.
 ///
 /// The output is saved in the standard PKCS8 format.
 #[derive(Debug, Parser)]
@@ -122,6 +149,12 @@ struct GenerateKeyCli {
     /// Path to output private key.
     #[arg(short, long, value_name = "FILE", value_parser)]
     output: PathBuf,
+
+    /// The type of key to create.
+    ///
+    /// WARNING: This will be a required field starting in avbroot 4.0.
+    #[arg(short = 't', long, value_name = "TYPE")]
+    key_type: Option<GenerateKeyType>,
 
     #[command(flatten)]
     passphrase: PassphraseGroup,

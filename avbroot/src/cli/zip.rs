@@ -22,7 +22,7 @@ use x509_cert::Certificate;
 
 use crate::{
     cli::payload,
-    crypto::{self, PassphraseSource, RsaSigningKey},
+    crypto::{self, PassphraseSource, SigningPrivateKey},
     format::{
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         payload::PayloadHeader,
@@ -144,7 +144,7 @@ fn display_info(quiet: bool, info: &OtaInfo) {
     }
 }
 
-fn load_key(group: &KeyGroup) -> Result<(RsaSigningKey, Certificate)> {
+fn load_key(group: &KeyGroup) -> Result<(SigningPrivateKey, Certificate)> {
     let source = PassphraseSource::new(
         &group.key,
         group.pass_file.as_deref(),
@@ -154,17 +154,15 @@ fn load_key(group: &KeyGroup) -> Result<(RsaSigningKey, Certificate)> {
         let public_key = crypto::read_pem_public_key_file(&group.key)
             .with_context(|| format!("Failed to load key: {:?}", group.key))?;
 
-        RsaSigningKey::External {
+        SigningPrivateKey::External {
             program: helper.clone(),
             public_key_file: group.key.clone(),
             public_key,
             passphrase_source: source,
         }
     } else {
-        let private_key = crypto::read_pem_key_file(&group.key, &source)
-            .with_context(|| format!("Failed to load key: {:?}", group.key))?;
-
-        RsaSigningKey::Internal(private_key)
+        crypto::read_pem_private_key_file(&group.key, &source)
+            .with_context(|| format!("Failed to load key: {:?}", group.key))?
     };
 
     let cert = crypto::read_pem_cert_file(&group.cert)
@@ -240,7 +238,7 @@ fn add_otacert_entry(
 
 #[allow(clippy::too_many_arguments)]
 fn finalize_ota(
-    key: &RsaSigningKey,
+    key: &SigningPrivateKey,
     cert: &Certificate,
     mut zip_writer: ZipArchiveWriter<SigningWriter<File>>,
     zip_mode: ZipMode,

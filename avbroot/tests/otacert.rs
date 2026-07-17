@@ -10,7 +10,7 @@ use x509_cert::{Certificate, der::DecodePem};
 fn get_test_cert() -> Certificate {
     let data = include_str!(concat!(
         env!("CARGO_WORKSPACE_DIR"),
-        "/e2e/keys/TEST_KEY_DO_NOT_USE_ota.crt",
+        "/e2e/keys/ota/TEST_KEY_DO_NOT_USE.crt",
     ));
 
     Certificate::from_pem(data).unwrap()

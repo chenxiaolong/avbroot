@@ -32,10 +32,11 @@ hex = { version = "0.4.3", features = ["serde"] }
 lz4_flex = "0.13.0"
 lzma-rust2 = "0.16.1"
 memchr = "2.6.0"
+ml-dsa = { version = "0.1.1", features = ["rand_core"] }
 num-traits = "0.2.16"
 passterm = "2.0.3"
 phf = { version = "0.14.0", features = ["macros"] }
-pkcs8 = { version = "0.11.0", features = ["encryption", "pem"] }
+pkcs8 = { version = "0.11.0", features = ["encryption", "getrandom", "pem"] }
 prost = "0.14.1"
 rand = "0.10.2"
 rawzip = "0.5.0"

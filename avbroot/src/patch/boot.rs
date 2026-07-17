@@ -21,13 +21,12 @@ use rawzip::{RECOMMENDED_BUFFER_SIZE, ZipArchive};
 use rayon::iter::{IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use regex::bytes::Regex;
 use ring::digest::Context;
-use rsa::RsaPublicKey;
 use thiserror::Error;
 use tracing::{Span, debug, debug_span, trace, warn};
 use x509_cert::Certificate;
 
 use crate::{
-    crypto::{self, RsaSigningKey},
+    crypto::{self, SigningPrivateKey, SigningPublicKey},
     format::{
         avb::{self, AppendedDescriptorMut, Footer, Header},
         bootimage::{self, BootImage, BootImageExt, RamdiskMeta},
@@ -846,7 +845,7 @@ impl BootImagePatch for OtaCertPatcher {
 
 /// Add the AVB public key to DSU's list of trusted keys for verifying GSIs.
 pub struct DsuPubKeyPatcher {
-    key: RsaPublicKey,
+    key: SigningPublicKey,
 }
 
 impl DsuPubKeyPatcher {
@@ -856,7 +855,7 @@ impl DsuPubKeyPatcher {
     const RECOVERY_DSU_KEYS_PATH: &'static [u8] = b"avb";
     const RECOVERY_AVBROOT_KEY_PATH: &'static [u8] = b"avb/avbroot.avbpubkey";
 
-    pub fn new(key: RsaPublicKey) -> Self {
+    pub fn new(key: SigningPublicKey) -> Self {
         Self { key }
     }
 
@@ -1302,7 +1301,7 @@ fn load_boot_image(reader: &mut dyn ReadSeek) -> Result<BootImageInfo> {
 fn save_boot_image(
     writer: &mut dyn WriteSeek,
     info: &mut BootImageInfo,
-    key: &RsaSigningKey,
+    key: &SigningPrivateKey,
 ) -> Result<()> {
     let AppendedDescriptorMut::Hash(descriptor) = info
         .header
@@ -1391,7 +1390,7 @@ pub fn load_boot_images<'a>(
 pub fn patch_boot_images<'a>(
     names: &[&'a str],
     opener: &(dyn BootImageOpener + Sync),
-    key: &RsaSigningKey,
+    key: &SigningPrivateKey,
     patchers: &[Box<dyn BootImagePatch + Sync>],
     cancel_signal: &AtomicBool,
 ) -> TargetsResult<HashSet<&'a str>> {

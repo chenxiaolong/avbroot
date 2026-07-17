@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::io::Cursor;
 
 use avbroot::{
     self,
-    crypto::RsaSigningKey,
+    crypto::SigningPrivateKey,
     format::{
         avb::{AlgorithmType, Descriptor, HashDescriptor, Header},
         bootimage::{
@@ -16,20 +16,18 @@ use avbroot::{
     stream::{FromReader, ToWriter},
 };
 use pkcs8::DecodePrivateKey;
-use rsa::RsaPrivateKey;
 
-fn get_test_key() -> RsaSigningKey {
+fn get_test_key_rsa() -> SigningPrivateKey {
     let data = include_str!(concat!(
         env!("CARGO_WORKSPACE_DIR"),
-        "/e2e/keys/TEST_KEY_DO_NOT_USE_avb.key",
+        "/e2e/keys/avb_rsa/TEST_KEY_DO_NOT_USE.key",
     ));
     let passphrase = include_str!(concat!(
         env!("CARGO_WORKSPACE_DIR"),
-        "/e2e/keys/TEST_KEY_DO_NOT_USE_avb.passphrase",
+        "/e2e/keys/avb_rsa/TEST_KEY_DO_NOT_USE.pass",
     ));
 
-    let key = RsaPrivateKey::from_pkcs8_encrypted_pem(data, passphrase.trim_end()).unwrap();
-    RsaSigningKey::Internal(key)
+    SigningPrivateKey::from_pkcs8_encrypted_pem(data, passphrase.trim_end()).unwrap()
 }
 
 fn repeat(s: &str, max_len: usize) -> String {
@@ -239,7 +237,9 @@ fn round_trip_v4_vts() {
         reserved: [0; 80],
     };
 
-    let key = get_test_key();
+    // ML-DSA keys are not supported because the maximum size of a VTS signature
+    // is 4096 bytes.
+    let key = get_test_key_rsa();
     header.sign(&key).unwrap();
     assert_eq!(header.verify().unwrap().unwrap(), key.to_public_key());
 

@@ -31,7 +31,7 @@ use crate::{
         self,
         avb::{ImageOpener, TrustMethod},
     },
-    crypto::{self, PassphraseSource, RsaSigningKey},
+    crypto::{self, PassphraseSource, SigningPrivateKey},
     format::{
         avb::{self, Descriptor, Header},
         ota::{self, SigningWriter, ZipEntry, ZipMode},
@@ -230,7 +230,7 @@ fn patch_boot_images(
     required_images: &HashMap<String, PartitionFlags>,
     input_files: &mut HashMap<String, InputFile>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
-    key_avb: &RsaSigningKey,
+    key_avb: &SigningPrivateKey,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let boot_partitions = required_images
@@ -284,7 +284,7 @@ fn patch_system_image<'a>(
     required_images: &'a HashMap<String, PartitionFlags>,
     input_files: &mut HashMap<String, InputFile>,
     cert_ota: &Certificate,
-    key_avb: &RsaSigningKey,
+    key_avb: &SigningPrivateKey,
     cancel_signal: &AtomicBool,
 ) -> Result<(&'a str, Vec<Range<u64>>)> {
     let mut system_iter = required_images
@@ -336,7 +336,7 @@ fn patch_system_image<'a>(
 fn re_sign_unmodified_images(
     re_sign_images: &HashSet<String>,
     input_files: &mut HashMap<String, InputFile>,
-    key_avb: &RsaSigningKey,
+    key_avb: &SigningPrivateKey,
     block_size: u64,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
@@ -785,7 +785,7 @@ fn update_vbmeta_headers(
     headers: &mut HashMap<String, Header>,
     order: &mut [(String, HashSet<String>)],
     clear_vbmeta_flags: bool,
-    key: &RsaSigningKey,
+    key: &SigningPrivateKey,
     block_size: u64,
 ) -> Result<()> {
     info!(
@@ -1010,8 +1010,8 @@ fn patch_ota_payload(
     skip_system_ota_cert: bool,
     clear_vbmeta_flags: bool,
     vabc_algo_override: Option<VabcAlgo>,
-    key_avb: &RsaSigningKey,
-    key_ota: &RsaSigningKey,
+    key_avb: &SigningPrivateKey,
+    key_ota: &SigningPrivateKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
@@ -1247,8 +1247,8 @@ fn patch_ota_zip(
     clear_vbmeta_flags: bool,
     vabc_algo_override: Option<VabcAlgo>,
     zip_mode: ZipMode,
-    key_avb: &RsaSigningKey,
-    key_ota: &RsaSigningKey,
+    key_avb: &SigningPrivateKey,
+    key_ota: &SigningPrivateKey,
     cert_ota: &Certificate,
     cancel_signal: &AtomicBool,
 ) -> Result<(OtaMetadata, u64)> {
@@ -1614,13 +1614,13 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         let public_key_ota = crypto::read_pem_public_key_file(&cli.key_ota)
             .with_context(|| format!("Failed to load key: {:?}", cli.key_ota))?;
 
-        let key_avb = RsaSigningKey::External {
+        let key_avb = SigningPrivateKey::External {
             program: helper.clone(),
             public_key_file: cli.key_avb.clone(),
             public_key: public_key_avb,
             passphrase_source: source_avb,
         };
-        let key_ota = RsaSigningKey::External {
+        let key_ota = SigningPrivateKey::External {
             program: helper.clone(),
             public_key_file: cli.key_ota.clone(),
             public_key: public_key_ota,
@@ -1629,13 +1629,10 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
 
         (key_avb, key_ota)
     } else {
-        let private_key_avb = crypto::read_pem_key_file(&cli.key_avb, &source_avb)
+        let key_avb = crypto::read_pem_private_key_file(&cli.key_avb, &source_avb)
             .with_context(|| format!("Failed to load key: {:?}", cli.key_avb))?;
-        let private_key_ota = crypto::read_pem_key_file(&cli.key_ota, &source_ota)
+        let key_ota = crypto::read_pem_private_key_file(&cli.key_ota, &source_ota)
             .with_context(|| format!("Failed to load key: {:?}", cli.key_ota))?;
-
-        let key_avb = RsaSigningKey::Internal(private_key_avb);
-        let key_ota = RsaSigningKey::Internal(private_key_ota);
 
         (key_avb, key_ota)
     };
