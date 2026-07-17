@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.32.0
 
 * Add support for post-quantum ML-DSA keys for AVB signing ([Issue #585], [PR #628], [PR #629])
     * This was introduced in Android 17, but there are no known devices with bootloaders that support it yet.
