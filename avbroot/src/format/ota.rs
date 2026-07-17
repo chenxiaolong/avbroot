@@ -25,7 +25,7 @@ use thiserror::Error;
 use x509_cert::Certificate;
 
 use crate::{
-    crypto::{self, SignatureAlgorithm, SigningContent, SigningPrivateKey},
+    crypto::{self, SignatureAlgorithm, SigningContent, SigningMethod, SigningPrivateKey},
     format::{
         payload::{self, PayloadHeader},
         zip::{self, ZipEntriesSafeExt, ZipFileHeaderRecordExt},
@@ -964,10 +964,11 @@ fn validate_eocd(eocd: &[u8]) -> Result<()> {
 fn compute_signature_comment(
     key: &SigningPrivateKey,
     cert: &Certificate,
+    method: SigningMethod,
     digest: ring::digest::Digest,
 ) -> Result<Vec<u8>> {
     let cms_signature =
-        crypto::cms_sign_external(key, cert, digest.as_ref()).map_err(Error::CmsSign)?;
+        crypto::cms_sign_external(key, cert, method, digest.as_ref()).map_err(Error::CmsSign)?;
     let cms_signature_der = cms_signature.to_der().map_err(Error::CmsSave)?;
 
     // Includes placeholder for the EOCD comment size field.
@@ -1022,7 +1023,12 @@ impl<W: Write> StreamingSigningWriter<W> {
         }
     }
 
-    pub fn finish(mut self, key: &SigningPrivateKey, cert: &Certificate) -> Result<W> {
+    pub fn finish(
+        mut self,
+        key: &SigningPrivateKey,
+        cert: &Certificate,
+        method: SigningMethod,
+    ) -> Result<W> {
         if self.used < self.queue.len() {
             return Err(Error::ZipTooSmall);
         }
@@ -1037,7 +1043,7 @@ impl<W: Write> StreamingSigningWriter<W> {
         let (mut raw_writer, context) = self.inner.finish();
         let digest = context.finish();
 
-        let size_and_comment = compute_signature_comment(key, cert, digest)?;
+        let size_and_comment = compute_signature_comment(key, cert, method, digest)?;
         raw_writer
             .write_all(&size_and_comment)
             .map_err(|e| Error::DataWrite("size_and_comment", e))?;
@@ -1098,6 +1104,7 @@ impl<W: Read + Write + Seek> SeekableSigningWriter<W> {
         mut self,
         key: &SigningPrivateKey,
         cert: &Certificate,
+        method: SigningMethod,
         cancel_signal: &AtomicBool,
     ) -> Result<W> {
         // We always write a streaming zip because that is what rawzip supports.
@@ -1134,7 +1141,7 @@ impl<W: Read + Write + Seek> SeekableSigningWriter<W> {
 
         let digest = hashing_writer.finish().1.finish();
 
-        let size_and_comment = compute_signature_comment(key, cert, digest)?;
+        let size_and_comment = compute_signature_comment(key, cert, method, digest)?;
         self.inner
             .write_all(&size_and_comment)
             .map_err(|e| Error::DataWrite("size_and_comment", e))?;
@@ -1179,6 +1186,7 @@ enum SigningWriterInner<W> {
             SeekableSigningWriter<W>,
             key: &SigningPrivateKey,
             cert: &Certificate,
+            method: SigningMethod,
             cancel_signal: &AtomicBool,
         ) -> Result<W>,
     },
@@ -1203,12 +1211,13 @@ impl<W: Write> SigningWriter<W> {
         self,
         key: &SigningPrivateKey,
         cert: &Certificate,
+        method: SigningMethod,
         cancel_signal: &AtomicBool,
     ) -> Result<W> {
         match self.0 {
-            SigningWriterInner::Streaming { inner } => inner.finish(key, cert),
+            SigningWriterInner::Streaming { inner } => inner.finish(key, cert, method),
             SigningWriterInner::Seekable { inner, finish } => {
-                finish(inner, key, cert, cancel_signal)
+                finish(inner, key, cert, method, cancel_signal)
             }
         }
     }

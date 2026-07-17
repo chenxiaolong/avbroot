@@ -11,7 +11,7 @@ use pkcs8::DecodePrivateKey;
 
 use avbroot::{
     self,
-    crypto::SigningPrivateKey,
+    crypto::{SigningMethod, SigningPrivateKey},
     format::avb::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef,
         ChainPartitionDescriptor, Descriptor, Footer, HashDescriptor, HashTreeDescriptor, Header,
@@ -158,7 +158,7 @@ fn round_trip_root_image() {
         };
 
         // Sign the header.
-        header.sign(&key).unwrap();
+        header.sign(&key, SigningMethod::Deterministic).unwrap();
         assert_eq!(header.verify().unwrap().unwrap(), key.to_public_key());
 
         // Write vbmeta structures.
@@ -276,7 +276,7 @@ fn round_trip_appended_hash_image() {
         }
 
         // Sign the header.
-        header.sign(&key).unwrap();
+        header.sign(&key, SigningMethod::Deterministic).unwrap();
         assert_eq!(header.verify().unwrap().unwrap(), key.to_public_key());
 
         // Write vbmeta structures.
@@ -401,7 +401,7 @@ fn round_trip_appended_hash_tree_image_fixed_size() {
         }
 
         // Sign the header.
-        header.sign(&key).unwrap();
+        header.sign(&key, SigningMethod::Deterministic).unwrap();
         assert_eq!(header.verify().unwrap().unwrap(), key.to_public_key());
 
         // Write vbmeta structures.
@@ -529,7 +529,7 @@ fn round_trip_appended_hash_tree_image_minimum_size() {
         }
 
         // Sign the header.
-        header.sign(&key).unwrap();
+        header.sign(&key, SigningMethod::Deterministic).unwrap();
         assert_eq!(header.verify().unwrap().unwrap(), key.to_public_key());
 
         // Write vbmeta structures.
@@ -623,7 +623,7 @@ fn corrupted_root_image() {
         };
 
         // Sign the header.
-        header.sign(&key).unwrap();
+        header.sign(&key, SigningMethod::Deterministic).unwrap();
         assert_eq!(header.verify().unwrap().unwrap(), key.to_public_key());
 
         header.signature[0] = !header.signature[0];

@@ -22,7 +22,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use avbroot::{
     cli::ota::{ExtractCli, PatchCli, VerifyCli},
-    crypto::{self, PassphraseSource, SigningKeyType, SigningPrivateKey},
+    crypto::{self, PassphraseSource, SigningKeyType, SigningMethod, SigningPrivateKey},
     format::{
         avb::{
             self, AlgorithmType, ChainPartitionDescriptor, Descriptor, Footer, HashDescriptor,
@@ -182,7 +182,7 @@ fn append_avb(
 
     if avb.signed {
         header.set_algo_for_key(key_avb)?;
-        header.sign(key_avb)?;
+        header.sign(key_avb, SigningMethod::Deterministic)?;
     }
 
     let mut footer = Footer {
@@ -502,7 +502,7 @@ fn create_vbmeta_image(
 
     if avb.signed {
         header.set_algo_for_key(key)?;
-        header.sign(key)?;
+        header.sign(key, SigningMethod::Deterministic)?;
     }
 
     avb::write_root_image(file, &header, 4096)
@@ -681,8 +681,13 @@ fn create_payload(
         blob_offset: 0,
     };
 
-    let mut payload_writer = PayloadWriter::new(writer, header.clone(), key_ota.clone())
-        .context("Failed to write payload header")?;
+    let mut payload_writer = PayloadWriter::new(
+        writer,
+        header.clone(),
+        key_ota.clone(),
+        SigningMethod::Deterministic,
+    )
+    .context("Failed to write payload header")?;
 
     while payload_writer
         .begin_next_operation()
@@ -848,7 +853,12 @@ fn create_ota(
         .finish()
         .context("Failed to finalize output zip")?;
     let mut buffered_writer = signing_writer
-        .finish(key_ota, cert_ota, cancel_signal)
+        .finish(
+            key_ota,
+            cert_ota,
+            SigningMethod::Deterministic,
+            cancel_signal,
+        )
         .context("Failed to sign output zip")?;
     buffered_writer
         .flush()

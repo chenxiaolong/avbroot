@@ -31,7 +31,7 @@ use crate::{
         self,
         avb::{ImageOpener, TrustMethod},
     },
-    crypto::{self, PassphraseSource, SigningPrivateKey},
+    crypto::{self, PassphraseSource, SigningMethod, SigningPrivateKey},
     format::{
         avb::{self, Descriptor, Header},
         ota::{self, SigningWriter, ZipEntry, ZipMode},
@@ -231,6 +231,7 @@ fn patch_boot_images(
     input_files: &mut HashMap<String, InputFile>,
     boot_patchers: &[Box<dyn BootImagePatch + Sync>],
     key_avb: &SigningPrivateKey,
+    method: SigningMethod,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
     let boot_partitions = required_images
@@ -265,6 +266,7 @@ fn patch_boot_images(
         &boot_partitions,
         &Opener(Mutex::new(input_files)),
         key_avb,
+        method,
         boot_patchers,
         cancel_signal,
     )
@@ -285,6 +287,7 @@ fn patch_system_image<'a>(
     input_files: &mut HashMap<String, InputFile>,
     cert_ota: &Certificate,
     key_avb: &SigningPrivateKey,
+    method: SigningMethod,
     cancel_signal: &AtomicBool,
 ) -> Result<(&'a str, Vec<Range<u64>>)> {
     let mut system_iter = required_images
@@ -317,7 +320,7 @@ fn patch_system_image<'a>(
     }
 
     let (mut ranges, other_ranges) =
-        system::patch_system_image(&input_file.file, cert_ota, key_avb, cancel_signal)
+        system::patch_system_image(&input_file.file, cert_ota, key_avb, method, cancel_signal)
             .with_context(|| format!("Failed to patch system image: {target}"))?;
 
     input_file.state = InputFileState::Modified;
@@ -337,6 +340,7 @@ fn re_sign_unmodified_images(
     re_sign_images: &HashSet<String>,
     input_files: &mut HashMap<String, InputFile>,
     key_avb: &SigningPrivateKey,
+    method: SigningMethod,
     block_size: u64,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
@@ -364,7 +368,7 @@ fn re_sign_unmodified_images(
                     .set_algo_for_key(key_avb)
                     .with_context(|| format!("Failed to set signature algorithm: {name}"))?;
                 header
-                    .sign(key_avb)
+                    .sign(key_avb, method)
                     .with_context(|| format!("Failed to sign AVB metadata: {name}"))?;
             }
 
@@ -786,6 +790,7 @@ fn update_vbmeta_headers(
     order: &mut [(String, HashSet<String>)],
     clear_vbmeta_flags: bool,
     key: &SigningPrivateKey,
+    method: SigningMethod,
     block_size: u64,
 ) -> Result<()> {
     info!(
@@ -830,7 +835,7 @@ fn update_vbmeta_headers(
                 .set_algo_for_key(key)
                 .with_context(|| format!("Failed to set signature algorithm: {name}"))?;
             parent_header
-                .sign(key)
+                .sign(key, method)
                 .with_context(|| format!("Failed to sign vbmeta header for image: {name}"))?;
 
             let mut writer = tempfile::tempfile()
@@ -1013,6 +1018,7 @@ fn patch_ota_payload(
     key_avb: &SigningPrivateKey,
     key_ota: &SigningPrivateKey,
     cert_ota: &Certificate,
+    method: SigningMethod,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
     let mut header = PayloadHeader::from_reader(UserPosFile::new(payload))
@@ -1083,6 +1089,7 @@ fn patch_ota_payload(
         &mut input_files,
         boot_patchers,
         key_avb,
+        method,
         cancel_signal,
     )?;
 
@@ -1094,6 +1101,7 @@ fn patch_ota_payload(
             &mut input_files,
             cert_ota,
             key_avb,
+            method,
             cancel_signal,
         )?)
     };
@@ -1102,6 +1110,7 @@ fn patch_ota_payload(
         re_sign_images,
         &mut input_files,
         key_avb,
+        method,
         header.manifest.block_size().into(),
         cancel_signal,
     )?;
@@ -1118,6 +1127,7 @@ fn patch_ota_payload(
         &mut vbmeta_order,
         clear_vbmeta_flags,
         key_avb,
+        method,
         header.manifest.block_size().into(),
     )?;
 
@@ -1164,7 +1174,7 @@ fn patch_ota_payload(
 
     info!("Generating new OTA payload");
 
-    let mut payload_writer = PayloadWriter::new(writer, header.clone(), key_ota.clone())
+    let mut payload_writer = PayloadWriter::new(writer, header.clone(), key_ota.clone(), method)
         .context("Failed to write payload header")?;
     let mut orig_payload_reader = UserPosFile::new(payload);
 
@@ -1250,6 +1260,7 @@ fn patch_ota_zip(
     key_avb: &SigningPrivateKey,
     key_ota: &SigningPrivateKey,
     cert_ota: &Certificate,
+    method: SigningMethod,
     cancel_signal: &AtomicBool,
 ) -> Result<(OtaMetadata, u64)> {
     struct InputEntry {
@@ -1434,6 +1445,7 @@ fn patch_ota_zip(
                     key_avb,
                     key_ota,
                     cert_ota,
+                    method,
                     cancel_signal,
                 )
                 .with_context(|| format!("Failed to patch payload: {path}"))?;
@@ -1733,6 +1745,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         &key_avb,
         &key_ota,
         &cert_ota,
+        cli.signing_method,
         cancel_signal,
     )
     .context("Failed to patch OTA zip")?;
@@ -1741,7 +1754,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         .finish()
         .context("Failed to finalize output zip")?;
     let mut temp_writer = signing_writer
-        .finish(&key_ota, &cert_ota, cancel_signal)
+        .finish(&key_ota, &cert_ota, cli.signing_method, cancel_signal)
         .context("Failed to sign output zip")?;
 
     // We do a lot of low-level hackery. Reopen and verify offsets.
@@ -2453,6 +2466,21 @@ pub struct PatchCli {
     /// <program> <algo> <public key> [file <pass file>|env <pass env>]
     #[arg(long, value_name = "PROGRAM", value_parser, help_heading = HEADING_KEY)]
     pub signing_helper: Option<PathBuf>,
+
+    /// Preferred signing method.
+    ///
+    /// Defaults to deterministic signatures. If the non-deterministic mode is
+    /// selected, but is not supported for a signing operation, then it will
+    /// fall back to deterministic signatures.
+    ///
+    /// For RSA, non-deterministic signatures are never supported because
+    /// Android uses the PKCS#1 v1.5 scheme.
+    ///
+    /// For ML-DSA, non-deterministic signatures use the hedged variant. This
+    /// can help reduce the impact of broken RNGs and side channel attacks at
+    /// the expense of the output no longer being byte-for-byte reproducible.
+    #[arg(long, default_value_t, conflicts_with = "signing_helper")]
+    signing_method: SigningMethod,
 
     /// Use partition image from a file instead of the original payload.
     #[arg(

@@ -16,7 +16,7 @@ use tracing::info;
 
 use crate::{
     cli::ota,
-    crypto::{self, PassphraseSource, SigningPrivateKey},
+    crypto::{self, PassphraseSource, SigningMethod, SigningPrivateKey},
     format::payload::{PayloadHeader, PayloadWriter},
     stream::{self, FromReader, SectionReader},
     util,
@@ -44,9 +44,10 @@ fn open_writer(
     path: &Path,
     header: PayloadHeader,
     key: SigningPrivateKey,
+    method: SigningMethod,
 ) -> Result<PayloadWriter<BufWriter<File>>> {
     let writer = open_raw_writer(path)?;
-    let payload_writer = PayloadWriter::new(writer, header, key)
+    let payload_writer = PayloadWriter::new(writer, header, key, method)
         .with_context(|| format!("Failed to write payload header: {path:?}"))?;
 
     Ok(payload_writer)
@@ -76,7 +77,7 @@ fn display_header(quiet: bool, header: &PayloadHeader) {
     }
 }
 
-fn load_key(group: &KeyGroup) -> Result<SigningPrivateKey> {
+fn load_key(group: &KeyGroup) -> Result<(SigningPrivateKey, SigningMethod)> {
     let source = PassphraseSource::new(
         &group.key,
         group.pass_file.as_deref(),
@@ -97,7 +98,7 @@ fn load_key(group: &KeyGroup) -> Result<SigningPrivateKey> {
             .with_context(|| format!("Failed to load key: {:?}", group.key))?
     };
 
-    Ok(signing_key)
+    Ok((signing_key, group.signing_method))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -196,6 +197,7 @@ pub fn pack_payload(
     input_images: &Path,
     writer: &mut dyn Write,
     signing_key: &SigningPrivateKey,
+    method: SigningMethod,
     cancel_signal: &AtomicBool,
 ) -> Result<(String, u64)> {
     let mut header = read_info(input_info)?;
@@ -255,8 +257,9 @@ pub fn pack_payload(
 
     // Now we can write the actual payload. With everything precomputed, this is
     // mostly just a simple copy.
-    let mut payload_writer = PayloadWriter::new(writer, header.clone(), signing_key.clone())
-        .context("Failed to write payload header")?;
+    let mut payload_writer =
+        PayloadWriter::new(writer, header.clone(), signing_key.clone(), method)
+            .context("Failed to write payload header")?;
 
     while payload_writer
         .begin_next_operation()
@@ -307,7 +310,7 @@ fn pack_subcommand(
     cli: &PackCli,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let signing_key = load_key(&cli.key)?;
+    let (signing_key, method) = load_key(&cli.key)?;
 
     let mut writer = open_raw_writer(&cli.output)?;
 
@@ -317,6 +320,7 @@ fn pack_subcommand(
         &cli.input_images,
         &mut writer,
         &signing_key,
+        method,
         cancel_signal,
     )?;
 
@@ -336,13 +340,13 @@ fn repack_subcommand(
     cli: &RepackCli,
     cancel_signal: &AtomicBool,
 ) -> Result<()> {
-    let signing_key = load_key(&cli.key)?;
+    let (signing_key, method) = load_key(&cli.key)?;
 
     let (mut reader, header) = open_reader(&cli.input)?;
 
     info!("Generating new OTA payload");
 
-    let mut payload_writer = open_writer(&cli.output, header.clone(), signing_key)?;
+    let mut payload_writer = open_writer(&cli.output, header.clone(), signing_key, method)?;
 
     while payload_writer
         .begin_next_operation()
@@ -435,6 +439,21 @@ struct KeyGroup {
     /// <program> <algo> <public key> [file <pass file>|env <pass env>]
     #[arg(long, value_name = "PROGRAM", value_parser)]
     signing_helper: Option<PathBuf>,
+
+    /// Preferred signing method.
+    ///
+    /// Defaults to deterministic signatures. If the non-deterministic mode is
+    /// selected, but is not supported for a signing operation, then it will
+    /// fall back to deterministic signatures.
+    ///
+    /// For RSA, non-deterministic signatures are never supported because
+    /// Android uses the PKCS#1 v1.5 scheme.
+    ///
+    /// For ML-DSA, non-deterministic signatures use the hedged variant. This
+    /// can help reduce the impact of broken RNGs and side channel attacks at
+    /// the expense of the output no longer being byte-for-byte reproducible.
+    #[arg(long, default_value_t, conflicts_with = "signing_helper")]
+    signing_method: SigningMethod,
 }
 
 /// Unpack a payload binary.

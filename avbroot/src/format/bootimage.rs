@@ -17,7 +17,7 @@ use zerocopy::{FromBytes, IntoBytes, little_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
-    crypto::SigningPrivateKey,
+    crypto::{SigningMethod, SigningPrivateKey},
     format::{
         avb::{self, Descriptor, Header},
         padding::{self, ZeroPadding},
@@ -883,7 +883,7 @@ impl BootImageV3Through4 {
     /// Sign the boot image with a legacy VTS signature. Returns true if the
     /// image was successfully signed. Returns false if there's no vbmeta
     /// structure to sign in [`V4Extra::signature`].
-    pub fn sign(&mut self, key: &SigningPrivateKey) -> Result<bool> {
+    pub fn sign(&mut self, key: &SigningPrivateKey, method: SigningMethod) -> Result<bool> {
         let mut context = Context::new(&ring::digest::SHA256);
         let image_size;
 
@@ -939,7 +939,7 @@ impl BootImageV3Through4 {
 
         descriptor.image_size = image_size;
         descriptor.root_digest = context.finish().as_ref().to_vec();
-        signature.sign(key).map_err(Error::VtsAvbSign)?;
+        signature.sign(key, method).map_err(Error::VtsAvbSign)?;
 
         Ok(true)
     }

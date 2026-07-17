@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use tracing::{Span, debug_span, info, warn};
 
 use crate::{
-    crypto::{self, PassphraseSource, SigningPrivateKey, SigningPublicKey},
+    crypto::{self, PassphraseSource, SigningMethod, SigningPrivateKey, SigningPublicKey},
     format::avb::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
         HashTreeDescriptor, Header, KernelCmdlineDescriptor,
@@ -442,7 +442,7 @@ fn sign_or_clear(info: &mut AvbInfo, orig_header: &Header, key_group: &KeyGroup)
                 .set_algo_for_key(&signing_key)
                 .context("Failed to set signature algorithm")?;
             info.header
-                .sign(&signing_key)
+                .sign(&signing_key, key_group.signing_method)
                 .context("Failed to sign new AVB header")?;
         }
         SignAction::Clear => {
@@ -1058,6 +1058,21 @@ struct KeyGroup {
     /// <program> <algo> <public key> [file <pass file>|env <pass env>]
     #[arg(long, value_name = "PROGRAM", value_parser)]
     signing_helper: Option<PathBuf>,
+
+    /// Preferred signing method.
+    ///
+    /// Defaults to deterministic signatures. If the non-deterministic mode is
+    /// selected, but is not supported for a signing operation, then it will
+    /// fall back to deterministic signatures.
+    ///
+    /// For RSA, non-deterministic signatures are never supported because
+    /// Android uses the PKCS#1 v1.5 scheme.
+    ///
+    /// For ML-DSA, non-deterministic signatures use the hedged variant. This
+    /// can help reduce the impact of broken RNGs and side channel attacks at
+    /// the expense of the output no longer being byte-for-byte reproducible.
+    #[arg(long, default_value_t, conflicts_with = "signing_helper")]
+    signing_method: SigningMethod,
 }
 
 /// Unpack an AVB image.

@@ -30,7 +30,7 @@ use zerocopy::{FromBytes, IntoBytes, big_endian};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
-    crypto::{self, SignatureAlgorithm, SigningContent, SigningPrivateKey},
+    crypto::{self, SignatureAlgorithm, SigningContent, SigningMethod, SigningPrivateKey},
     protobuf::chromeos_update_engine::{
         DeltaArchiveManifest, Extent, InstallOperation, PartitionInfo, PartitionUpdate, Signatures,
         install_operation::Type, signatures::Signature,
@@ -221,9 +221,14 @@ impl<R: Read> FromReader<R> for PayloadHeader {
 }
 
 /// Sign `digest` with `key` and return a [`Signatures`] protobuf struct.
-fn sign_digest(digest: &[u8], key: &SigningPrivateKey) -> Result<Signatures> {
+fn sign_digest(
+    digest: &[u8],
+    key: &SigningPrivateKey,
+    method: SigningMethod,
+) -> Result<Signatures> {
     let digest_signed = key
         .sign(
+            method,
             SignatureAlgorithm::Sha256WithRsa,
             SigningContent::Digest(digest),
         )
@@ -341,6 +346,7 @@ pub struct PayloadWriter<W: Write> {
     /// Includes signatures (hashes are for properties file).
     h_full: Context,
     key: SigningPrivateKey,
+    method: SigningMethod,
 }
 
 /// Write data to a writer and one or more hashers.
@@ -363,7 +369,12 @@ impl<W: Write> PayloadWriter<W> {
     /// fields are ignored and internally recomputed to guarantee that there are
     /// no gaps. All partitions' install operation data is written to the blob
     /// section in order.
-    pub fn new(mut inner: W, mut header: PayloadHeader, key: SigningPrivateKey) -> Result<Self> {
+    pub fn new(
+        mut inner: W,
+        mut header: PayloadHeader,
+        key: SigningPrivateKey,
+        method: SigningMethod,
+    ) -> Result<Self> {
         let mut blob_size = 0;
 
         // The blob must contain all data in sequential order with no gaps.
@@ -383,6 +394,7 @@ impl<W: Write> PayloadWriter<W> {
         let dummy_sig = sign_digest(
             ring::digest::digest(&ring::digest::SHA256, b"").as_ref(),
             &key,
+            method,
         )?;
         let dummy_sig_size = dummy_sig.encoded_len();
 
@@ -415,7 +427,7 @@ impl<W: Write> PayloadWriter<W> {
         // Sign metadata (header + manifest) hash. The signature is not included
         // in the payload hash.
         let metadata_hash = h_partial.clone().finish();
-        let metadata_sig = sign_digest(metadata_hash.as_ref(), &key)?;
+        let metadata_sig = sign_digest(metadata_hash.as_ref(), &key, method)?;
         let metadata_sig_raw = metadata_sig.encode_to_vec();
         write_hash!(inner, [h_full], &metadata_sig_raw)
             .map_err(|e| Error::DataWrite("metadata_signatures", e))?;
@@ -432,6 +444,7 @@ impl<W: Write> PayloadWriter<W> {
             h_partial,
             h_full,
             key,
+            method,
         })
     }
 
@@ -444,7 +457,7 @@ impl<W: Write> PayloadWriter<W> {
     pub fn finish(mut self) -> Result<(W, PayloadHeader, String)> {
         // Append payload signature.
         let payload_partial_hash = self.h_partial.clone().finish();
-        let payload_sig = sign_digest(payload_partial_hash.as_ref(), &self.key)?;
+        let payload_sig = sign_digest(payload_partial_hash.as_ref(), &self.key, self.method)?;
         let payload_sig_raw = payload_sig.encode_to_vec();
         write_hash!(self.inner, [self.h_full], &payload_sig_raw)
             .map_err(|e| Error::DataWrite("payload_signatures", e))?;

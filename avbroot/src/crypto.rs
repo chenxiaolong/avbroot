@@ -5,6 +5,7 @@ use std::{
     borrow::Cow,
     env::{self, VarError},
     ffi::{OsStr, OsString},
+    fmt,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -12,6 +13,7 @@ use std::{
     time::Duration,
 };
 
+use clap::ValueEnum;
 use cms::{
     cert::{CertificateChoices, IssuerAndSerialNumber},
     content_info::{CmsVersion, ContentInfo},
@@ -36,7 +38,10 @@ use rand::{
     Rng, SeedableRng,
     rngs::{StdRng, SysRng},
 };
-use rsa::{Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey, pkcs1, pkcs1v15, traits::PublicKeyParts};
+use rsa::{
+    Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey, pkcs1, pkcs1v15, signature::RandomizedSigner,
+    traits::PublicKeyParts,
+};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
@@ -258,6 +263,19 @@ pub enum SigningKeyType {
 pub enum SigningContent<'a> {
     Data(&'a [u8]),
     Digest(&'a [u8]),
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub enum SigningMethod {
+    #[default]
+    Deterministic,
+    NonDeterministic,
+}
+
+impl fmt::Display for SigningMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.to_possible_value().ok_or(fmt::Error)?.get_name())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -552,7 +570,12 @@ impl SigningPrivateKey {
     ///
     /// * [`SigningContent::Data`] is supported for both RSA and ML-DSA.
     /// * [`SigningContent::Digest`] is only supported for RSA.
-    pub fn sign(&self, algo: SignatureAlgorithm, content: SigningContent) -> Result<Vec<u8>> {
+    pub fn sign(
+        &self,
+        method: SigningMethod,
+        algo: SignatureAlgorithm,
+        content: SigningContent,
+    ) -> Result<Vec<u8>> {
         let key_type = self.key_type();
 
         match self {
@@ -576,6 +599,7 @@ impl SigningPrivateKey {
                     return Err(Error::InvalidDigestLength(digest.len(), algo));
                 }
 
+                // PKCS#1 v1.5 signatures are always deterministic.
                 key.sign(scheme, &digest)
                     .map_err(|e| Error::RsaSign(Box::new(e)))
             }
@@ -588,11 +612,18 @@ impl SigningPrivateKey {
                     return Err(Error::UnsupportedMlDsaDigest);
                 };
 
-                Ok(key
-                    .try_sign(data)
-                    .map_err(Error::MlDsaSign)?
-                    .encode()
-                    .into())
+                let signature = match method {
+                    SigningMethod::Deterministic => key.try_sign(data).map_err(Error::MlDsaSign)?,
+                    SigningMethod::NonDeterministic => {
+                        let mut rng = csprng()?;
+
+                        key.expanded_key()
+                            .try_sign_with_rng(&mut rng, data)
+                            .map_err(Error::MlDsaSign)?
+                    }
+                };
+
+                Ok(signature.encode().into())
             }
             Self::MlDsa87(key) => {
                 if algo != SignatureAlgorithm::MlDsa87 {
@@ -603,14 +634,21 @@ impl SigningPrivateKey {
                     return Err(Error::UnsupportedMlDsaDigest);
                 };
 
-                Ok(key
-                    .try_sign(data)
-                    .map_err(Error::MlDsaSign)?
-                    .encode()
-                    .into())
+                let signature = match method {
+                    SigningMethod::Deterministic => key.try_sign(data).map_err(Error::MlDsaSign)?,
+                    SigningMethod::NonDeterministic => {
+                        let mut rng = csprng()?;
+
+                        key.expanded_key()
+                            .try_sign_with_rng(&mut rng, data)
+                            .map_err(Error::MlDsaSign)?
+                    }
+                };
+
+                Ok(signature.encode().into())
             }
             // sign_external() will check that the algorithm is compatible with
-            // the key.
+            // the key. The signing method is ignored.
             Self::External { .. } => self.sign_external(algo, content),
         }
     }
@@ -1011,9 +1049,11 @@ pub fn iter_cms_certs(sd: &SignedData) -> impl Iterator<Item = &Certificate> {
 pub fn cms_sign_external(
     key: &SigningPrivateKey,
     cert: &Certificate,
+    method: SigningMethod,
     digest: &[u8],
 ) -> Result<ContentInfo> {
     let signature = key.sign(
+        method,
         SignatureAlgorithm::Sha256WithRsa,
         SigningContent::Digest(digest),
     )?;

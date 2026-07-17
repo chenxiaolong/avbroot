@@ -5,7 +5,7 @@ use std::io::Cursor;
 
 use avbroot::{
     self,
-    crypto::SigningPrivateKey,
+    crypto::{SigningMethod, SigningPrivateKey},
     format::{
         avb::{AlgorithmType, Descriptor, HashDescriptor, Header},
         bootimage::{
@@ -240,7 +240,7 @@ fn round_trip_v4_vts() {
     // ML-DSA keys are not supported because the maximum size of a VTS signature
     // is 4096 bytes.
     let key = get_test_key_rsa();
-    header.sign(&key).unwrap();
+    header.sign(&key, SigningMethod::Deterministic).unwrap();
     assert_eq!(header.verify().unwrap().unwrap(), key.to_public_key());
 
     let image = BootImage::V3Through4(BootImageV3Through4 {

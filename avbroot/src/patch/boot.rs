@@ -26,7 +26,7 @@ use tracing::{Span, debug, debug_span, trace, warn};
 use x509_cert::Certificate;
 
 use crate::{
-    crypto::{self, SigningPrivateKey, SigningPublicKey},
+    crypto::{self, SigningMethod, SigningPrivateKey, SigningPublicKey},
     format::{
         avb::{self, AppendedDescriptorMut, Footer, Header},
         bootimage::{self, BootImage, BootImageExt, RamdiskMeta},
@@ -1302,6 +1302,7 @@ fn save_boot_image(
     writer: &mut dyn WriteSeek,
     info: &mut BootImageInfo,
     key: &SigningPrivateKey,
+    method: SigningMethod,
 ) -> Result<()> {
     let AppendedDescriptorMut::Hash(descriptor) = info
         .header
@@ -1329,7 +1330,7 @@ fn save_boot_image(
         info.header
             .set_algo_for_key(key)
             .map_err(Error::AvbUpdate)?;
-        info.header.sign(key).map_err(Error::AvbUpdate)?;
+        info.header.sign(key, method).map_err(Error::AvbUpdate)?;
     }
 
     avb::write_appended_image(
@@ -1391,6 +1392,7 @@ pub fn patch_boot_images<'a>(
     names: &[&'a str],
     opener: &(dyn BootImageOpener + Sync),
     key: &SigningPrivateKey,
+    method: SigningMethod,
     patchers: &[Box<dyn BootImagePatch + Sync>],
     cancel_signal: &AtomicBool,
 ) -> TargetsResult<HashSet<&'a str>> {
@@ -1458,7 +1460,8 @@ pub fn patch_boot_images<'a>(
             .open_replacement(name)
             .map_err(|e| TargetsError::Open(name.to_owned(), e))?;
 
-        save_boot_image(&mut writer, info, key).map_err(|e| TargetsError::Save(name.to_owned(), e))
+        save_boot_image(&mut writer, info, key, method)
+            .map_err(|e| TargetsError::Save(name.to_owned(), e))
     })?;
 
     Ok(groups.keys().copied().collect())

@@ -22,7 +22,7 @@ use x509_cert::Certificate;
 
 use crate::{
     cli::payload,
-    crypto::{self, PassphraseSource, SigningPrivateKey},
+    crypto::{self, PassphraseSource, SigningMethod, SigningPrivateKey},
     format::{
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         payload::PayloadHeader,
@@ -144,7 +144,7 @@ fn display_info(quiet: bool, info: &OtaInfo) {
     }
 }
 
-fn load_key(group: &KeyGroup) -> Result<(SigningPrivateKey, Certificate)> {
+fn load_key(group: &KeyGroup) -> Result<(SigningPrivateKey, Certificate, SigningMethod)> {
     let source = PassphraseSource::new(
         &group.key,
         group.pass_file.as_deref(),
@@ -168,7 +168,7 @@ fn load_key(group: &KeyGroup) -> Result<(SigningPrivateKey, Certificate)> {
     let cert = crypto::read_pem_cert_file(&group.cert)
         .with_context(|| format!("Failed to load certificate: {:?}", group.cert))?;
 
-    Ok((signing_key, cert))
+    Ok((signing_key, cert, group.signing_method))
 }
 
 fn start_entry<'a>(
@@ -240,6 +240,7 @@ fn add_otacert_entry(
 fn finalize_ota(
     key: &SigningPrivateKey,
     cert: &Certificate,
+    method: SigningMethod,
     mut zip_writer: ZipArchiveWriter<SigningWriter<File>>,
     zip_mode: ZipMode,
     metadata_entries: &mut Vec<ZipEntry>,
@@ -267,7 +268,7 @@ fn finalize_ota(
         .finish()
         .context("Failed to finalize output zip")?;
     let mut raw_writer = signing_writer
-        .finish(key, cert, cancel_signal)
+        .finish(key, cert, method, cancel_signal)
         .context("Failed to sign output zip")?;
 
     raw_writer.rewind().context("Failed to seek output zip")?;
@@ -340,7 +341,7 @@ fn unpack_subcommand(zip_cli: &ZipCli, cli: &UnpackCli, cancel_signal: &AtomicBo
 }
 
 fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) -> Result<()> {
-    let (signing_key, cert) = load_key(&cli.key)?;
+    let (signing_key, cert, method) = load_key(&cli.key)?;
     let mut info = read_info(&cli.input_info)?;
     let mut zip_writer = open_writer(&cli.output, cli.zip_mode.zip_mode)?;
 
@@ -383,6 +384,7 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
                 &cli.input_payload_images,
                 &mut data_writer,
                 &signing_key,
+                method,
                 cancel_signal,
             )?;
 
@@ -424,6 +426,7 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
     finalize_ota(
         &signing_key,
         &cert,
+        method,
         zip_writer,
         cli.zip_mode.zip_mode,
         &mut metadata_entries,
@@ -446,7 +449,7 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
 }
 
 fn repack_subcommand(zip_cli: &ZipCli, cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> {
-    let (signing_key, cert) = load_key(&cli.key)?;
+    let (signing_key, cert, method) = load_key(&cli.key)?;
     let (zip_reader, mut metadata, input_entries) = open_reader(&cli.input)?;
     let mut zip_writer = open_writer(&cli.output, cli.zip_mode.zip_mode)?;
 
@@ -487,6 +490,7 @@ fn repack_subcommand(zip_cli: &ZipCli, cli: &RepackCli, cancel_signal: &AtomicBo
     finalize_ota(
         &signing_key,
         &cert,
+        method,
         zip_writer,
         cli.zip_mode.zip_mode,
         &mut metadata_entries,
@@ -555,6 +559,21 @@ struct KeyGroup {
     /// <program> <algo> <public key> [file <pass file>|env <pass env>]
     #[arg(long, value_name = "PROGRAM", value_parser)]
     signing_helper: Option<PathBuf>,
+
+    /// Preferred signing method.
+    ///
+    /// Defaults to deterministic signatures. If the non-deterministic mode is
+    /// selected, but is not supported for a signing operation, then it will
+    /// fall back to deterministic signatures.
+    ///
+    /// For RSA, non-deterministic signatures are never supported because
+    /// Android uses the PKCS#1 v1.5 scheme.
+    ///
+    /// For ML-DSA, non-deterministic signatures use the hedged variant. This
+    /// can help reduce the impact of broken RNGs and side channel attacks at
+    /// the expense of the output no longer being byte-for-byte reproducible.
+    #[arg(long, default_value_t, conflicts_with = "signing_helper")]
+    signing_method: SigningMethod,
 }
 
 #[derive(Debug, Args)]

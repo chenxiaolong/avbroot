@@ -15,7 +15,7 @@ use tracing::{Span, debug, debug_span, trace};
 use x509_cert::Certificate;
 
 use crate::{
-    crypto::SigningPrivateKey,
+    crypto::{SigningMethod, SigningPrivateKey},
     format::{
         avb::{self, AppendedDescriptorMut, Footer},
         ota,
@@ -114,6 +114,7 @@ pub fn patch_system_image(
     raw_file: &(dyn ReadWriteAt + Sync),
     certificate: &Certificate,
     key: &SigningPrivateKey,
+    method: SigningMethod,
     cancel_signal: &AtomicBool,
 ) -> Result<(Vec<Range<u64>>, Vec<Range<u64>>)> {
     // This must be a multiple of normal filesystem block sizes (eg. 4 KiB).
@@ -199,7 +200,7 @@ pub fn patch_system_image(
     if !header.public_key.is_empty() {
         debug!("Signing system image");
         header.set_algo_for_key(key).map_err(Error::AvbUpdate)?;
-        header.sign(key).map_err(Error::AvbUpdate)?;
+        header.sign(key, method).map_err(Error::AvbUpdate)?;
     }
 
     let file = UserPosFile::new(raw_file);

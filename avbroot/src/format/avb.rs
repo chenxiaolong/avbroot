@@ -22,7 +22,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     crypto::{
-        self, SignatureAlgorithm, SigningContent, SigningKeyType, SigningPrivateKey,
+        self, SignatureAlgorithm, SigningContent, SigningKeyType, SigningMethod, SigningPrivateKey,
         SigningPublicKey,
     },
     escape,
@@ -266,7 +266,12 @@ impl AlgorithmType {
         algo.hash(data)
     }
 
-    pub fn sign(self, key: &SigningPrivateKey, data: &[u8]) -> Result<Vec<u8>> {
+    pub fn sign(
+        self,
+        key: &SigningPrivateKey,
+        method: SigningMethod,
+        data: &[u8],
+    ) -> Result<Vec<u8>> {
         let Some(algo) = self.to_signature_algorithm() else {
             return if self == Self::None {
                 Ok(vec![])
@@ -275,7 +280,7 @@ impl AlgorithmType {
             };
         };
 
-        key.sign(algo, SigningContent::Data(data))
+        key.sign(method, algo, SigningContent::Data(data))
             .map_err(Error::HeaderSign)
     }
 
@@ -1731,7 +1736,7 @@ impl Header {
         self.public_key_metadata.clear();
     }
 
-    pub fn sign(&mut self, key: &SigningPrivateKey) -> Result<()> {
+    pub fn sign(&mut self, key: &SigningPrivateKey, method: SigningMethod) -> Result<()> {
         let key_raw = encode_public_key(&key.to_public_key())?;
 
         if key_raw.len() != self.algorithm_type.public_key_len() {
@@ -1750,7 +1755,7 @@ impl Header {
         let without_auth = without_auth_writer.into_inner();
 
         let hash = self.algorithm_type.hash(&without_auth);
-        let signature = self.algorithm_type.sign(key, &without_auth)?;
+        let signature = self.algorithm_type.sign(key, method, &without_auth)?;
 
         self.hash = hash;
         self.signature = signature;
