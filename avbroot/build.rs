@@ -74,6 +74,7 @@ fn main() {
         .field_attribute(c!(CUE_DAM, ".signatures_size"), SERDE_SKIP)
         .field_attribute(c!(CUE_PU, ".operations"), SERDE_SKIP)
         .field_attribute(c!(CUE_PU, ".estimate_cow_size"), SERDE_SKIP)
+        .field_attribute(c!(CUE_PU, ".estimate_op_count_max"), SERDE_SKIP)
         .field_attribute(c!(CUE_PU, ".old_partition_info"), SERDE_SKIP)
         .field_attribute(c!(CUE_PU, ".new_partition_info"), SERDE_SKIP)
         // Don't serialize AVB 1.0 fields.
