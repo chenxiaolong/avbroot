@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix `estimate_op_count_max` not being omitted in `payload.toml` when running `avbroot payload unpack` ([Issue #631], [PR #632])
+
 ### Version 3.32.0
 
 * Add support for post-quantum ML-DSA keys for AVB signing ([Issue #585], [PR #628], [PR #629])
@@ -526,6 +530,7 @@ Behind-the-scenes changes:
 [Issue #603]: https://github.com/chenxiaolong/avbroot/issues/603
 [Issue #607]: https://github.com/chenxiaolong/avbroot/issues/607
 [Issue #610]: https://github.com/chenxiaolong/avbroot/issues/610
+[Issue #631]: https://github.com/chenxiaolong/avbroot/issues/631
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -770,3 +775,4 @@ Behind-the-scenes changes:
 [PR #628]: https://github.com/chenxiaolong/avbroot/pull/628
 [PR #629]: https://github.com/chenxiaolong/avbroot/pull/629
 [PR #630]: https://github.com/chenxiaolong/avbroot/pull/630
+[PR #632]: https://github.com/chenxiaolong/avbroot/pull/632
