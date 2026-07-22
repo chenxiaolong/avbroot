@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.32.1
 
 * Fix `estimate_op_count_max` not being omitted in `payload.toml` when running `avbroot payload unpack` ([Issue #631], [PR #632])
 
