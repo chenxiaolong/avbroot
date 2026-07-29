@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Include full kernel version in error message when using `--prepatched` if KMI version does not match ([Issue #633], [PR #634])
+
 ### Version 3.32.1
 
 * Fix `estimate_op_count_max` not being omitted in `payload.toml` when running `avbroot payload unpack` ([Issue #631], [PR #632])
@@ -531,6 +535,7 @@ Behind-the-scenes changes:
 [Issue #607]: https://github.com/chenxiaolong/avbroot/issues/607
 [Issue #610]: https://github.com/chenxiaolong/avbroot/issues/610
 [Issue #631]: https://github.com/chenxiaolong/avbroot/issues/631
+[Issue #633]: https://github.com/chenxiaolong/avbroot/issues/633
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -776,3 +781,4 @@ Behind-the-scenes changes:
 [PR #629]: https://github.com/chenxiaolong/avbroot/pull/629
 [PR #630]: https://github.com/chenxiaolong/avbroot/pull/630
 [PR #632]: https://github.com/chenxiaolong/avbroot/pull/632
+[PR #634]: https://github.com/chenxiaolong/avbroot/pull/634
