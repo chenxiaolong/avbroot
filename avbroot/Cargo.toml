@@ -11,7 +11,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow = "1.0.75"
-base64 = "0.22.1"
+base64 = "0.23.0"
 bitflags = { version = "2.4.1", features = ["serde"] }
 bstr = "1.6.2"
 bzip2 = "0.6.0"
@@ -30,7 +30,7 @@ flate2 = { version = "1.0.29", features = ["zlib-rs"] }
 gf256 = { version = "0.3.0", features = ["rs"] }
 hex = { version = "0.4.3", features = ["serde"] }
 lz4_flex = "0.14.0"
-lzma-rust2 = "0.16.1"
+lzma-rust2 = "0.18.0"
 memchr = "2.6.0"
 ml-dsa = { version = "0.1.1", features = ["rand_core"] }
 num-traits = "0.2.16"
