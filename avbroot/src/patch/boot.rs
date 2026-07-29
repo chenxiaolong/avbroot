@@ -1005,6 +1005,12 @@ impl BootImagePatch for DsuPubKeyPatcher {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum KmiVersion {
+    Valid(String),
+    Invalid(String),
+}
+
 /// Replace the boot image with a prepatched boot image if it is compatible.
 ///
 /// An image is compatible if all the non-size-related header fields are
@@ -1021,8 +1027,8 @@ impl PrepatchedImagePatcher {
     const MAX_LEVEL: u8 = 2;
 
     // We compile without Unicode support so we have to use [0-9] instead of \d.
-    const VERSION_REGEX: &'static str =
-        r"Linux version ([0-9]+\.[0-9]+).[0-9]+-(android[0-9]+)-([0-9]+)-";
+    const VERSION_REGEX: &'static str = r"Linux version ([^[[:space:]]]+)[[:space:]]";
+    const KMI_REGEX: &'static str = r"([0-9]+\.[0-9]+).[0-9]+-(android[0-9]+)-([0-9]+)-";
 
     pub fn new(prepatched: &Path, fatal_level: u8) -> Self {
         Self {
@@ -1039,7 +1045,7 @@ impl PrepatchedImagePatcher {
         BootImage::from_reader(reader).map_err(Error::BootImageLoad)
     }
 
-    fn get_kmi_version(kernel: &[u8]) -> Result<Option<String>> {
+    fn get_kmi_version(kernel: &[u8]) -> Result<Option<KmiVersion>> {
         let mut decompressed = vec![];
         {
             let raw_reader = Cursor::new(kernel);
@@ -1050,13 +1056,22 @@ impl PrepatchedImagePatcher {
                 .map_err(Error::KernelRead)?;
         }
 
-        let regex = Regex::new(Self::VERSION_REGEX).unwrap();
-        let Some(captures) = regex.captures(&decompressed) else {
+        let version_regex = Regex::new(Self::VERSION_REGEX).unwrap();
+        let Some(version_captures) = version_regex.captures(&decompressed) else {
             return Ok(None);
         };
 
+        let version = version_captures.get(1).unwrap();
+
+        let kmi_regex = Regex::new(Self::KMI_REGEX).unwrap();
+        let Some(kmi_captures) = kmi_regex.captures(version.as_bytes()) else {
+            return Ok(Some(KmiVersion::Invalid(
+                String::from_utf8_lossy(version.as_bytes()).into_owned(),
+            )));
+        };
+
         let kmi_version = util::join(
-            captures
+            kmi_captures
                 .iter()
                 // Capture #0 is the entire match.
                 .skip(1)
@@ -1067,7 +1082,7 @@ impl PrepatchedImagePatcher {
             "-",
         );
 
-        Ok(Some(kmi_version))
+        Ok(Some(KmiVersion::Valid(kmi_version)))
     }
 }
 
