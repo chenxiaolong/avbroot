@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Include full kernel version in error message when using `--prepatched` if KMI version does not match ([Issue #633], [PR #634])
+* Update dependencies ([PR #635])
 
 ### Version 3.32.1
 
@@ -782,3 +783,4 @@ Behind-the-scenes changes:
 [PR #630]: https://github.com/chenxiaolong/avbroot/pull/630
 [PR #632]: https://github.com/chenxiaolong/avbroot/pull/632
 [PR #634]: https://github.com/chenxiaolong/avbroot/pull/634
+[PR #635]: https://github.com/chenxiaolong/avbroot/pull/635
