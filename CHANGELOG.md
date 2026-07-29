@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.32.2
 
 * Include full kernel version in error message when using `--prepatched` if KMI version does not match ([Issue #633], [PR #634])
 * Update dependencies ([PR #635])
