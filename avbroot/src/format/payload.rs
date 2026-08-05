@@ -76,6 +76,8 @@ pub enum Error {
     },
     #[error("Unsupported partition operation: {0:?}")]
     UnsupportedOperation(Type),
+    #[error("Unknown partition operation type: {0}")]
+    UnknownOperation(i32),
     #[error("Expected sha256 {expected:?}, but have {actual:?}")]
     MismatchedDigest {
         expected: Option<String>,
@@ -769,8 +771,13 @@ pub fn apply_operation(
             .checked_mul(block_size.into())
             .ok_or(Error::IntOverflow("out_data_length"))?;
 
+        // prost maps an unrecognized value to the default when using the
+        // op.r#type() helper function, so an unknown operation would otherwise
+        // be treated as REPLACE and its data written out verbatim.
+        let op_type = Type::try_from(op.r#type).map_err(|_| Error::UnknownOperation(op.r#type))?;
+
         let error_fn = |e: io::Error| Error::OperationApply {
-            op_type: op.r#type(),
+            op_type,
             start_block,
             num_blocks,
             source: e,
@@ -780,7 +787,7 @@ pub fn apply_operation(
 
         let mut hasher = Context::new(&ring::digest::SHA256);
 
-        match op.r#type() {
+        match op_type {
             // Handle ZERO/DISCARD specially since they don't require access to
             // the payload blob.
             Type::Zero | Type::Discard => {
@@ -836,7 +843,7 @@ pub fn apply_operation(
 
                         (_, hasher) = decoder.into_inner().finish();
                     }
-                    _ => return Err(Error::UnsupportedOperation(op.r#type())),
+                    _ => return Err(Error::UnsupportedOperation(op_type)),
                 }
             }
         }
@@ -844,7 +851,7 @@ pub fn apply_operation(
         let expected_digest = op.data_sha256_hash.as_deref();
         let digest = hasher.finish();
 
-        if expected_digest != Some(digest.as_ref()) && op.r#type() != Type::Zero {
+        if expected_digest != Some(digest.as_ref()) && op_type != Type::Zero {
             return Err(Error::MismatchedDigest {
                 expected: expected_digest.map(hex::encode),
                 actual: hex::encode(digest.as_ref()),
