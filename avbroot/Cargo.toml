@@ -48,6 +48,7 @@ regex = { version = "1.9.4", default-features = false, features = ["perf", "std"
 # https://github.com/RustCrypto/hashes/issues/327
 ring = "0.17.14"
 rsa = { version = "0.10.0-rc.18", features = ["sha1", "sha2"] }
+ruzstd = "0.9.0"
 scrypt = { version = "0.12.0", features = ["phc"] }
 serde = { version = "1.0.188", features = ["derive"] }
 sha1 = "0.11.0"

@@ -23,6 +23,7 @@ use rayon::{
     prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
 };
 use ring::digest::{Context, Digest};
+use ruzstd::decoding::StreamingDecoder as ZstdDecoder;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use x509_cert::Certificate;
@@ -838,6 +839,17 @@ pub fn apply_operation(
                         let limited_reader = (&mut *reader).take(data_length);
                         let hashing_reader = HashingReader::new(limited_reader, hasher);
                         let mut decoder = XzReader::new(hashing_reader, false);
+                        stream::copy(&mut decoder, &mut *writer, cancel_signal)
+                            .map_err(error_fn)?;
+
+                        (_, hasher) = decoder.into_inner().finish();
+                    }
+                    Type::ReplaceZstd => {
+                        // No Write API, so limit the reader and read till EOF.
+                        let limited_reader = (&mut *reader).take(data_length);
+                        let hashing_reader = HashingReader::new(limited_reader, hasher);
+                        let mut decoder = ZstdDecoder::new(hashing_reader)
+                            .map_err(|e| error_fn(io::Error::other(e)))?;
                         stream::copy(&mut decoder, &mut *writer, cancel_signal)
                             .map_err(error_fn)?;
 
