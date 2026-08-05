@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Add support for zstd-compressed payload chunks introduced in Android 17 (payload minor version 10) ([PR #637])
+
 ### Version 3.32.2
 
 * Include full kernel version in error message when using `--prepatched` if KMI version does not match ([Issue #633], [PR #634])
@@ -784,3 +788,4 @@ Behind-the-scenes changes:
 [PR #632]: https://github.com/chenxiaolong/avbroot/pull/632
 [PR #634]: https://github.com/chenxiaolong/avbroot/pull/634
 [PR #635]: https://github.com/chenxiaolong/avbroot/pull/635
+[PR #637]: https://github.com/chenxiaolong/avbroot/pull/637
