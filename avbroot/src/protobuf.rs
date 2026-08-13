@@ -17,6 +17,10 @@ pub mod chromeos_update_engine {
     include!(concat!(env!("OUT_DIR"), "/chromeos_update_engine.rs"));
 }
 
+pub mod recovery_update_verifier {
+    include!(concat!(env!("OUT_DIR"), "/recovery_update_verifier.rs"));
+}
+
 /// Implement [`serde::Serialize`] and [`serde::Deserialize`] for prost enum
 /// type and create a bridge to use with `#[serde(with = "...")]` since enum
 /// fields are stored as their underlying repr. `$type` must be a fully

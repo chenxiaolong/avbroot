@@ -32,12 +32,12 @@ data.type = "vbmeta"
 data.deps = ["boot", "system"]
 
 [profile.ml_dsa_test.hashes_streaming]
-original = "05646f0446bb0f186da6826488bdb116a76b3ae9d9878e023ea34ade92e44ec8"
-patched = "9dc678f678e259186bea9033017ec1785d26d0c1133e0d347791d5cc8562dbd2"
+original = "15722553615f46a197efcdf8545b6317425d18b4fc1a815a2f422a3b9ba55f35"
+patched = "9972df9a958e971831308111b1023a40e7a431eddd95b68f61b342ba2b69a5e4"
 
 [profile.ml_dsa_test.hashes_seekable]
-original = "e5a862ab4a8b4e78604affbb288b2a098351fa1ab9fbebc5bff069eac6d1a6f7"
-patched = "5306c4380e4d43646839c882f4e3e9a36d575f4960df997561cb3c6ff8b1447e"
+original = "f43cb8369d36c8fc9cef2161a5f5860eb922feaab8ad597afee875b5758ff30d"
+patched = "cd2ebe971b1cce8dc8dea2de097bfaf2cbfd75d6f7d7b9b8bd5eee443bf783f9"
 
 # Google Pixel 7 Pro
 # What's unique: init_boot (boot v4) + vendor_boot (vendor v4)
@@ -85,12 +85,12 @@ data.version = "vendor_v4"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v4_gki.hashes_streaming]
-original = "ea96196191e3a4133db4aff45d47aa3468514e29e0a724faac8081cbf4adf808"
-patched = "6b88761a7927ea4a3fdd953cbb7ffb78361e51648f5ab7a34b0dffad2bc163d5"
+original = "7dd428385b1ceadd3246f360ba674234bc5412da73a2f0667fed8d7a11f8d87b"
+patched = "c28a7f052569199ae23a89459563604a3cb0da26ad85088d87df0b1198c2d3ad"
 
 [profile.pixel_v4_gki.hashes_seekable]
-original = "f6615ae355eba38689d24aa535981d09175d4832e7c65c04cdd89aa95d21f09d"
-patched = "e9c0b85a0f9384d3e022f3c83a4653511cd03bfbfa26e660b35cf52986dec888"
+original = "67de7a7992c8bba9af4467133923a67175b79302a6787a0b5b2ccf48bcf327af"
+patched = "77a17bc3bdbfb892ee2757eab044c4ef93b55aefdbefbcb1dc4c133197213cca"
 
 # Google Pixel 6a
 # What's unique: boot (boot v4, no ramdisk) + vendor_boot (vendor v4, 2 ramdisks)
@@ -132,12 +132,12 @@ data.version = "vendor_v4"
 data.ramdisks = [["init", "otacerts", "first_stage", "dsu_key_dir"], ["dlkm"]]
 
 [profile.pixel_v4_non_gki.hashes_streaming]
-original = "cb2a2e406d2b4c68c8a38f819256a10ada0ed5a4732822bec35bdf7bcdc458eb"
-patched = "45cbe96e01b8b2e3ba5e4a2c990e7ff08bee285316a4a7a314aab3ffddf27d0d"
+original = "c364bf151386d4e29801ad26dfd8fe90c0dd3b3175169d3c24ad01a5dca4256f"
+patched = "b870a0f5bfc8b94f7b98a9eefebe856880319a043979aa109c8e8d8aa466a4cb"
 
 [profile.pixel_v4_non_gki.hashes_seekable]
-original = "9450c212c34fe55453b52345c7cc22f72397dc80d9ddc792eafc20b461c2afc9"
-patched = "111fdfae91977d80cd141f6c3dc69f3af45bb7fcdf3e2e442bc3f0ad5fa77faa"
+original = "86712e2eefaf3e2c515d06dbbc71b2460f62077b0047fb113ce99d801028b466"
+patched = "024bd728319fd1c773758228f61a10b823b803abc1a449b40eea24a4c7d27453"
 
 # Google Pixel 4a 5G
 # What's unique: boot (boot v3) + vendor_boot (vendor v3)
@@ -179,12 +179,12 @@ data.version = "vendor_v3"
 data.ramdisks = [["otacerts", "first_stage", "dsu_key_dir"]]
 
 [profile.pixel_v3.hashes_streaming]
-original = "4b864b906a13ec98b1d6c3440a5eca7404ec63d073080e80a3b84afabcbd2fa2"
-patched = "cdb9f92e357d8fdf43640704cf7c73917f026e0f759991871ccbab4bfd8c303b"
+original = "91d705060257f24f45b8a1dc3e38fd04b228482f8eaaba4969aa99fa3cd40289"
+patched = "6957f9438e30d7b428d9d97fc43e8a5e41610f07148f27126a5f33333a8766b3"
 
 [profile.pixel_v3.hashes_seekable]
-original = "e0e93ee11de56992f3a5f543858c1d11858b4deb76a91a4caf4fb0f3f34be855"
-patched = "bd57432a97feb62c5e4116f0d5bc3b5db61dd46ffa6e436403d197f091a19a55"
+original = "7ee0113fcf769bf522b960fc3dbb605122e73144246d0ce62c5d95933b49ba12"
+patched = "8e0d4c8452900f4eedf53e301b37070fbdfe5fc8b87e3fcf122cf2c916935005"
 
 # Google Pixel 4a
 # What's unique: boot (boot v2)
@@ -215,9 +215,9 @@ data.type = "vbmeta"
 data.deps = ["system"]
 
 [profile.pixel_v2.hashes_streaming]
-original = "abc0ad7f80020018101437c2494d6564a877df663d208a123267fc100734c175"
-patched = "deea7ebf412d413743f14792fbf5605dea1a2a099114b33b9e05d464d90e1228"
+original = "eef2fd21cb50e7608ba1b81aceee415d4caeb52656236d664b740a9d38094e20"
+patched = "e64b20f0bc2479600d3610f88022cb02b1d51a7cb7c2436df3dde2feb3ee537d"
 
 [profile.pixel_v2.hashes_seekable]
-original = "57d4ac5ab7d362a593f3c02f3d2044b5400c10db0f732741a2d18e025d4231ec"
-patched = "71f49a27c801b837a219927430b41ba37126084d88d141485263a011d2fb9d70"
+original = "86c11eceb0f50acd29a7ea065367d1380ed78c59a9d0674fde3115fb16b9a8f1"
+patched = "821af5e44cf3ab04106d40cd7f4a52a137be9bc68ad17bddf95da9c9ca444f0f"

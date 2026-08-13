@@ -2032,12 +2032,15 @@ impl<R: Read> FromReader<R> for Footer {
             return Err(Error::InvalidFooterMagic(raw_footer.magic));
         }
 
+        let vbmeta_size = util::check_bounds(raw_footer.vbmeta_size.get(), ..=HEADER_MAX_SIZE)
+            .map_err(|e| Error::IntOutOfBounds("Footer::vbmeta_size", e))?;
+
         let footer = Self {
             version_major: raw_footer.version_major.get(),
             version_minor: raw_footer.version_minor.get(),
             original_image_size: raw_footer.original_image_size.get(),
             vbmeta_offset: raw_footer.vbmeta_offset.get(),
-            vbmeta_size: raw_footer.vbmeta_size.get(),
+            vbmeta_size,
             reserved: raw_footer.reserved,
         };
 
@@ -2049,6 +2052,9 @@ impl<W: Write> ToWriter<W> for Footer {
     type Error = Error;
 
     fn to_writer(&self, mut writer: W) -> Result<()> {
+        util::check_bounds(self.vbmeta_size, ..=HEADER_MAX_SIZE)
+            .map_err(|e| Error::IntOutOfBounds("Footer::vbmeta_size", e))?;
+
         let raw_footer = RawFooter {
             magic: FOOTER_MAGIC,
             version_major: self.version_major.into(),
@@ -2160,6 +2166,27 @@ pub fn decode_public_key(data: &[u8]) -> Result<SigningPublicKey> {
     }
 }
 
+/// Load the vbmeta footer from the specified reader. It is only present if the
+/// file is not a vbmeta partition image (ie. the header follows actual data).
+pub fn load_footer(mut reader: impl Read + Seek) -> Result<Footer> {
+    reader
+        .seek(SeekFrom::End(-(Footer::SIZE as i64)))
+        .map_err(|e| Error::DataRead("footer_offset", e))?;
+
+    Footer::from_reader(reader)
+}
+
+/// Load the vbmeta header from the specified reader.
+pub fn load_header(mut reader: impl Read + Seek, footer: Option<&Footer>) -> Result<Header> {
+    let vbmeta_offset = footer.map_or(0, |f| f.vbmeta_offset);
+
+    reader
+        .seek(SeekFrom::Start(vbmeta_offset))
+        .map_err(|e| Error::DataRead("vbmeta_offset", e))?;
+
+    Header::from_reader(&mut reader)
+}
+
 /// Load the vbmeta header and footer from the specified reader. A footer is
 /// present only if the file is not a vbmeta partition image (ie. the header
 /// follows actual data).
@@ -2168,22 +2195,13 @@ pub fn load_image(mut reader: impl Read + Seek) -> Result<(Header, Option<Footer
         .seek(SeekFrom::End(0))
         .map_err(|e| Error::DataRead("image_size", e))?;
 
-    reader
-        .seek(SeekFrom::End(-(Footer::SIZE as i64)))
-        .map_err(|e| Error::DataRead("footer_offset", e))?;
-
-    let footer = match Footer::from_reader(&mut reader) {
+    let footer = match load_footer(&mut reader) {
         Ok(f) => Some(f),
         Err(e @ Error::DataRead(_, _)) => return Err(e),
         Err(_) => None,
     };
 
-    let vbmeta_offset = footer.as_ref().map_or(0, |f| f.vbmeta_offset);
-
-    reader
-        .seek(SeekFrom::Start(vbmeta_offset))
-        .map_err(|e| Error::DataRead("vbmeta_offset", e))?;
-    let header = Header::from_reader(&mut reader)?;
+    let header = load_header(&mut reader, footer.as_ref())?;
 
     Ok((header, footer, image_size))
 }

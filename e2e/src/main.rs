@@ -32,6 +32,7 @@ use avbroot::{
             self, BootImage, BootImageV0Through2, BootImageV3Through4, RamdiskMeta, V1Extra,
             V2Extra, V4Extra, VendorBootImageV3Through4, VendorV4Extra,
         },
+        care_map,
         compression::{CompressedFormat, CompressedReader, CompressedWriter},
         cpio::{self, CpioEntry, CpioEntryData},
         ota::{self, SigningWriter, ZipEntry, ZipMode},
@@ -45,8 +46,9 @@ use avbroot::{
         chromeos_update_engine::{
             DeltaArchiveManifest, DynamicPartitionGroup, DynamicPartitionMetadata, PartitionUpdate,
         },
+        recovery_update_verifier::CareMap,
     },
-    stream::{self, FromReader, HashingReader, ToWriter},
+    stream::{self, FromReader, HashingReader, ToWriter, UserPosFile},
     util,
 };
 use clap::Parser;
@@ -586,15 +588,17 @@ fn create_payload(
     profile: &Profile,
     key_ota: &SigningPrivateKey,
     cancel_signal: &AtomicBool,
-) -> Result<(String, u64)> {
+) -> Result<(PayloadHeader, String, CareMap)> {
     let dynamic_partitions_names = partitions
         .iter()
         .filter(|(_, p)| matches!(&p.data, Data::DmVerity(_)))
         .map(|(n, _)| n.clone())
         .collect::<Vec<_>>();
 
+    let block_size = 4096;
     let mut payload_partitions = vec![];
     let mut compressed = BTreeMap::<&String, File>::new();
+    let mut care_map = CareMap::default();
 
     for (name, file) in inputs {
         let writer = tempfile::tempfile()
@@ -640,12 +644,18 @@ fn create_payload(
             estimate_cow_size: cow_estimate.map(|e| e.size),
             estimate_op_count_max: cow_estimate.and_then(|e| is_v3.then_some(e.num_ops)),
         });
+
+        if dynamic_partitions_names.contains(name) {
+            let partition_info =
+                care_map::generate_partition_info(&mut UserPosFile::new(file), block_size, name)?;
+            care_map.partitions.push(partition_info);
+        }
     }
 
     let header = PayloadHeader {
         version: 2,
         manifest: DeltaArchiveManifest {
-            block_size: Some(4096),
+            block_size: Some(block_size),
             signatures_offset: None,
             signatures_size: None,
             minor_version: Some(0),
@@ -721,7 +731,7 @@ fn create_payload(
         .finish()
         .context("Failed to finalize payload")?;
 
-    Ok((properties, header.blob_offset))
+    Ok((header, properties, care_map))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -761,8 +771,14 @@ fn create_ota(
     let mut entries = vec![];
     let mut properties = None;
     let mut payload_metadata_size = None;
+    let mut care_map = None;
 
-    for path in [ota::PATH_OTACERT, ota::PATH_PAYLOAD, ota::PATH_PROPERTIES] {
+    for path in [
+        ota::PATH_OTACERT,
+        ota::PATH_PAYLOAD,
+        ota::PATH_PROPERTIES,
+        ota::PATH_CARE_MAP,
+    ] {
         let (entry_writer, data_config) = zip_writer
             .new_file(path)
             .start()
@@ -771,12 +787,17 @@ fn create_ota(
         let mut data_writer = data_config.wrap(entry_writer);
 
         match path {
+            ota::PATH_CARE_MAP => {
+                data_writer
+                    .write_all(&care_map::serialize(care_map.as_ref().unwrap()))
+                    .with_context(|| format!("Failed to write care map: {path}"))?;
+            }
             ota::PATH_OTACERT => {
                 crypto::write_pem_cert(Path::new(path), &mut data_writer, cert_ota)
                     .with_context(|| format!("Failed to write entry: {path}"))?;
             }
             ota::PATH_PAYLOAD => {
-                let (p, m) = create_payload(
+                let (h, p, cm) = create_payload(
                     &mut data_writer,
                     &profile.partitions,
                     &inputs,
@@ -788,7 +809,8 @@ fn create_ota(
                 .context("Failed to create payload")?;
 
                 properties = Some(p);
-                payload_metadata_size = Some(m);
+                payload_metadata_size = Some(h.blob_offset);
+                care_map = Some(cm);
             }
             ota::PATH_PROPERTIES => {
                 data_writer

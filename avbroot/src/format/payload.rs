@@ -750,6 +750,43 @@ pub fn verify_payload(
     Ok(())
 }
 
+/// Return the output bounds of the partition operation.
+pub fn operation_out_bounds(block_size: u32, op: &InstallOperation) -> Result<Range<u64>> {
+    let first_extent = op
+        .dst_extents
+        .first()
+        .ok_or(Error::MissingField("first_extent"))?;
+    let last_extent = op
+        .dst_extents
+        .last()
+        .ok_or(Error::MissingField("last_extent"))?;
+
+    let first_start_block = first_extent
+        .start_block
+        .ok_or(Error::MissingField("first_start_block"))?;
+    let first_start_offset = first_start_block
+        .checked_mul(block_size.into())
+        .ok_or(Error::IntOverflow("first_start_offset"))?;
+
+    let last_start_block = last_extent
+        .start_block
+        .ok_or(Error::MissingField("last_start_block"))?;
+    let last_num_blocks = last_extent
+        .num_blocks
+        .ok_or(Error::MissingField("last_num_blocks"))?;
+    let last_start_offset = last_start_block
+        .checked_mul(block_size.into())
+        .ok_or(Error::IntOverflow("last_start_offset"))?;
+    let last_data_length = last_num_blocks
+        .checked_mul(block_size.into())
+        .ok_or(Error::IntOverflow("last_data_length"))?;
+    let last_end_offset = last_start_offset
+        .checked_add(last_data_length)
+        .ok_or(Error::IntOverflow("last_data_length"))?;
+
+    Ok(first_start_offset..last_end_offset)
+}
+
 /// Apply a partition operation from `reader` to `writer`.
 pub fn apply_operation(
     reader: &mut dyn ReadSeek,

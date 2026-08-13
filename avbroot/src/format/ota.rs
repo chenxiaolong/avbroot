@@ -27,14 +27,19 @@ use x509_cert::Certificate;
 use crate::{
     crypto::{self, SignatureAlgorithm, SigningContent, SigningMethod, SigningPrivateKey},
     format::{
+        care_map,
         payload::{self, PayloadHeader},
         zip::{self, ZipEntriesSafeExt, ZipFileHeaderRecordExt},
     },
-    protobuf::build::tools::releasetools::{OtaMetadata, ota_metadata::OtaType},
+    protobuf::{
+        build::tools::releasetools::{OtaMetadata, ota_metadata::OtaType},
+        recovery_update_verifier::CareMap,
+    },
     stream::{self, FromReader, HashingReader, HashingWriter, ReadFixedSizeExt},
     util,
 };
 
+pub const PATH_CARE_MAP: &str = "care_map.pb";
 pub const PATH_METADATA: &str = "META-INF/com/android/metadata";
 pub const PATH_METADATA_PB: &str = "META-INF/com/android/metadata.pb";
 pub const PATH_OTACERT: &str = "META-INF/com/android/otacert";
@@ -92,6 +97,8 @@ pub enum Error {
     MissingZipEntry(&'static str),
     #[error("Failed to decode OTA metadata protobuf message")]
     MetadataDecode(#[source] prost::DecodeError),
+    #[error("Failed to parse care map")]
+    CareMapDecode(#[source] care_map::Error),
     #[error("Failed to open zip file")]
     ZipOpen(#[source] rawzip::Error),
     #[error("Failed to list zip entries")]
@@ -411,7 +418,7 @@ fn compute_property_files(
 
     for path in [
         "apex_info.pb",
-        "care_map.pb",
+        PATH_CARE_MAP,
         "care_map.txt",
         "compatibility.zip",
     ] {
@@ -869,26 +876,45 @@ pub fn parse_ota_sig(reader: impl Read + Seek) -> Result<OtaSignature> {
     parse_raw_ota_sig(reader)?.try_into()
 }
 
+#[derive(Clone, Debug)]
+pub struct ParsedOtaInfo {
+    pub metadata: OtaMetadata,
+    pub cert: Certificate,
+    pub header: PayloadHeader,
+    pub properties: String,
+    pub care_map: Option<CareMap>,
+}
+
 /// Get and parse the protobuf-encoded OTA metadata, the PEM-encoded otacert,
-/// the payload header, and the payload properties from an OTA zip.
-pub fn parse_zip_ota_info(
-    reader: impl Read + Seek,
-) -> Result<(OtaMetadata, Certificate, PayloadHeader, String)> {
+/// the payload header, the payload properties, and the care map from an OTA
+/// zip.
+pub fn parse_zip_ota_info(reader: impl Read + Seek) -> Result<ParsedOtaInfo> {
     let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
     let archive = ZipArchive::from_seekable(reader, &mut buffer).map_err(Error::ZipOpen)?;
 
     let mut metadata_modern = None;
     let mut metadata_legacy = None;
-    let mut certificate = None;
+    let mut cert = None;
     let mut header = None;
     let mut properties = None;
+    let mut care_map = None;
 
     let mut entries = archive.entries_safe(&mut buffer);
 
     while let Some((cd_entry, entry)) = entries.next_entry().map_err(Error::ZipEntryList)? {
         let path = cd_entry.file_path_utf8().map_err(Error::ZipEntryList)?;
 
-        if path == PATH_METADATA_PB {
+        if path == PATH_CARE_MAP {
+            let mut reader = zip::verifying_reader(&entry, cd_entry.compression_method())
+                .map_err(|e| Error::ZipEntryOpen(PATH_CARE_MAP.into(), e))?;
+            let mut buf = Vec::new();
+
+            reader
+                .read_to_end(&mut buf)
+                .map_err(|e| Error::ZipEntryRead(PATH_CARE_MAP.into(), e))?;
+
+            care_map = Some(care_map::parse(&buf).map_err(Error::CareMapDecode)?);
+        } else if path == PATH_METADATA_PB {
             let mut reader = zip::verifying_reader(&entry, cd_entry.compression_method())
                 .map_err(|e| Error::ZipEntryOpen(PATH_METADATA_PB.into(), e))?;
             let mut buf = Vec::new();
@@ -912,7 +938,7 @@ pub fn parse_zip_ota_info(
             let reader = zip::verifying_reader(&entry, cd_entry.compression_method())
                 .map_err(|e| Error::ZipEntryOpen(PATH_OTACERT.into(), e))?;
 
-            certificate = Some(
+            cert = Some(
                 crypto::read_pem_cert(Path::new(PATH_OTACERT), reader)
                     .map_err(Error::OtaCertLoad)?,
             );
@@ -938,11 +964,17 @@ pub fn parse_zip_ota_info(
     let metadata = metadata_modern
         .or(metadata_legacy)
         .ok_or_else(|| Error::ZipEntryMissing(PATH_METADATA_PB.into()))?;
-    let certificate = certificate.ok_or_else(|| Error::ZipEntryMissing(PATH_OTACERT.into()))?;
+    let cert = cert.ok_or_else(|| Error::ZipEntryMissing(PATH_OTACERT.into()))?;
     let header = header.ok_or_else(|| Error::ZipEntryMissing(PATH_PAYLOAD.into()))?;
     let properties = properties.ok_or_else(|| Error::ZipEntryMissing(PATH_PROPERTIES.into()))?;
 
-    Ok((metadata, certificate, header, properties))
+    Ok(ParsedOtaInfo {
+        metadata,
+        cert,
+        header,
+        properties,
+        care_map,
+    })
 }
 
 /// Ensure that we're using a non-zip64 EOCD and there's no archive comment.

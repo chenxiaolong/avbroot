@@ -3,7 +3,8 @@
 
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    cmp::Ordering,
+    collections::{BTreeSet, HashMap, HashSet},
     ffi::{OsStr, OsString},
     fs::{self, File},
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write},
@@ -34,6 +35,7 @@ use crate::{
     crypto::{self, PassphraseSource, SigningMethod, SigningPrivateKey},
     format::{
         avb::{self, Descriptor, Header},
+        care_map,
         ota::{self, SigningWriter, ZipEntry, ZipMode},
         payload::{self, CowVersion, PayloadHeader, PayloadWriter, VabcAlgo, VabcParams},
         zip::{
@@ -49,10 +51,11 @@ use crate::{
     },
     protobuf::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
+        recovery_update_verifier::CareMap,
     },
     stream::{
-        self, FromReader, HashingWriter, MutexFile, ReadAt, ReadSeek, SectionReader,
-        SectionReaderAt, UserPosFile, WriteAt, WriteSeek,
+        self, FromReader, HashingWriter, MutexFile, ReadAt, ReadSeek, SectionReaderAt, UserPosFile,
+        WriteAt, WriteSeek,
     },
     util,
 };
@@ -1020,7 +1023,7 @@ fn patch_ota_payload(
     cert_ota: &Certificate,
     method: SigningMethod,
     cancel_signal: &AtomicBool,
-) -> Result<(String, u64)> {
+) -> Result<(PayloadHeader, String, CareMap)> {
     let mut header = PayloadHeader::from_reader(UserPosFile::new(payload))
         .context("Failed to load OTA payload header")?;
     if !header.is_full_ota() {
@@ -1141,6 +1144,18 @@ fn patch_ota_payload(
             recow_image(name, &input_file.file, &mut header, cancel_signal)
         })?;
 
+    // Compute care map. For unmodified images still in the original payload,
+    // this only requires extracting the chunks containing the AVB metadata.
+    let care_map = care_map::generate_care_map(
+        payload,
+        input_files
+            .iter()
+            .map(|(name, f)| (name.as_str(), &f.file as &(dyn ReadAt + Sync))),
+        &header,
+        cancel_signal,
+    )
+    .context("Failed to generate new care map")?;
+
     // Drop all unmodified images. We only want to compress modified images.
     // For recowed images, the payload header was already updated with the new
     // estimate. The actual data can be copied from the original payload.
@@ -1242,7 +1257,29 @@ fn patch_ota_payload(
         .finish()
         .context("Failed to finalize payload")?;
 
-    Ok((properties, header.blob_offset))
+    Ok((header, properties, care_map))
+}
+
+fn zip_entry_group(path: &str) -> u8 {
+    // Conveniently, lexicographical order is correct for patching files in the
+    // proper order. The only exception is the care map, which has to be done
+    // after the payload.
+    match path {
+        ota::PATH_CARE_MAP => 1,
+        _ => 0,
+    }
+}
+
+pub fn zip_entry_patch_order(a: &str, b: &str) -> Ordering {
+    let a_group = zip_entry_group(a);
+    let b_group = zip_entry_group(b);
+
+    let cmp_group = a_group.cmp(&b_group);
+    if cmp_group != Ordering::Equal {
+        return cmp_group;
+    }
+
+    a.cmp(b)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1274,9 +1311,7 @@ fn patch_ota_zip(
     let mut missing = BTreeSet::from([ota::PATH_OTACERT, ota::PATH_PAYLOAD, ota::PATH_PROPERTIES]);
     let mut buffer = vec![0u8; RECOMMENDED_BUFFER_SIZE];
     let mut input_entries_iter = zip_reader.entries_safe(&mut buffer);
-    // Keep in sorted order for reproducibility and to guarantee that the
-    // payload is processed before its properties file.
-    let mut input_entries = BTreeMap::new();
+    let mut input_entries = Vec::new();
 
     while let Some((cd_entry, _)) = input_entries_iter
         .next_entry()
@@ -1288,20 +1323,23 @@ fn patch_ota_zip(
 
         missing.remove(path);
 
-        input_entries.insert(
+        input_entries.push((
             path.to_owned(),
             InputEntry {
                 compression_method: cd_entry.compression_method(),
                 crc32: cd_entry.crc32(),
                 wayfinder: cd_entry.wayfinder(),
             },
-        );
+        ));
     }
+
+    input_entries.sort_by(|a, b| zip_entry_patch_order(&a.0, &b.0));
 
     if !missing.is_empty() {
         bail!("Missing entries in OTA zip: {}", util::join(missing, ", "));
-    } else if !input_entries.contains_key(ota::PATH_METADATA)
-        && !input_entries.contains_key(ota::PATH_METADATA_PB)
+    } else if !input_entries
+        .iter()
+        .any(|(p, _)| p == ota::PATH_METADATA || p == ota::PATH_METADATA_PB)
     {
         bail!(
             "Neither legacy nor protobuf OTA metadata files exist: {:?}, {:?}",
@@ -1313,13 +1351,15 @@ fn patch_ota_zip(
     let mut metadata = None;
     let mut properties = None;
     let mut payload_metadata_size = None;
+    let mut care_map = None;
     let mut metadata_entries = vec![];
 
     for (path, input_entry) in &input_entries {
         let _span = debug_span!("zip", entry = path).entered();
 
         // Paths we don't care about can be copied without recompression.
-        let raw_copy = path != ota::PATH_METADATA
+        let raw_copy = path != ota::PATH_CARE_MAP
+            && path != ota::PATH_METADATA
             && path != ota::PATH_METADATA_PB
             && path != ota::PATH_OTACERT
             && path != ota::PATH_PAYLOAD
@@ -1410,6 +1450,13 @@ fn patch_ota_zip(
 
         // All remaining entries are written immediately.
         match path.as_str() {
+            ota::PATH_CARE_MAP => {
+                info!("Patching zip entry: {path}");
+
+                data_writer
+                    .write_all(&care_map::serialize(care_map.as_ref().unwrap()))
+                    .with_context(|| format!("Failed to write care map: {path}"))?;
+            }
             ota::PATH_OTACERT => {
                 // Use the user's certificate
                 info!("Replacing zip entry: {path}");
@@ -1433,7 +1480,7 @@ fn patch_ota_zip(
                     payload_range.1 - payload_range.0,
                 )?;
 
-                let (p, m) = patch_ota_payload(
+                let (h, p, cm) = patch_ota_payload(
                     &payload_reader,
                     &mut data_writer,
                     external_images,
@@ -1451,7 +1498,8 @@ fn patch_ota_zip(
                 .with_context(|| format!("Failed to patch payload: {path}"))?;
 
                 properties = Some(p);
-                payload_metadata_size = Some(m);
+                payload_metadata_size = Some(h.blob_offset);
+                care_map = Some(cm);
             }
             ota::PATH_PROPERTIES => {
                 info!("Patching zip entry: {path}");
@@ -2096,7 +2144,6 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     }
 
     let mut reader = File::open(&cli.input)
-        .map(BufReader::new)
         .with_context(|| format!("Failed to open for reading: {:?}", cli.input))?;
 
     info!("Verifying whole-file signature");
@@ -2110,9 +2157,9 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         fail_later!("{e:?}");
     }
 
-    let (metadata, ota_cert, header, properties) =
+    let mut ota_info =
         ota::parse_zip_ota_info(&mut reader).context("Failed to parse OTA metadata")?;
-    if ota_cert != ota_sig.cert {
+    if ota_info.cert != ota_sig.cert {
         fail_later!(
             "{} does not match CMS embedded certificate",
             ota::PATH_OTACERT,
@@ -2128,15 +2175,17 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         warn!("Whole-file signature is valid, but its trust is unknown");
     }
 
-    if let Err(e) = ota::verify_metadata(&mut reader, &metadata, header.blob_offset)
-        .context("Failed to verify OTA metadata offsets")
+    if let Err(e) =
+        ota::verify_metadata(&mut reader, &ota_info.metadata, ota_info.header.blob_offset)
+            .context("Failed to verify OTA metadata offsets")
     {
         fail_later!("{e:?}");
     }
 
     info!("Verifying payload");
 
-    let pfs_raw = metadata
+    let pfs_raw = ota_info
+        .metadata
         .property_files
         .get(ota::PF_NAME)
         .ok_or_else(|| anyhow!("Missing property files: {}", ota::PF_NAME))?;
@@ -2147,13 +2196,13 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         .find(|pf| pf.name() == ota::PATH_PAYLOAD)
         .ok_or_else(|| anyhow!("Missing property files entry: {}", ota::PATH_PAYLOAD))?;
 
-    let mut section_reader = SectionReader::new(&mut reader, pf_payload.offset, pf_payload.size)
+    let payload_reader = SectionReaderAt::new(&reader, pf_payload.offset, pf_payload.size)
         .context("Failed to directly open payload section")?;
 
     if let Err(e) = payload::verify_payload(
-        &mut section_reader,
+        &mut UserPosFile::new(&payload_reader),
         &ota_sig.cert,
-        &properties,
+        &ota_info.properties,
         cancel_signal,
     )
     .context("Failed to verify payload signatures and digests")
@@ -2164,8 +2213,8 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
     info!("Extracting partition images to temporary directory");
 
     let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
-    let raw_reader = reader.into_inner();
-    let unique_images = header
+    let unique_images = ota_info
+        .header
         .manifest
         .partitions
         .iter()
@@ -2174,19 +2223,23 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         .collect::<BTreeSet<_>>();
 
     extract_payload(
-        &raw_reader,
+        &reader,
         temp_dir.path(),
         pf_payload.offset,
         pf_payload.size,
-        &header,
+        &ota_info.header,
         &unique_images,
         cancel_signal,
     )?;
 
     info!("Verifying partition hashes");
 
-    if let Err(e) = verify_partition_hashes(temp_dir.path(), &header, &unique_images, cancel_signal)
-    {
+    if let Err(e) = verify_partition_hashes(
+        temp_dir.path(),
+        &ota_info.header,
+        &unique_images,
+        cancel_signal,
+    ) {
         fail_later!("{e:?}");
     }
 
@@ -2232,7 +2285,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     info!("Checking recovery ramdisk's otacerts.zip");
 
-    let required_images = get_required_images(&header.manifest, RequiredFlags::empty());
+    let required_images = get_required_images(&ota_info.header.manifest, RequiredFlags::empty());
     let boot_image_names = required_images
         .iter()
         .filter(|(_, flags)| flags.contains(PartitionFlags::BOOT))
@@ -2252,7 +2305,7 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     let (boot_images, layout) = boot::load_boot_images(&boot_image_names, &Opener(temp_dir.path()))
         .context("Failed to load all boot images")?;
-    let targets = OtaCertPatcher::new(ota_cert.clone())
+    let targets = OtaCertPatcher::new(ota_info.cert.clone())
         .find_targets(layout, &boot_images, cancel_signal)
         .context("Failed to find boot image containing otacerts.zip")?;
 
@@ -2271,9 +2324,9 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
         let ramdisk_certs = OtaCertPatcher::get_certificates(boot_image, cancel_signal)
             .with_context(|| format!("Failed to read {target}'s otacerts.zip"))?;
 
-        if !ramdisk_certs.contains(&ota_cert) {
+        if !ramdisk_certs.contains(&ota_info.cert) {
             let msg = format!(
-                "{target}'s otacerts.zip does not contain the certificate that signed the OTA"
+                "{target}'s otacerts.zip does not contain the certificate that signed the OTA",
             );
 
             if cli.skip_recovery_ota_cert {
@@ -2281,6 +2334,20 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
             } else {
                 fail_later!("{msg}");
             }
+        }
+    }
+
+    if let Some(care_map) = &mut ota_info.care_map {
+        info!("Verifying care map");
+
+        care_map::normalize(care_map);
+
+        let expected =
+            care_map::generate_care_map(&payload_reader, [], &ota_info.header, cancel_signal)
+                .context("Failed to compute expected care map")?;
+
+        if *care_map != expected {
+            fail_later!("Care map does not match:\nActual: {care_map:#?}\nExpected: {expected:#?}");
         }
     }
 

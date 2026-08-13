@@ -17,8 +17,12 @@ use tracing::info;
 use crate::{
     cli::ota,
     crypto::{self, PassphraseSource, SigningMethod, SigningPrivateKey},
-    format::payload::{PayloadHeader, PayloadWriter},
-    stream::{self, FromReader, SectionReader},
+    format::{
+        care_map,
+        payload::{PayloadHeader, PayloadWriter},
+    },
+    protobuf::recovery_update_verifier::CareMap,
+    stream::{self, FromReader, SectionReader, UserPosFile},
     util,
 };
 
@@ -199,7 +203,7 @@ pub fn pack_payload(
     signing_key: &SigningPrivateKey,
     method: SigningMethod,
     cancel_signal: &AtomicBool,
-) -> Result<(String, u64)> {
+) -> Result<(PayloadHeader, String, CareMap)> {
     let mut header = read_info(input_info)?;
 
     // Pre-open all of the image files.
@@ -216,6 +220,8 @@ pub fn pack_payload(
             Ok((p.partition_name.clone(), file))
         })
         .collect::<Result<HashMap<_, _>>>()?;
+
+    let mut care_map = CareMap::default();
 
     for (name, input_file) in &input_files {
         let Some(dpm) = &header.manifest.dynamic_partition_metadata else {
@@ -238,7 +244,16 @@ pub fn pack_payload(
             .estimate_cow_size = Some(0);
 
         ota::recow_image(name, input_file, &mut header, cancel_signal)?;
+
+        let partition_info = care_map::generate_partition_info(
+            &mut UserPosFile::new(input_file),
+            header.manifest.block_size(),
+            name,
+        )?;
+        care_map.partitions.push(partition_info);
     }
+
+    care_map::normalize(&mut care_map);
 
     // Compress the images and compute the list of install operations for
     // insertion into the payload header. The compressed data is stored in new
@@ -302,7 +317,7 @@ pub fn pack_payload(
     // Display the header information now that it has been finalized.
     display_header(quiet, &header);
 
-    Ok((properties, header.blob_offset))
+    Ok((header, properties, care_map))
 }
 
 fn pack_subcommand(
@@ -314,7 +329,7 @@ fn pack_subcommand(
 
     let mut writer = open_raw_writer(&cli.output)?;
 
-    let (properties, _) = pack_payload(
+    let (_, properties, _) = pack_payload(
         payload_cli.quiet,
         &cli.input_info,
         &cli.input_images,
