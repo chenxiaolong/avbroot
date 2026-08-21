@@ -532,10 +532,7 @@ fn create_partition_images(
 
     let mut files = BTreeMap::new();
 
-    while !topo.is_empty() {
-        let Some(name) = topo.pop() else {
-            bail!("vbmeta dependency graph has cycle: {topo:?}");
-        };
+    for name in topo.pop_iter() {
         let partition = &partitions[name];
 
         let file = tempfile::tempfile()
@@ -575,6 +572,9 @@ fn create_partition_images(
         }
 
         files.insert(name.clone(), file);
+    }
+    if !topo.is_empty() {
+        bail!("vbmeta dependency graph has cycle: {topo:?}");
     }
 
     Ok(files)

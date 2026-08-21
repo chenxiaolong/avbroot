@@ -568,16 +568,14 @@ fn get_vbmeta_patch_order(
         }
     }
 
-    while !topo.is_empty() {
-        match topo.pop() {
-            Some(item) => {
-                // Only include vbmeta images.
-                if dep_graph.contains_key(item.as_str()) {
-                    order.push((item.clone(), dep_graph.remove(item.as_str()).unwrap()));
-                }
-            }
-            None => bail!("vbmeta dependency graph has cycle: {topo:?}"),
+    for item in topo.pop_iter() {
+        // Only include vbmeta images.
+        if dep_graph.contains_key(item.as_str()) {
+            order.push((item.clone(), dep_graph.remove(item.as_str()).unwrap()));
         }
+    }
+    if !topo.is_empty() {
+        bail!("vbmeta dependency graph has cycle: {topo:?}");
     }
 
     Ok(order)

@@ -30,7 +30,7 @@ flate2 = { version = "1.0.29", features = ["zlib-rs"] }
 gf256 = { version = "0.3.0", features = ["rs"] }
 hex = { version = "0.4.3", features = ["serde"] }
 lz4_flex = "0.14.0"
-lzma-rust2 = "0.18.0"
+lzma-rust2 = "0.19.0"
 memchr = "2.6.0"
 ml-dsa = { version = "0.1.1", features = ["rand_core"] }
 num-traits = "0.2.16"
@@ -56,7 +56,7 @@ sha2 = "0.11.0"
 tempfile = "3.8.0"
 thiserror = "2.0.3"
 toml = { version = "1.0.1", features = ["serde"] }
-topological-sort = "0.2.2"
+topological-sort = "0.3.1"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 x509-cert = { version = "0.3.0", features = ["builder", "hazmat"] }
