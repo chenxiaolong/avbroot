@@ -9,10 +9,11 @@
 
 ### Unreleased
 
-* Prevent the wrong AVB key type (RSA vs. ML-DSA) from being used ([Issue #643], [PR #645])
-    * The new Pixel 11 series are the first devices to use post-quantum ML-DSA keys.
+* Prevent the wrong AVB key type (RSA vs. ML-DSA) from being used ([Issue #643], [PR #645], [PR #647])
+    * Going from ML-DSA to RSA is intentionally still allowed because the Pixel 11 series have a bootloader bug that prevent registering an ML-DSA key with `avb_custom_key`.
 * Add support for regenerating `care_map.pb` ([Issue #639], [PR #641])
     * Allows avbroot to work with older devices that use `update_verifier` instead of `snapuserd`. Previously, flashing an avbroot-patched OTA could result in a post-update boot failure on these devices.
+* Update dependencies ([PR #646])
 
 ### Version 3.33.0
 
@@ -800,3 +801,5 @@ Behind-the-scenes changes:
 [PR #637]: https://github.com/chenxiaolong/avbroot/pull/637
 [PR #641]: https://github.com/chenxiaolong/avbroot/pull/641
 [PR #645]: https://github.com/chenxiaolong/avbroot/pull/645
+[PR #646]: https://github.com/chenxiaolong/avbroot/pull/646
+[PR #647]: https://github.com/chenxiaolong/avbroot/pull/647
