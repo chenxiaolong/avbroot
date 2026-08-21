@@ -113,21 +113,14 @@ When patching OTAs for multiple devices, generating unique keys for each device 
 
 1. Generate the AVB and OTA signing keys.
 
-    The Pixel 11 series uses post-quantum ML-DSA keys for AVB:
-
-    ```bash
-    avbroot key generate-key -t mldsa65 -o avb.key
-    avbroot key generate-key -t rsa4096 -o ota.key
-    ```
-
-    Most other existing devices use RSA keys for AVB:
-
     ```bash
     avbroot key generate-key -t rsa4096 -o avb.key
     avbroot key generate-key -t rsa4096 -o ota.key
     ```
 
     As a safeguard, the OTA patching process will fail if the signing key is incompatible with how the original OTA was signed.
+
+    **NOTE**: avbroot also supports post-quantum ML-DSA keys, but it's not known to work on any device yet. The Pixel 11 series are the first devices to support these keys, but the bootloader [has a bug](https://github.com/chenxiaolong/avbroot/issues/643) that prevents them from being used for custom keys.
 
 2. Convert the public key portion of the AVB signing key to the AVB public key metadata format. This is the format that the bootloader requires when setting the custom root of trust.
 

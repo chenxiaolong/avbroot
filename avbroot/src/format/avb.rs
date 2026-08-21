@@ -1738,7 +1738,13 @@ impl Header {
                         | AlgorithmType::Sha256Rsa8192
                         | AlgorithmType::Sha512Rsa2048
                         | AlgorithmType::Sha512Rsa4096
-                        | AlgorithmType::Sha512Rsa8192,
+                        | AlgorithmType::Sha512Rsa8192
+                        // Switching from ML-DSA to RSA is supported because the
+                        // Pixel 11 series have a bootloader bug that prevents
+                        // an ML-DSA key from being used for avb_custom_key.
+                        // https://github.com/chenxiaolong/avbroot/issues/643
+                        | AlgorithmType::MlDsa65
+                        | AlgorithmType::MlDsa87,
                         AlgorithmType::Sha256Rsa2048
                         | AlgorithmType::Sha256Rsa4096
                         | AlgorithmType::Sha256Rsa8192
