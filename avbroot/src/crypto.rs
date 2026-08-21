@@ -674,6 +674,10 @@ impl TryFrom<PrivateKeyInfoRef<'_>> for SigningPrivateKey {
             a if a == pkcs1::ALGORITHM_ID => {
                 RsaPrivateKey::try_from(private_key_info).map(Self::Rsa)
             }
+            // Note that the ml-dsa crate intentionally only supports parsing
+            // keys containing just the seed. Keys containing the expanded key
+            // or both the seed and expanded key are not supported.
+            // https://github.com/RustCrypto/signatures/issues/1092
             a if a == MlDsa65::ALGORITHM_IDENTIFIER => {
                 ml_dsa::SigningKey::try_from(private_key_info).map(Self::MlDsa65)
             }
