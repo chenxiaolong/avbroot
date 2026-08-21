@@ -7,6 +7,11 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Prevent the wrong AVB key type (RSA vs. ML-DSA) from being used ([Issue #643], [PR #645])
+    * The new Pixel 11 series are the first devices to use post-quantum ML-DSA keys.
+
 ### Version 3.33.0
 
 * Add support for zstd-compressed payload chunks introduced in Android 17 (payload minor version 10) ([PR #637])
@@ -541,6 +546,7 @@ Behind-the-scenes changes:
 [Issue #610]: https://github.com/chenxiaolong/avbroot/issues/610
 [Issue #631]: https://github.com/chenxiaolong/avbroot/issues/631
 [Issue #633]: https://github.com/chenxiaolong/avbroot/issues/633
+[Issue #643]: https://github.com/chenxiaolong/avbroot/issues/643
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -789,3 +795,4 @@ Behind-the-scenes changes:
 [PR #634]: https://github.com/chenxiaolong/avbroot/pull/634
 [PR #635]: https://github.com/chenxiaolong/avbroot/pull/635
 [PR #637]: https://github.com/chenxiaolong/avbroot/pull/637
+[PR #645]: https://github.com/chenxiaolong/avbroot/pull/645
