@@ -113,6 +113,11 @@ pub enum Error {
     IncorrectKeyType(SigningKeyType, AlgorithmType),
     #[error("Key type ({0:?}) is not compatible with any AVB signing algorithm")]
     UnsupportedKeyType(SigningKeyType),
+    #[error("New signing algorithm is incompatible with original: {old:?} -> {new:?}")]
+    IncompatibleAlgoChange {
+        old: AlgorithmType,
+        new: AlgorithmType,
+    },
     #[error("Hash tree does not immediately follow image data")]
     HashTreeGap,
     #[error("FEC data does not immediately follow hash tree")]
@@ -218,6 +223,7 @@ impl AlgorithmType {
 
     pub fn to_signature_algorithm(self) -> Option<SignatureAlgorithm> {
         match self {
+            Self::None | Self::Unknown(_) => None,
             Self::Sha256Rsa2048 | Self::Sha256Rsa4096 | Self::Sha256Rsa8192 => {
                 Some(SignatureAlgorithm::Sha256WithRsa)
             }
@@ -226,7 +232,6 @@ impl AlgorithmType {
             }
             Self::MlDsa65 => Some(SignatureAlgorithm::MlDsa65),
             Self::MlDsa87 => Some(SignatureAlgorithm::MlDsa87),
-            _ => None,
         }
     }
 
@@ -1710,7 +1715,7 @@ impl Header {
         result.ok_or(Error::NoAppendedDescriptor)
     }
 
-    pub fn set_algo_for_key(&mut self, key: &SigningPrivateKey) -> Result<()> {
+    pub fn set_algo_for_key(&mut self, key: &SigningPrivateKey, force: bool) -> Result<()> {
         let key_raw = encode_public_key(&key.to_public_key())?;
 
         for algo in [
@@ -1721,6 +1726,36 @@ impl Header {
             AlgorithmType::MlDsa87,
         ] {
             if key_raw.len() == algo.public_key_len() {
+                #[allow(clippy::match_same_arms)]
+                let compatible = match (self.algorithm_type, algo) {
+                    (old, new) if old == new => true,
+                    // Upgrading to encrypted is always fine.
+                    (AlgorithmType::None, _) => true,
+                    // Devices that support RSA normally support all key sizes.
+                    (
+                        AlgorithmType::Sha256Rsa2048
+                        | AlgorithmType::Sha256Rsa4096
+                        | AlgorithmType::Sha256Rsa8192
+                        | AlgorithmType::Sha512Rsa2048
+                        | AlgorithmType::Sha512Rsa4096
+                        | AlgorithmType::Sha512Rsa8192,
+                        AlgorithmType::Sha256Rsa2048
+                        | AlgorithmType::Sha256Rsa4096
+                        | AlgorithmType::Sha256Rsa8192
+                        | AlgorithmType::Sha512Rsa2048
+                        | AlgorithmType::Sha512Rsa4096
+                        | AlgorithmType::Sha512Rsa8192,
+                    ) => true,
+                    // Switching between algorithm families is not allowed.
+                    (_, _) => false,
+                };
+                if !compatible && !force {
+                    return Err(Error::IncompatibleAlgoChange {
+                        old: self.algorithm_type,
+                        new: algo,
+                    });
+                }
+
                 self.algorithm_type = algo;
                 return Ok(());
             }

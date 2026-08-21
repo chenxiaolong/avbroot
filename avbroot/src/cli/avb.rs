@@ -439,7 +439,7 @@ fn sign_or_clear(info: &mut AvbInfo, orig_header: &Header, key_group: &KeyGroup)
             };
 
             info.header
-                .set_algo_for_key(&signing_key)
+                .set_algo_for_key(&signing_key, true)
                 .context("Failed to set signature algorithm")?;
             info.header
                 .sign(&signing_key, key_group.signing_method)
@@ -643,15 +643,15 @@ fn verify_and_repair(
         AppendedDescriptorRef::HashTree(d) => {
             info!("Verifying hash tree descriptor{suffix}");
 
-            match d.verify(&file, cancel_signal) {
+            match d.verify(file, cancel_signal) {
                 Err(e @ avb::Error::HashTreeVerify(_)) if repair => {
                     warn!("Failed to verify hash tree descriptor{suffix}: {e}");
                     warn!("Attempting to repair using FEC data{suffix}");
 
-                    d.repair(&file, cancel_signal)
+                    d.repair(file, cancel_signal)
                         .with_context(|| format!("Failed to repair data{suffix}"))?;
 
-                    d.verify(&file, cancel_signal).inspect(|()| {
+                    d.verify(file, cancel_signal).inspect(|()| {
                         info!("Successfully repaired data{suffix}");
                     })
                 }

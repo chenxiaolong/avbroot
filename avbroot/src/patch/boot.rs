@@ -1343,7 +1343,7 @@ fn save_boot_image(
     if !info.header.public_key.is_empty() {
         debug!("Signing boot image");
         info.header
-            .set_algo_for_key(key)
+            .set_algo_for_key(key, false)
             .map_err(Error::AvbUpdate)?;
         info.header.sign(key, method).map_err(Error::AvbUpdate)?;
     }

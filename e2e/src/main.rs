@@ -181,7 +181,7 @@ fn append_avb(
     };
 
     if avb.signed {
-        header.set_algo_for_key(key_avb)?;
+        header.set_algo_for_key(key_avb, false)?;
         header.sign(key_avb, SigningMethod::Deterministic)?;
     }
 
@@ -501,7 +501,7 @@ fn create_vbmeta_image(
     };
 
     if avb.signed {
-        header.set_algo_for_key(key)?;
+        header.set_algo_for_key(key, false)?;
         header.sign(key, SigningMethod::Deterministic)?;
     }
 

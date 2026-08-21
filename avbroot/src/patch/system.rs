@@ -199,7 +199,9 @@ pub fn patch_system_image(
 
     if !header.public_key.is_empty() {
         debug!("Signing system image");
-        header.set_algo_for_key(key).map_err(Error::AvbUpdate)?;
+        header
+            .set_algo_for_key(key, false)
+            .map_err(Error::AvbUpdate)?;
         header.sign(key, method).map_err(Error::AvbUpdate)?;
     }
 

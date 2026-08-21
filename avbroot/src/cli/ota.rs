@@ -365,7 +365,7 @@ fn re_sign_unmodified_images(
 
             if !header.public_key.is_empty() {
                 header
-                    .set_algo_for_key(key_avb)
+                    .set_algo_for_key(key_avb, false)
                     .with_context(|| format!("Failed to set signature algorithm: {name}"))?;
                 header
                     .sign(key_avb, method)
@@ -832,7 +832,7 @@ fn update_vbmeta_headers(
         // bootable.
         if parent_header != &orig_parent_header || name == "vbmeta" {
             parent_header
-                .set_algo_for_key(key)
+                .set_algo_for_key(key, false)
                 .with_context(|| format!("Failed to set signature algorithm: {name}"))?;
             parent_header
                 .sign(key, method)
