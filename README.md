@@ -113,10 +113,21 @@ When patching OTAs for multiple devices, generating unique keys for each device 
 
 1. Generate the AVB and OTA signing keys.
 
-    ```bash
-    avbroot key generate-key -t rsa4096 -o avb.key
-    avbroot key generate-key -t rsa4096 -o ota.key
-    ```
+    * For the Pixel 11 series:
+
+        These devices support post-quantum ML-DSA keys for AVB. **However**, they [ship from the factory with old GSC firmware](https://github.com/GrapheneOS/script/pull/118#issuecomment-5420259381) that breaks registering ML-DSA keys with the bootloader. The device must be upgraded to the latest version of the stock OS first **and** the device must boot new OS version once for the GSC firmware to be updated.
+
+        ```bash
+        avbroot key generate-key -t mldsa65 -o avb.key
+        avbroot key generate-key -t rsa4096 -o ota.key
+        ```
+
+    * For all other devices:
+
+        ```bash
+        avbroot key generate-key -t rsa4096 -o avb.key
+        avbroot key generate-key -t rsa4096 -o ota.key
+        ```
 
     As a safeguard, the OTA patching process will fail if the signing key is incompatible with how the original OTA was signed.
 
