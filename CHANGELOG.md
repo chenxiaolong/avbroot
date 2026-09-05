@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.34.0
 
 * Prevent the wrong AVB key type (RSA vs. ML-DSA) from being used ([Issue #643], [PR #645], [PR #647])
     * Going from ML-DSA to RSA is intentionally still allowed because the Pixel 11 series still support RSA.
