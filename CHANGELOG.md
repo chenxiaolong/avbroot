@@ -13,7 +13,7 @@
     * Going from ML-DSA to RSA is intentionally still allowed because the Pixel 11 series have a bootloader bug that prevent registering an ML-DSA key with `avb_custom_key`.
 * Add support for regenerating `care_map.pb` ([Issue #639], [PR #641])
     * Allows avbroot to work with older devices that use `update_verifier` instead of `snapuserd`. Previously, flashing an avbroot-patched OTA could result in a post-update boot failure on these devices.
-* Update dependencies ([PR #646])
+* Update dependencies ([PR #646], [PR #649])
 
 ### Version 3.33.0
 
@@ -803,3 +803,4 @@ Behind-the-scenes changes:
 [PR #645]: https://github.com/chenxiaolong/avbroot/pull/645
 [PR #646]: https://github.com/chenxiaolong/avbroot/pull/646
 [PR #647]: https://github.com/chenxiaolong/avbroot/pull/647
+[PR #649]: https://github.com/chenxiaolong/avbroot/pull/649
