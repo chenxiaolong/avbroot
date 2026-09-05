@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
-    collections::BTreeMap,
     ffi::OsString,
     fs::{self, File, OpenOptions},
     io::{BufReader, Seek, Write},
@@ -31,8 +30,8 @@ use crate::{
             self, ReaderAtWrapper, ZipArchiveReadAtExt, ZipEntriesSafeExt, ZipFileHeaderRecordExt,
         },
     },
-    protobuf::{build::tools::releasetools::OtaMetadata, recovery_update_verifier::CareMap},
-    stream::{self, FromReader, SectionReaderAt},
+    protobuf::build::tools::releasetools::OtaMetadata,
+    stream::{self, FromReader, SectionReaderAt, UserPosFile},
     util,
 };
 
@@ -49,10 +48,7 @@ struct InputEntry {
 }
 
 fn is_excluded_path(path: &str) -> bool {
-    path == ota::PATH_CARE_MAP
-        || path == ota::PATH_METADATA
-        || path == ota::PATH_METADATA_PB
-        || path == ota::PATH_OTACERT
+    path == ota::PATH_METADATA || path == ota::PATH_METADATA_PB || path == ota::PATH_OTACERT
 }
 
 #[allow(clippy::type_complexity)]
@@ -61,7 +57,7 @@ fn open_reader(
 ) -> Result<(
     ZipArchive<ReaderAtWrapper<File>>,
     OtaMetadata,
-    BTreeMap<String, InputEntry>,
+    Vec<(String, InputEntry)>,
 )> {
     let mut reader =
         File::open(path).with_context(|| format!("Failed to open OTA for reading: {path:?}"))?;
@@ -74,7 +70,7 @@ fn open_reader(
         ZipArchive::from_read_at(reader, &mut buffer).context("Failed to read OTA zip")?;
 
     let mut entries = zip_reader.entries_safe(&mut buffer);
-    let mut input_entries = BTreeMap::new();
+    let mut input_entries = Vec::new();
 
     while let Some((cd_entry, _)) = entries.next_entry().context("Failed to list zip entries")? {
         if cd_entry.is_dir() {
@@ -90,7 +86,7 @@ fn open_reader(
             continue;
         }
 
-        input_entries.insert(
+        input_entries.push((
             path.to_owned(),
             InputEntry {
                 compression_method: cd_entry.compression_method(),
@@ -101,8 +97,10 @@ fn open_reader(
                     || cd_entry.uncompressed_size_hint() >= 0xffffffff,
                 wayfinder: cd_entry.wayfinder(),
             },
-        );
+        ));
     }
+
+    input_entries.sort_by(|a, b| zip_entry_patch_order(&a.0, &b.0));
 
     Ok((zip_reader, metadata, input_entries))
 }
@@ -240,28 +238,10 @@ fn add_otacert_entry(
     Ok(())
 }
 
-fn add_care_map_entry(
-    zip_writer: &mut ZipArchiveWriter<SigningWriter<File>>,
-    zip_mode: ZipMode,
-    care_map: &CareMap,
-    metadata_entries: &mut Vec<ZipEntry>,
-) -> Result<()> {
-    let (offset, mut data_writer) = start_entry(zip_writer, ota::PATH_CARE_MAP, zip_mode, false)?;
-
-    data_writer
-        .write_all(&care_map::serialize(care_map))
-        .with_context(|| format!("Failed to write care map: {}", ota::PATH_CARE_MAP))?;
-
-    finalize_entry(ota::PATH_CARE_MAP, offset, data_writer, metadata_entries)?;
-
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 fn finalize_ota(
     key: &SigningPrivateKey,
     cert: &Certificate,
-    care_map: &CareMap,
     method: SigningMethod,
     mut zip_writer: ZipArchiveWriter<SigningWriter<File>>,
     zip_mode: ZipMode,
@@ -271,7 +251,6 @@ fn finalize_ota(
     cancel_signal: &AtomicBool,
 ) -> Result<File> {
     add_otacert_entry(&mut zip_writer, zip_mode, cert, metadata_entries)?;
-    add_care_map_entry(&mut zip_writer, zip_mode, care_map, metadata_entries)?;
 
     let payload_metadata_size =
         payload_metadata_size.ok_or_else(|| anyhow!("Missing payload metadata size"))?;
@@ -354,7 +333,7 @@ fn unpack_subcommand(zip_cli: &ZipCli, cli: &UnpackCli, cancel_signal: &AtomicBo
 
     let info = OtaInfo {
         metadata,
-        files: input_entries.into_keys().collect(),
+        files: input_entries.into_iter().map(|(p, _)| p).collect(),
     };
 
     display_info(zip_cli.quiet, &info);
@@ -402,9 +381,14 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
         let (offset, mut data_writer) =
             start_entry(&mut zip_writer, path, cli.zip_mode.zip_mode, is_zip64)?;
 
-        if path == ota::PATH_CARE_MAP {
+        if path == ota::PATH_CARE_MAP
+            && let Some(care_map) = &care_map
+        {
+            // If care_map is None, then this is a delta OTA where we can't
+            // compute a care map from the AVB metadata inside the payload. It
+            // will have to be copied as a raw file instead.
             data_writer
-                .write_all(&care_map::serialize(care_map.as_ref().unwrap()))
+                .write_all(&care_map::serialize(care_map))
                 .with_context(|| format!("Failed to write care map: {path}"))?;
         } else if path == ota::PATH_PAYLOAD && cli.payload {
             // Pack the payload directly into the zip.
@@ -442,10 +426,12 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
 
                 payload_metadata_size = Some(header.blob_offset);
 
-                care_map = Some(
-                    care_map::generate_care_map(&input_file, [], &header, cancel_signal)
-                        .context("Failed to generate new care map")?,
-                );
+                if header.is_full_ota() {
+                    care_map = Some(
+                        care_map::generate_care_map(&input_file, [], &header, cancel_signal)
+                            .context("Failed to generate new care map")?,
+                    );
+                }
 
                 input_file
                     .rewind()
@@ -462,7 +448,6 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
     finalize_ota(
         &signing_key,
         &cert,
-        care_map.as_ref().unwrap(),
         method,
         zip_writer,
         cli.zip_mode.zip_mode,
@@ -506,25 +491,33 @@ fn repack_subcommand(zip_cli: &ZipCli, cli: &RepackCli, cancel_signal: &AtomicBo
             .get_entry(input_entry.wayfinder)
             .with_context(|| format!("Failed to open zip entry: {path}"))?;
 
-        if path == ota::PATH_PAYLOAD {
-            let entry_reader = zip::verifying_reader(&entry, input_entry.compression_method)
-                .with_context(|| format!("Failed to open zip entry: {path}"))?;
-
-            let header = PayloadHeader::from_reader(entry_reader)
-                .with_context(|| format!("Failed to read payload header: {path:?}"))?;
-
-            payload_metadata_size = Some(header.blob_offset);
-
+        if path == ota::PATH_CARE_MAP
+            && let Some(care_map) = &care_map
+        {
+            // If care_map is None, then this is a delta OTA where we can't
+            // compute a care map from the AVB metadata inside the payload. It
+            // will have to be copied as a raw file instead.
+            data_writer
+                .write_all(&care_map::serialize(care_map))
+                .with_context(|| format!("Failed to write care map: {path}"))?;
+        } else if path == ota::PATH_PAYLOAD {
             let payload_reader = SectionReaderAt::new(
                 &zip_reader.get_ref().0,
                 entry.compressed_data_range().0,
                 entry.compressed_data_range().1 - entry.compressed_data_range().0,
             )?;
 
-            care_map = Some(
-                care_map::generate_care_map(&payload_reader, [], &header, cancel_signal)
-                    .context("Failed to generate new care map")?,
-            );
+            let header = PayloadHeader::from_reader(UserPosFile::new(&payload_reader))
+                .with_context(|| format!("Failed to read payload header: {path:?}"))?;
+
+            payload_metadata_size = Some(header.blob_offset);
+
+            if header.is_full_ota() {
+                care_map = Some(
+                    care_map::generate_care_map(&payload_reader, [], &header, cancel_signal)
+                        .context("Failed to generate new care map")?,
+                );
+            }
         }
 
         let mut entry_reader = zip::verifying_reader(&entry, input_entry.compression_method)
@@ -539,7 +532,6 @@ fn repack_subcommand(zip_cli: &ZipCli, cli: &RepackCli, cancel_signal: &AtomicBo
     finalize_ota(
         &signing_key,
         &cert,
-        care_map.as_ref().unwrap(),
         method,
         zip_writer,
         cli.zip_mode.zip_mode,
@@ -551,7 +543,7 @@ fn repack_subcommand(zip_cli: &ZipCli, cli: &RepackCli, cancel_signal: &AtomicBo
 
     let info = OtaInfo {
         metadata,
-        files: input_entries.into_keys().collect(),
+        files: input_entries.into_iter().map(|(p, _)| p).collect(),
     };
 
     display_info(zip_cli.quiet, &info);
@@ -563,7 +555,7 @@ fn info_subcommand(zip_cli: &ZipCli, cli: &InfoCli) -> Result<()> {
     let (_, metadata, input_entries) = open_reader(&cli.input)?;
     let info = OtaInfo {
         metadata,
-        files: input_entries.into_keys().collect(),
+        files: input_entries.into_iter().map(|(p, _)| p).collect(),
     };
 
     display_info(zip_cli.quiet, &info);
