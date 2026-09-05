@@ -770,14 +770,12 @@ impl<R: Read> SparseReader<R> {
             .read_discard(self.header.excess_raw_chunk_bytes().into())
             .map_err(|e| Error::DataRead("chunk_excess", e))?;
 
-        let data: ChunkData;
-
-        match raw_chunk.chunk_type.get() {
+        let data = match raw_chunk.chunk_type.get() {
             CHUNK_TYPE_RAW => {
                 self.data_remain =
                     raw_chunk.total_sz.get() - u32::from(self.header.chunk_hdr_sz.get());
 
-                data = ChunkData::Data;
+                ChunkData::Data
             }
             CHUNK_TYPE_FILL => {
                 let fill_value = little_endian::U32::read_from_io(&mut self.inner)
@@ -787,14 +785,14 @@ impl<R: Read> SparseReader<R> {
                     hash_fill_chunk(&raw_chunk, fill_value, &self.header, hasher);
                 }
 
-                data = ChunkData::Fill(fill_value.get());
+                ChunkData::Fill(fill_value.get())
             }
             CHUNK_TYPE_DONT_CARE => {
                 if let Some(hasher) = &mut self.hasher {
                     hash_fill_chunk(&raw_chunk, 0.into(), &self.header, hasher);
                 }
 
-                data = ChunkData::Hole;
+                ChunkData::Hole
             }
             CHUNK_TYPE_CRC32 => {
                 let expected = little_endian::U32::read_from_io(&mut self.inner)
@@ -811,10 +809,10 @@ impl<R: Read> SparseReader<R> {
                     }
                 }
 
-                data = ChunkData::Crc32(expected.get());
+                ChunkData::Crc32(expected.get())
             }
             _ => unreachable!(),
-        }
+        };
 
         let chunk = Chunk {
             bounds: ChunkBounds {

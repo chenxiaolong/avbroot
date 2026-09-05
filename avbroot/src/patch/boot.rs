@@ -1148,10 +1148,7 @@ impl BootImagePatch for PrepatchedImagePatcher {
             };
         }
 
-        let old_kernel;
-        let new_kernel;
-
-        match (&boot_image, &prepatched_image) {
+        let (old_kernel, new_kernel) = match (&boot_image, &prepatched_image) {
             (BootImage::V0Through2(old), BootImage::V0Through2(new)) => {
                 check!(2, old.header_version(), new.header_version());
                 check!(2, old.kernel_addr, new.kernel_addr);
@@ -1186,16 +1183,18 @@ impl BootImagePatch for PrepatchedImagePatcher {
                     check!(2, old.ramdisk.is_empty(), new.ramdisk.is_empty());
                 }
 
-                old_kernel = if old.kernel.is_empty() {
-                    None
-                } else {
-                    Some(&old.kernel)
-                };
-                new_kernel = if new.kernel.is_empty() {
-                    None
-                } else {
-                    Some(&new.kernel)
-                };
+                (
+                    if old.kernel.is_empty() {
+                        None
+                    } else {
+                        Some(&old.kernel)
+                    },
+                    if new.kernel.is_empty() {
+                        None
+                    } else {
+                        Some(&new.kernel)
+                    },
+                )
             }
             (BootImage::V3Through4(old), BootImage::V3Through4(new)) => {
                 check!(2, old.header_version(), new.header_version());
@@ -1209,16 +1208,18 @@ impl BootImagePatch for PrepatchedImagePatcher {
                     check!(2, old.ramdisk.is_empty(), new.ramdisk.is_empty());
                 }
 
-                old_kernel = if old.kernel.is_empty() {
-                    None
-                } else {
-                    Some(&old.kernel)
-                };
-                new_kernel = if new.kernel.is_empty() {
-                    None
-                } else {
-                    Some(&new.kernel)
-                };
+                (
+                    if old.kernel.is_empty() {
+                        None
+                    } else {
+                        Some(&old.kernel)
+                    },
+                    if new.kernel.is_empty() {
+                        None
+                    } else {
+                        Some(&new.kernel)
+                    },
+                )
             }
             (BootImage::VendorV3Through4(old), BootImage::VendorV3Through4(new)) => {
                 check!(2, old.page_size, new.page_size);
@@ -1236,15 +1237,14 @@ impl BootImagePatch for PrepatchedImagePatcher {
                     check!(2, &old_v4.bootconfig, &new_v4.bootconfig);
                 }
 
-                old_kernel = None;
-                new_kernel = None;
+                (None, None)
             }
             _ => {
                 return Err(Error::Validation(
                     "Boot image and prepatched image are different boot image types".to_owned(),
                 ));
             }
-        }
+        };
 
         if let (Some(old), Some(new)) = (old_kernel, new_kernel) {
             let old_kmi_version = Self::get_kmi_version(old)?;

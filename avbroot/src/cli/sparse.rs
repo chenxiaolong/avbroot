@@ -231,8 +231,10 @@ fn compute_chunks(
                 end: block + 1,
             };
 
-            if buf.chunks_exact(4).all(|c| c == &buf[..4]) {
-                let fill_value = u32::from_le_bytes(buf[..4].try_into().unwrap());
+            let chunks = buf.as_chunks::<4>().0;
+
+            if chunks.iter().all(|c| c == &buf[..4]) {
+                let fill_value = u32::from_le_bytes(chunks[0]);
                 chunk_list.insert_fill(new_bounds, fill_value);
             } else {
                 chunk_list.insert_data(new_bounds);
@@ -367,8 +369,10 @@ fn pack_subcommand(
     let (file_regions, exact_bounds) = if !cli.region.is_empty() {
         let regions = cli
             .region
-            .chunks_exact(2)
-            .map(|c| c[0]..c[1])
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&[start, end]| start..end)
             .collect::<Vec<_>>();
 
         (regions, false)

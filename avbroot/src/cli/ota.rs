@@ -1708,11 +1708,11 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
 
     let mut external_images = HashMap::new();
 
-    for item in cli.replace.chunks_exact(2) {
-        let name = item[0]
+    for [name, path] in cli.replace.as_chunks::<2>().0 {
+        let name = name
             .to_str()
-            .ok_or_else(|| anyhow!("Invalid partition name: {:?}", item[0]))?;
-        let path = Path::new(&item[1]);
+            .ok_or_else(|| anyhow!("Invalid partition name: {name:?}"))?;
+        let path = Path::new(path);
 
         external_images.insert(name.to_owned(), path.to_owned());
     }

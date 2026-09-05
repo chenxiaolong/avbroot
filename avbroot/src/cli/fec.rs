@@ -61,8 +61,10 @@ fn generate_subcommand(cli: &GenerateCli, cancel_signal: &AtomicBool) -> Result<
 fn update_subcommand(cli: &UpdateCli, cancel_signal: &AtomicBool) -> Result<()> {
     let ranges = cli
         .range
-        .chunks_exact(2)
-        .map(|w| w[0]..w[1])
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[start, end]| start..end)
         .collect::<Vec<_>>();
 
     let input = open_input(&cli.input, false)?;
