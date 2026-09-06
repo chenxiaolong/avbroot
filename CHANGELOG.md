@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.34.1
 
 * Fix `care_map.pb` handling when packing raw delta OTAs with `avbroot zip pack` or `avbroot zip repack` ([PR #650])
 
