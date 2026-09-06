@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix `care_map.pb` handling when packing raw delta OTAs with `avbroot zip pack` or `avbroot zip repack` ([PR #650])
+
 ### Version 3.34.0
 
 * Prevent the wrong AVB key type (RSA vs. ML-DSA) from being used ([Issue #643], [PR #645], [PR #647])
@@ -806,3 +810,4 @@ Behind-the-scenes changes:
 [PR #647]: https://github.com/chenxiaolong/avbroot/pull/647
 [PR #648]: https://github.com/chenxiaolong/avbroot/pull/648
 [PR #649]: https://github.com/chenxiaolong/avbroot/pull/649
+[PR #650]: https://github.com/chenxiaolong/avbroot/pull/650
