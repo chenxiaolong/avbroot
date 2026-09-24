@@ -7,8 +7,11 @@
 
 #![allow(non_snake_case)]
 
+use std::ops::RangeInclusive;
+
 use gf256::rs::rs;
-use phf::phf_map;
+
+pub const SUPPORTED: RangeInclusive<u8> = 231..=253;
 
 #[rs(block = 255, data = 231)]
 mod rs255w231 {}
@@ -57,84 +60,102 @@ mod rs255w252 {}
 #[rs(block = 255, data = 253)]
 mod rs255w253 {}
 
-pub static FN_ENCODE: phf::Map<u8, fn(&mut [u8])> = phf_map! {
-    231u8 => rs255w231::encode,
-    232u8 => rs255w232::encode,
-    233u8 => rs255w233::encode,
-    234u8 => rs255w234::encode,
-    235u8 => rs255w235::encode,
-    236u8 => rs255w236::encode,
-    237u8 => rs255w237::encode,
-    238u8 => rs255w238::encode,
-    239u8 => rs255w239::encode,
-    240u8 => rs255w240::encode,
-    241u8 => rs255w241::encode,
-    242u8 => rs255w242::encode,
-    243u8 => rs255w243::encode,
-    244u8 => rs255w244::encode,
-    245u8 => rs255w245::encode,
-    246u8 => rs255w246::encode,
-    247u8 => rs255w247::encode,
-    248u8 => rs255w248::encode,
-    249u8 => rs255w249::encode,
-    250u8 => rs255w250::encode,
-    251u8 => rs255w251::encode,
-    252u8 => rs255w252::encode,
-    253u8 => rs255w253::encode,
-};
+static FN_ENCODE: [fn(&mut [u8]); 23] = [
+    rs255w231::encode,
+    rs255w232::encode,
+    rs255w233::encode,
+    rs255w234::encode,
+    rs255w235::encode,
+    rs255w236::encode,
+    rs255w237::encode,
+    rs255w238::encode,
+    rs255w239::encode,
+    rs255w240::encode,
+    rs255w241::encode,
+    rs255w242::encode,
+    rs255w243::encode,
+    rs255w244::encode,
+    rs255w245::encode,
+    rs255w246::encode,
+    rs255w247::encode,
+    rs255w248::encode,
+    rs255w249::encode,
+    rs255w250::encode,
+    rs255w251::encode,
+    rs255w252::encode,
+    rs255w253::encode,
+];
 
-pub static FN_IS_CORRECT: phf::Map<u8, fn(&[u8]) -> bool> = phf_map! {
-    231u8 => rs255w231::is_correct,
-    232u8 => rs255w232::is_correct,
-    233u8 => rs255w233::is_correct,
-    234u8 => rs255w234::is_correct,
-    235u8 => rs255w235::is_correct,
-    236u8 => rs255w236::is_correct,
-    237u8 => rs255w237::is_correct,
-    238u8 => rs255w238::is_correct,
-    239u8 => rs255w239::is_correct,
-    240u8 => rs255w240::is_correct,
-    241u8 => rs255w241::is_correct,
-    242u8 => rs255w242::is_correct,
-    243u8 => rs255w243::is_correct,
-    244u8 => rs255w244::is_correct,
-    245u8 => rs255w245::is_correct,
-    246u8 => rs255w246::is_correct,
-    247u8 => rs255w247::is_correct,
-    248u8 => rs255w248::is_correct,
-    249u8 => rs255w249::is_correct,
-    250u8 => rs255w250::is_correct,
-    251u8 => rs255w251::is_correct,
-    252u8 => rs255w252::is_correct,
-    253u8 => rs255w253::is_correct,
-};
+pub fn fn_encode(rs_k: u8) -> fn(&mut [u8]) {
+    assert!(SUPPORTED.contains(&rs_k), "Unsupported rs_k: {rs_k}");
+
+    FN_ENCODE[usize::from(rs_k - SUPPORTED.start())]
+}
+
+static FN_IS_CORRECT: [fn(&[u8]) -> bool; 23] = [
+    rs255w231::is_correct,
+    rs255w232::is_correct,
+    rs255w233::is_correct,
+    rs255w234::is_correct,
+    rs255w235::is_correct,
+    rs255w236::is_correct,
+    rs255w237::is_correct,
+    rs255w238::is_correct,
+    rs255w239::is_correct,
+    rs255w240::is_correct,
+    rs255w241::is_correct,
+    rs255w242::is_correct,
+    rs255w243::is_correct,
+    rs255w244::is_correct,
+    rs255w245::is_correct,
+    rs255w246::is_correct,
+    rs255w247::is_correct,
+    rs255w248::is_correct,
+    rs255w249::is_correct,
+    rs255w250::is_correct,
+    rs255w251::is_correct,
+    rs255w252::is_correct,
+    rs255w253::is_correct,
+];
+
+pub fn fn_is_correct(rs_k: u8) -> fn(&[u8]) -> bool {
+    assert!(SUPPORTED.contains(&rs_k), "Unsupported rs_k: {rs_k}");
+
+    FN_IS_CORRECT[usize::from(rs_k - SUPPORTED.start())]
+}
 
 // Each one of these has its own error type, but the functions can only fail one
 // way (too many corrupt bytes), so just throw away the error and return an
 // Option instead.
 #[allow(clippy::type_complexity)]
-pub static FN_CORRECT_ERRORS: phf::Map<u8, fn(&mut [u8]) -> Option<usize>> = phf_map! {
-    231u8 => |data: &mut [u8]| rs255w231::correct_errors(data).ok(),
-    232u8 => |data: &mut [u8]| rs255w232::correct_errors(data).ok(),
-    233u8 => |data: &mut [u8]| rs255w233::correct_errors(data).ok(),
-    234u8 => |data: &mut [u8]| rs255w234::correct_errors(data).ok(),
-    235u8 => |data: &mut [u8]| rs255w235::correct_errors(data).ok(),
-    236u8 => |data: &mut [u8]| rs255w236::correct_errors(data).ok(),
-    237u8 => |data: &mut [u8]| rs255w237::correct_errors(data).ok(),
-    238u8 => |data: &mut [u8]| rs255w238::correct_errors(data).ok(),
-    239u8 => |data: &mut [u8]| rs255w239::correct_errors(data).ok(),
-    240u8 => |data: &mut [u8]| rs255w240::correct_errors(data).ok(),
-    241u8 => |data: &mut [u8]| rs255w241::correct_errors(data).ok(),
-    242u8 => |data: &mut [u8]| rs255w242::correct_errors(data).ok(),
-    243u8 => |data: &mut [u8]| rs255w243::correct_errors(data).ok(),
-    244u8 => |data: &mut [u8]| rs255w244::correct_errors(data).ok(),
-    245u8 => |data: &mut [u8]| rs255w245::correct_errors(data).ok(),
-    246u8 => |data: &mut [u8]| rs255w246::correct_errors(data).ok(),
-    247u8 => |data: &mut [u8]| rs255w247::correct_errors(data).ok(),
-    248u8 => |data: &mut [u8]| rs255w248::correct_errors(data).ok(),
-    249u8 => |data: &mut [u8]| rs255w249::correct_errors(data).ok(),
-    250u8 => |data: &mut [u8]| rs255w250::correct_errors(data).ok(),
-    251u8 => |data: &mut [u8]| rs255w251::correct_errors(data).ok(),
-    252u8 => |data: &mut [u8]| rs255w252::correct_errors(data).ok(),
-    253u8 => |data: &mut [u8]| rs255w253::correct_errors(data).ok(),
-};
+static FN_CORRECT_ERRORS: [fn(&mut [u8]) -> Option<usize>; 23] = [
+    |data: &mut [u8]| rs255w231::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w232::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w233::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w234::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w235::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w236::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w237::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w238::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w239::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w240::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w241::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w242::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w243::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w244::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w245::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w246::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w247::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w248::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w249::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w250::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w251::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w252::correct_errors(data).ok(),
+    |data: &mut [u8]| rs255w253::correct_errors(data).ok(),
+];
+
+pub fn fn_correct_errors(rs_k: u8) -> fn(&mut [u8]) -> Option<usize> {
+    assert!(SUPPORTED.contains(&rs_k), "Unsupported rs_k: {rs_k}");
+
+    FN_CORRECT_ERRORS[usize::from(rs_k - SUPPORTED.start())]
+}

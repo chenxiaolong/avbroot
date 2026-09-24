@@ -171,7 +171,7 @@ impl Fec {
             .map_err(|e| Error::IntOutOfBounds("block_size", e))?;
 
         let rs_k = 255 - parity;
-        if !verityrs::FN_ENCODE.contains_key(&rs_k) {
+        if !verityrs::SUPPORTED.contains(&rs_k) {
             return Err(Error::UnsupportedParity(parity));
         }
 
@@ -369,7 +369,7 @@ impl Fec {
         let grid = self
             .read_round(reader, round)
             .map_err(|e| Error::DataRead("round", e))?;
-        let encode = verityrs::FN_ENCODE[&self.rs_k];
+        let encode = verityrs::fn_encode(self.rs_k);
         let parity = usize::from(self.parity());
 
         for (column, buf) in fec.chunks_exact_mut(parity).enumerate() {
@@ -392,7 +392,7 @@ impl Fec {
         let grid = self
             .read_round(reader, round)
             .map_err(|e| Error::DataRead("round", e))?;
-        let is_correct = verityrs::FN_IS_CORRECT[&self.rs_k];
+        let is_correct = verityrs::fn_is_correct(self.rs_k);
         let parity = usize::from(self.parity());
 
         for (column, buf) in fec.chunks_exact(parity).enumerate() {
@@ -423,7 +423,7 @@ impl Fec {
         let mut grid = self
             .read_round(file, round)
             .map_err(|e| Error::DataRead("round", e))?;
-        let correct_errors = verityrs::FN_CORRECT_ERRORS[&self.rs_k];
+        let correct_errors = verityrs::fn_correct_errors(self.rs_k);
         let parity = usize::from(self.parity());
         let mut num_corrected = 0;
 
@@ -911,9 +911,9 @@ mod tests {
     #[test]
     fn generate_update_verify_repair() {
         for block_size in [1, 2, 4, 8, 16, 32, 64] {
-            for rs_k in verityrs::FN_ENCODE.keys() {
+            for rs_k in verityrs::SUPPORTED {
                 println!("Testing block_size={block_size}, rs_k={rs_k}");
-                run_test(block_size, *rs_k);
+                run_test(block_size, rs_k);
             }
         }
     }
