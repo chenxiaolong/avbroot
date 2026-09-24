@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Remove phf dependency ([PR #652])
+
 ### Version 3.34.1
 
 * Fix `care_map.pb` handling when packing raw delta OTAs with `avbroot zip pack` or `avbroot zip repack` ([PR #650])
@@ -811,3 +815,4 @@ Behind-the-scenes changes:
 [PR #648]: https://github.com/chenxiaolong/avbroot/pull/648
 [PR #649]: https://github.com/chenxiaolong/avbroot/pull/649
 [PR #650]: https://github.com/chenxiaolong/avbroot/pull/650
+[PR #652]: https://github.com/chenxiaolong/avbroot/pull/652
