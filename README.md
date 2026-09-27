@@ -667,6 +667,8 @@ To verify the digital signatures of the downloads, follow [the steps here](https
 
 ## Contributing
 
+([AI policy](https://github.com/chenxiaolong/chenxiaolong/blob/master/AI_POLICY.md))
+
 Contributions are welcome! However, I'm unlikely to accept changes for supporting devices that behave significantly differently from Pixel devices.
 
 ## License
