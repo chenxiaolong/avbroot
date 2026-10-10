@@ -215,9 +215,9 @@ data.type = "vbmeta"
 data.deps = ["system"]
 
 [profile.pixel_v2.hashes_streaming]
-original = "eef2fd21cb50e7608ba1b81aceee415d4caeb52656236d664b740a9d38094e20"
-patched = "e64b20f0bc2479600d3610f88022cb02b1d51a7cb7c2436df3dde2feb3ee537d"
+original = "975f12962527e58a2f6354ec316aa8f19da296f51549b256be4c0ebe46620cc7"
+patched = "36a484c6f240d415f72c461db0a3b9b7989056b3990a92d1f84860c3b6ca0d60"
 
 [profile.pixel_v2.hashes_seekable]
-original = "86c11eceb0f50acd29a7ea065367d1380ed78c59a9d0674fde3115fb16b9a8f1"
-patched = "821af5e44cf3ab04106d40cd7f4a52a137be9bc68ad17bddf95da9c9ca444f0f"
+original = "0d07a3a85e1a3fdde0a6f1f2581893aa9c960991f0106df9eba1c334758fbeca"
+patched = "a1e5eeb971bc3fa4a5daf83626233230685df52b7433d9e176c82548ec0ab4a9"

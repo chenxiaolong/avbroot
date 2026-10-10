@@ -1165,7 +1165,6 @@ impl BootImagePatch for PrepatchedImagePatcher {
                 check!(2, old.second.is_empty(), new.second.is_empty());
 
                 if let (Some(old_v1), Some(new_v1)) = (&old.v1_extra, &new.v1_extra) {
-                    check!(2, old_v1.recovery_dtbo_offset, new_v1.recovery_dtbo_offset);
                     check!(
                         2,
                         old_v1.recovery_dtbo.is_empty(),

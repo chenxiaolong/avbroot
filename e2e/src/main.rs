@@ -342,7 +342,6 @@ fn create_boot_image(
                 ramdisk: ramdisks.into_iter().next().unwrap_or_default(),
                 second: Vec::new(),
                 v1_extra: Some(V1Extra {
-                    recovery_dtbo_offset: 0,
                     recovery_dtbo: Vec::new(),
                 }),
                 v2_extra: Some(V2Extra {

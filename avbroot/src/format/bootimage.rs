@@ -79,7 +79,9 @@ pub enum Error {
     InvalidHeaderSize(u32),
     #[error("Mismatched ramdisk ({ramdisks}) and metadata ({metas}) counts")]
     MismatchedRamdiskCounts { ramdisks: usize, metas: usize },
-    #[error("Vendor V3 only supports a single ramdisk (count: {0})")]
+    #[error("Invalid v1 recovery_dtbo offset: {field_value} != {reader_pos}")]
+    BootV1InvalidRecoveryDtboOffset { field_value: u64, reader_pos: u64 },
+    #[error("Vendor v3 only supports a single ramdisk (count: {0})")]
     VendorV3TooManyRamdisks(usize),
     #[error("Invalid vendor v4 total ramdisk size: {field_value} != {total_size}")]
     VendorV4InvalidRamdiskSize { field_value: u32, total_size: u32 },
@@ -156,7 +158,6 @@ struct RawV2Extra {
 
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct V1Extra {
-    pub recovery_dtbo_offset: u64,
     #[serde(skip)]
     pub recovery_dtbo: Vec<u8>,
 }
@@ -164,7 +165,6 @@ pub struct V1Extra {
 impl fmt::Debug for V1Extra {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("V1Extra")
-            .field("recovery_dtbo_offset", &self.recovery_dtbo_offset)
             .field("recovery_dtbo", &NumBytes(self.recovery_dtbo.len()))
             .finish()
     }
@@ -253,8 +253,7 @@ impl fmt::Display for BootImageV0Through2 {
 
         if let Some(v1) = &self.v1_extra {
             writeln!(f)?;
-            writeln!(f, "- Recovery dtbo size:   {}", v1.recovery_dtbo.len())?;
-            write!(f, "- Recovery dtbo offset: {}", v1.recovery_dtbo_offset)?;
+            write!(f, "- Recovery dtbo size:   {}", v1.recovery_dtbo.len())?;
         }
 
         if let Some(v2) = &self.v2_extra {
@@ -340,6 +339,7 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
         struct V1Data {
             v1_extra: V1Extra,
             recovery_dtbo_size: u32,
+            recovery_dtbo_offset: u64,
             header_size: u32,
         }
 
@@ -352,13 +352,13 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
                     .map_err(|e| Error::IntOutOfBounds("Boot::V1::recovery_dtbo_size", e))?;
 
             let v1_extra = V1Extra {
-                recovery_dtbo_offset: raw_v1.recovery_dtbo_offset.get(),
                 recovery_dtbo: vec![],
             };
 
             Some(V1Data {
                 v1_extra,
                 recovery_dtbo_size,
+                recovery_dtbo_offset: raw_v1.recovery_dtbo_offset.get(),
                 header_size: raw_v1.header_size.get(),
             })
         } else {
@@ -418,6 +418,17 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
             .map_err(|e| Error::DataRead("Boot::V0::second_padding", e))?;
 
         if let Some(v1) = &mut v1_data {
+            let recovery_dtbo_offset = reader
+                .stream_position()
+                .map_err(|e| Error::DataRead("Boot::V1::recovery_dtbo_offset", e))?;
+
+            if recovery_dtbo_offset != v1.recovery_dtbo_offset {
+                return Err(Error::BootV1InvalidRecoveryDtboOffset {
+                    field_value: v1.recovery_dtbo_offset,
+                    reader_pos: recovery_dtbo_offset,
+                });
+            }
+
             v1.v1_extra.recovery_dtbo = reader
                 .read_vec_exact(v1.recovery_dtbo_size as usize)
                 .map_err(|e| Error::DataRead("Boot::V1::recovery_dtbo", e))?;
@@ -530,9 +541,27 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
             .map_err(|e| Error::DataWrite("Boot::V0::header", e))?;
 
         if let Some(v1) = &self.v1_extra {
+            let mut offset = mem::size_of::<RawV0>() as u64;
+            offset += mem::size_of::<RawV1Extra>() as u64;
+            offset += self
+                .v2_extra
+                .as_ref()
+                .map(|_| mem::size_of::<RawV2Extra>() as u64)
+                .unwrap_or_default();
+            offset += padding::calc(offset, self.page_size.into());
+
+            offset += self.kernel.len() as u64;
+            offset += padding::calc(offset, self.page_size.into());
+
+            offset += self.ramdisk.len() as u64;
+            offset += padding::calc(offset, self.page_size.into());
+
+            offset += self.second.len() as u64;
+            offset += padding::calc(offset, self.page_size.into());
+
             let raw_v1 = RawV1Extra {
                 recovery_dtbo_size: (v1.recovery_dtbo.len() as u32).into(),
-                recovery_dtbo_offset: v1.recovery_dtbo_offset.into(),
+                recovery_dtbo_offset: offset.into(),
                 header_size: self.header_size().into(),
             };
 
