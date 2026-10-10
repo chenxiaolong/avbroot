@@ -30,7 +30,7 @@ flate2 = { version = "1.0.29", features = ["zlib-rs"] }
 gf256 = { version = "0.3.0", features = ["rs"] }
 hex = { version = "0.4.3", features = ["serde"] }
 lz4_flex = "0.14.0"
-lzma-rust2 = "0.20.1"
+lzma-rust2 = "0.21.0"
 memchr = "2.6.0"
 ml-dsa = { version = "0.1.1", features = ["rand_core"] }
 num-traits = "0.2.16"
@@ -46,7 +46,7 @@ regex = { version = "1.9.4", default-features = false, features = ["perf", "std"
 # instructions. sha2 is still used for signing purposes.
 # https://github.com/RustCrypto/hashes/issues/327
 ring = "0.17.14"
-rsa = { version = "0.10.0-rc.18", features = ["sha1", "sha2"] }
+rsa = { version = "0.10.0-rc.19", features = ["sha1", "sha2"] }
 ruzstd = "0.9.0"
 scrypt = { version = "0.12.0", features = ["phc"] }
 serde = { version = "1.0.188", features = ["derive"] }
@@ -72,7 +72,7 @@ system-properties = { git = "https://github.com/chenxiaolong/system-properties",
 [build-dependencies]
 constcat = "0.6.0"
 prost-build = "0.14.1"
-protox = "0.9.0"
+protox = "0.10.0"
 
 [dev-dependencies]
 assert_matches = "1.5.0"
