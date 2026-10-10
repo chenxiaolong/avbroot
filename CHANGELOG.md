@@ -9,6 +9,7 @@
 
 ### Unreleased
 
+* Fix handling of `recovery_dtbo_offset` field in v1 boot images ([PR #653])
 * Remove phf dependency ([PR #652])
 
 ### Version 3.34.1
@@ -816,3 +817,4 @@ Behind-the-scenes changes:
 [PR #649]: https://github.com/chenxiaolong/avbroot/pull/649
 [PR #650]: https://github.com/chenxiaolong/avbroot/pull/650
 [PR #652]: https://github.com/chenxiaolong/avbroot/pull/652
+[PR #653]: https://github.com/chenxiaolong/avbroot/pull/653
