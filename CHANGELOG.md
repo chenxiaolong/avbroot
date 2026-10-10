@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.35.0
 
 * Fix handling of `recovery_dtbo_offset` field in v1 boot images ([PR #653])
 * Remove phf dependency ([PR #652])
