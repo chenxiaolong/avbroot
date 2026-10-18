@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.36.0
 
 * Use `unknown` value instead of failing when generating `care_map.pb` from partitions with missing metadata ([Issue #656], [PR #657])
   * This matches what AOSP's build system does.
