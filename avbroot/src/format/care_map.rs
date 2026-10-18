@@ -28,8 +28,6 @@ pub enum Error {
     MissingPartition(String),
     #[error("No hash tree descriptor found in AVB header: {0}")]
     NoHashTreeDescriptor(String),
-    #[error("No property descriptor found in AVB header: {partition}: {property}")]
-    NoPropertyDescriptor { partition: String, property: String },
     #[error("Failed to extract payload operation #{1}: {0}")]
     Extract(String, usize, #[source] payload::Error),
     #[error("Failed to load AVB header from image: {0}")]
@@ -171,30 +169,30 @@ pub fn generate_partition_info(
     };
 
     let property = format!("com.android.build.{partition_name}.fingerprint");
-    let fingerprint = avb_header
-        .descriptors
-        .iter()
-        .find_map(|d| {
-            if let Descriptor::Property(p) = d
-                && p.key == property
-            {
-                p.value.to_str().map(|v| v.to_owned()).ok()
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| Error::NoPropertyDescriptor {
-            partition: partition_name.to_owned(),
-            property,
-        })?;
+    let fingerprint = avb_header.descriptors.iter().find_map(|d| {
+        if let Descriptor::Property(p) = d
+            && p.key == property
+        {
+            p.value.to_str().map(|v| v.to_owned()).ok()
+        } else {
+            None
+        }
+    });
 
     let image_blocks = hash_tree.image_size / u64::from(block_size);
 
     Ok(PartitionInfo {
         name: partition_name.to_owned(),
         ranges: format!("2,0,{image_blocks}"),
-        id: format!("ro.{partition_name}.build.fingerprint"),
-        fingerprint,
+        // Match AOSP AddCareMapForAbOta()'s behavior and don't fail if the
+        // fingerprint is missing. Some OEMs fail to add the property descriptor
+        // to certain partitions.
+        id: if fingerprint.is_some() {
+            format!("ro.{partition_name}.build.fingerprint")
+        } else {
+            "unknown".to_owned()
+        },
+        fingerprint: fingerprint.unwrap_or_else(|| "unknown".to_owned()),
     })
 }
 
