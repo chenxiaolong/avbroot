@@ -9,6 +9,8 @@
 
 ### Unreleased
 
+* Use `unknown` value instead of failing when generating `care_map.pb` from partitions with missing metadata ([Issue #656], [PR #657])
+  * This matches what AOSP's build system does.
 * Update dependencies ([PR #658])
 
 ### Version 3.35.0
@@ -566,6 +568,7 @@ Behind-the-scenes changes:
 [Issue #633]: https://github.com/chenxiaolong/avbroot/issues/633
 [Issue #639]: https://github.com/chenxiaolong/avbroot/issues/639
 [Issue #643]: https://github.com/chenxiaolong/avbroot/issues/643
+[Issue #656]: https://github.com/chenxiaolong/avbroot/issues/656
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -824,4 +827,5 @@ Behind-the-scenes changes:
 [PR #652]: https://github.com/chenxiaolong/avbroot/pull/652
 [PR #653]: https://github.com/chenxiaolong/avbroot/pull/653
 [PR #654]: https://github.com/chenxiaolong/avbroot/pull/654
+[PR #657]: https://github.com/chenxiaolong/avbroot/pull/657
 [PR #658]: https://github.com/chenxiaolong/avbroot/pull/658
