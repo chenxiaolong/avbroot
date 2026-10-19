@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.37.0
 
 * Fix `recovery_dtbo_offset` handling in v1/v2 boot images when no `recovery_dtbo` image exists ([Issue #659], [PR #660])
 
