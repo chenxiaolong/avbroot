@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Fix `recovery_dtbo_offset` handling in v1/v2 boot images when no `recovery_dtbo` image exists ([Issue #659], [PR #660])
+
 ### Version 3.36.0
 
 * Use `unknown` value instead of failing when generating `care_map.pb` from partitions with missing metadata ([Issue #656], [PR #657])
@@ -569,6 +573,7 @@ Behind-the-scenes changes:
 [Issue #639]: https://github.com/chenxiaolong/avbroot/issues/639
 [Issue #643]: https://github.com/chenxiaolong/avbroot/issues/643
 [Issue #656]: https://github.com/chenxiaolong/avbroot/issues/656
+[Issue #659]: https://github.com/chenxiaolong/avbroot/issues/659
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -829,3 +834,4 @@ Behind-the-scenes changes:
 [PR #654]: https://github.com/chenxiaolong/avbroot/pull/654
 [PR #657]: https://github.com/chenxiaolong/avbroot/pull/657
 [PR #658]: https://github.com/chenxiaolong/avbroot/pull/658
+[PR #660]: https://github.com/chenxiaolong/avbroot/pull/660
