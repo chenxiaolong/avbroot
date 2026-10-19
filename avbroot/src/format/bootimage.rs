@@ -422,7 +422,7 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
                 .stream_position()
                 .map_err(|e| Error::DataRead("Boot::V1::recovery_dtbo_offset", e))?;
 
-            if recovery_dtbo_offset != v1.recovery_dtbo_offset {
+            if recovery_dtbo_offset != v1.recovery_dtbo_offset && v1.recovery_dtbo_size != 0 {
                 return Err(Error::BootV1InvalidRecoveryDtboOffset {
                     field_value: v1.recovery_dtbo_offset,
                     reader_pos: recovery_dtbo_offset,
@@ -541,23 +541,27 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
             .map_err(|e| Error::DataWrite("Boot::V0::header", e))?;
 
         if let Some(v1) = &self.v1_extra {
-            let mut offset = mem::size_of::<RawV0>() as u64;
-            offset += mem::size_of::<RawV1Extra>() as u64;
-            offset += self
-                .v2_extra
-                .as_ref()
-                .map(|_| mem::size_of::<RawV2Extra>() as u64)
-                .unwrap_or_default();
-            offset += padding::calc(offset, self.page_size.into());
+            let mut offset = 0;
 
-            offset += self.kernel.len() as u64;
-            offset += padding::calc(offset, self.page_size.into());
+            if !v1.recovery_dtbo.is_empty() {
+                offset += mem::size_of::<RawV0>() as u64;
+                offset += mem::size_of::<RawV1Extra>() as u64;
+                offset += self
+                    .v2_extra
+                    .as_ref()
+                    .map(|_| mem::size_of::<RawV2Extra>() as u64)
+                    .unwrap_or_default();
+                offset += padding::calc(offset, self.page_size.into());
 
-            offset += self.ramdisk.len() as u64;
-            offset += padding::calc(offset, self.page_size.into());
+                offset += self.kernel.len() as u64;
+                offset += padding::calc(offset, self.page_size.into());
 
-            offset += self.second.len() as u64;
-            offset += padding::calc(offset, self.page_size.into());
+                offset += self.ramdisk.len() as u64;
+                offset += padding::calc(offset, self.page_size.into());
+
+                offset += self.second.len() as u64;
+                offset += padding::calc(offset, self.page_size.into());
+            }
 
             let raw_v1 = RawV1Extra {
                 recovery_dtbo_size: (v1.recovery_dtbo.len() as u32).into(),
