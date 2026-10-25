@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update dependencies ([PR #661])
+
 ### Version 3.37.0
 
 * Fix `recovery_dtbo_offset` handling in v1/v2 boot images when no `recovery_dtbo` image exists ([Issue #659], [PR #660])
@@ -835,3 +839,4 @@ Behind-the-scenes changes:
 [PR #657]: https://github.com/chenxiaolong/avbroot/pull/657
 [PR #658]: https://github.com/chenxiaolong/avbroot/pull/658
 [PR #660]: https://github.com/chenxiaolong/avbroot/pull/660
+[PR #661]: https://github.com/chenxiaolong/avbroot/pull/661
