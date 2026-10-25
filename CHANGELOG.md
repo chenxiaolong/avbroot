@@ -9,6 +9,7 @@
 
 ### Unreleased
 
+* Add support for Magisk 31100 ([PR #662])
 * Update dependencies ([PR #661])
 
 ### Version 3.37.0
@@ -840,3 +841,4 @@ Behind-the-scenes changes:
 [PR #658]: https://github.com/chenxiaolong/avbroot/pull/658
 [PR #660]: https://github.com/chenxiaolong/avbroot/pull/660
 [PR #661]: https://github.com/chenxiaolong/avbroot/pull/661
+[PR #662]: https://github.com/chenxiaolong/avbroot/pull/662
