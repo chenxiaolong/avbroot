@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.37.1
 
 * Add support for Magisk 31100 ([PR #662])
 * Update dependencies ([PR #661])
