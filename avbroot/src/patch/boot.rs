@@ -210,7 +210,7 @@ impl MagiskRootPatcher {
     //   replaced by PREINITDEVICE
     // - Versions newer than the latest supported version are assumed to support
     //   the same features as the latest version
-    const VERS_SUPPORTED: &'static [Range<u32>] = &[25102..25207, 25211..31100];
+    const VERS_SUPPORTED: &'static [Range<u32>] = &[25102..25207, 25211..31200];
     const VER_PREINIT_DEVICE: RangeFrom<u32> = 25211..;
     const VER_RANDOM_SEED: Range<u32> = 25211..26103;
     const VER_PATCH_VBMETA: Range<u32> = Self::VERS_SUPPORTED[0].start..26202;
@@ -559,7 +559,8 @@ impl BootImagePatch for MagiskRootPatcher {
                     (Self::ZIP_LIBMAGISK64, b"overlay.d/sbin/magisk64.xz")
                 }
                 // The stub apk was introduced in commit
-                // ad0e6511e11ebec65aa9b5b916e1397342850319.
+                // ad0e6511e11ebec65aa9b5b916e1397342850319 and removed in
+                // commit c86a8776cee88689dd684ec1dd7d584d77540110.
                 p if p == Self::ZIP_STUB => {
                     debug!("Magisk stub found");
                     (Self::ZIP_STUB, b"overlay.d/sbin/stub.xz")
