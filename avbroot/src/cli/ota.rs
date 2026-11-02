@@ -16,7 +16,6 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use bitflags::bitflags;
-use clap::{ArgAction, Args, Parser, Subcommand, value_parser};
 use rawzip::{
     CompressionMethod, Crc32Option, DataDescriptorOutput, RECOMMENDED_BUFFER_SIZE, ZipArchive,
     ZipArchiveEntryWayfinder, ZipArchiveWriter, extra_fields::ExtraFieldId,
@@ -25,6 +24,7 @@ use rayon::{iter::IntoParallelRefIterator, prelude::ParallelIterator};
 use tempfile::{NamedTempFile, TempDir};
 use topological_sort::TopologicalSort;
 use tracing::{Span, debug_span, error, info, warn};
+use winnow_args::{Args, Subcommand};
 use x509_cert::Certificate;
 
 use crate::{
@@ -1721,7 +1721,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
 
     let mut boot_patchers = Vec::<Box<dyn BootImagePatch + Sync>>::new();
 
-    if let Some(magisk) = &cli.root.magisk {
+    if let Some(magisk) = &cli.magisk {
         boot_patchers.push(Box::new(
             MagiskRootPatcher::new(
                 magisk,
@@ -1731,7 +1731,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
             )
             .context("Failed to create Magisk boot image patcher")?,
         ));
-    } else if let Some(prepatched) = &cli.root.prepatched {
+    } else if let Some(prepatched) = &cli.prepatched {
         // NOTE: This patcher must run first! Otherwise, it'll wipe out any
         // ramdisk changes made by other patchers.
         boot_patchers.push(Box::new(PrepatchedImagePatcher::new(
@@ -1739,7 +1739,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
             cli.ignore_prepatched_compat + 1,
         )));
     } else {
-        assert!(cli.root.rootless);
+        assert!(cli.rootless);
     }
 
     if cli.skip_system_ota_cert {
@@ -2411,42 +2411,18 @@ pub fn ota_main(cli: &OtaCli, cancel_signal: &AtomicBool) -> Result<()> {
     }
 }
 
-// We currently use the `conflicts_with_all` option instead of `requires`
-// because the latter currently doesn't work when the dependent is an argument
-// inside a group: https://github.com/clap-rs/clap/issues/4707. Even if that
-// were fixed, the former option's error message is much more user friendly.
-
-const HEADING_PATH: &str = "Path options";
-const HEADING_KEY: &str = "Key options";
-const HEADING_MAGISK: &str = "Magisk patch options";
-const HEADING_PREPATCHED: &str = "Prepatched boot image options";
-const HEADING_OTHER: &str = "Other patch options";
-
-#[derive(Debug, Args)]
-#[group(required = true, multiple = false)]
-pub struct RootGroup {
-    /// Path to Magisk APK.
-    #[arg(long, value_name = "FILE", value_parser, help_heading = HEADING_MAGISK)]
-    pub magisk: Option<PathBuf>,
-
-    /// Path to prepatched boot image.
-    #[arg(long, value_name = "FILE", value_parser, help_heading = HEADING_PREPATCHED)]
-    pub prepatched: Option<PathBuf>,
-
-    /// Skip applying root patch.
-    #[arg(long, help_heading = HEADING_OTHER)]
-    pub rootless: bool,
-}
-
 /// Patch a full OTA.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
+#[arg(group("pass_avb"))]
+#[arg(group("pass_ota"))]
+#[arg(group("root", required))]
 pub struct PatchCli {
     /// Patch to original OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser, help_heading = HEADING_PATH)]
+    #[arg(short, long, value_name = "FILE", help_heading = "Path options")]
     pub input: PathBuf,
 
     /// Path to new OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser, help_heading = HEADING_PATH)]
+    #[arg(short, long, value_name = "FILE", help_heading = "Path options")]
     pub output: Option<PathBuf>,
 
     /// Signing key for vbmeta headers.
@@ -2457,8 +2433,7 @@ pub struct PatchCli {
         long,
         alias = "privkey-avb",
         value_name = "FILE",
-        value_parser,
-        help_heading = HEADING_KEY,
+        help_heading = "Key options"
     )]
     pub key_avb: PathBuf,
 
@@ -2470,13 +2445,12 @@ pub struct PatchCli {
         long,
         alias = "privkey-ota",
         value_name = "FILE",
-        value_parser,
-        help_heading = HEADING_KEY,
+        help_heading = "Key options"
     )]
     pub key_ota: PathBuf,
 
     /// Certificate for OTA signing key.
-    #[arg(long, value_name = "FILE", value_parser, help_heading = HEADING_KEY)]
+    #[arg(long, value_name = "FILE", help_heading = "Key options")]
     pub cert_ota: PathBuf,
 
     /// Environment variable containing AVB private key passphrase.
@@ -2484,9 +2458,8 @@ pub struct PatchCli {
         long,
         alias = "passphrase-avb-env-var",
         value_name = "ENV_VAR",
-        value_parser,
         group = "pass_avb",
-        help_heading = HEADING_KEY,
+        help_heading = "Key options"
     )]
     pub pass_avb_env_var: Option<OsString>,
 
@@ -2495,9 +2468,8 @@ pub struct PatchCli {
         long,
         alias = "passphrase-avb-file",
         value_name = "FILE",
-        value_parser,
         group = "pass_avb",
-        help_heading = HEADING_KEY,
+        help_heading = "Key options"
     )]
     pub pass_avb_file: Option<PathBuf>,
 
@@ -2506,9 +2478,8 @@ pub struct PatchCli {
         long,
         alias = "passphrase-ota-env-var",
         value_name = "ENV_VAR",
-        value_parser,
         group = "pass_ota",
-        help_heading = HEADING_KEY,
+        help_heading = "Key options"
     )]
     pub pass_ota_env_var: Option<OsString>,
 
@@ -2517,9 +2488,8 @@ pub struct PatchCli {
         long,
         alias = "passphrase-ota-file",
         value_name = "FILE",
-        value_parser,
         group = "pass_ota",
-        help_heading = HEADING_KEY,
+        help_heading = "Key options"
     )]
     pub pass_ota_file: Option<PathBuf>,
 
@@ -2529,7 +2499,7 @@ pub struct PatchCli {
     /// public keys. The program will be invoked as:
     ///
     /// <program> <algo> <public key> [file <pass file>|env <pass env>]
-    #[arg(long, value_name = "PROGRAM", value_parser, help_heading = HEADING_KEY)]
+    #[arg(long, value_name = "PROGRAM", help_heading = "Key options")]
     pub signing_helper: Option<PathBuf>,
 
     /// Preferred signing method.
@@ -2544,17 +2514,11 @@ pub struct PatchCli {
     /// For ML-DSA, non-deterministic signatures use the hedged variant. This
     /// can help reduce the impact of broken RNGs and side channel attacks at
     /// the expense of the output no longer being byte-for-byte reproducible.
-    #[arg(long, default_value_t, conflicts_with = "signing_helper")]
-    signing_method: SigningMethod,
+    #[arg(long, value_name = "METHOD", default_fn = SigningMethod::default, conflicts("--signing-helper"), help_heading = "Key options")]
+    pub signing_method: SigningMethod,
 
     /// Use partition image from a file instead of the original payload.
-    #[arg(
-        long,
-        value_names = ["PARTITION", "FILE"],
-        value_parser = value_parser!(OsString),
-        num_args = 2,
-        help_heading = HEADING_PATH,
-    )]
+    #[arg(long, value_names("PARTITION", "FILE"), help_heading = "Path options")]
     pub replace: Vec<OsString>,
 
     /// Re-sign unmodified partition image.
@@ -2567,18 +2531,37 @@ pub struct PatchCli {
     /// This option only has an effect if the specified partition image is
     /// originally signed. If it is unsigned because the AVB descriptors are
     /// embedded in another signed vbmeta image, then this option is a no-op.
-    #[arg(long, value_names = ["PARTITION"], help_heading = HEADING_PATH)]
+    #[arg(long, value_name = "PARTITION", help_heading = "Path options")]
     pub re_sign: Vec<String>,
 
-    #[command(flatten)]
-    pub root: RootGroup,
+    /// Path to Magisk APK.
+    #[arg(
+        long,
+        value_name = "FILE",
+        group = "root",
+        help_heading = "Magisk patch options"
+    )]
+    pub magisk: Option<PathBuf>,
+
+    /// Path to prepatched boot image.
+    #[arg(
+        long,
+        value_name = "FILE",
+        group = "root",
+        help_heading = "Prepatched boot image options"
+    )]
+    pub prepatched: Option<PathBuf>,
+
+    /// Skip applying root patch.
+    #[arg(long, group = "root", help_heading = "Other patch options")]
+    pub rootless: bool,
 
     /// Magisk preinit block device (version >=25211 only).
     #[arg(
         long,
         value_name = "PARTITION",
-        conflicts_with_all = ["prepatched", "rootless"],
-        help_heading = HEADING_MAGISK,
+        requires("--magisk"),
+        help_heading = "Magisk patch options"
     )]
     pub magisk_preinit_device: Option<String>,
 
@@ -2586,25 +2569,21 @@ pub struct PatchCli {
     #[arg(
         long,
         value_name = "NUMBER",
-        conflicts_with_all = ["prepatched", "rootless"],
-        help_heading = HEADING_MAGISK,
+        requires("--magisk"),
+        help_heading = "Magisk patch options"
     )]
     pub magisk_random_seed: Option<u64>,
 
     /// Ignore Magisk compatibility/version warnings.
-    #[arg(
-        long,
-        conflicts_with_all = ["prepatched", "rootless"],
-        help_heading = HEADING_MAGISK,
-    )]
+    #[arg(long, requires("--magisk"), help_heading = "Magisk patch options")]
     pub ignore_magisk_warnings: bool,
 
     /// Ignore compatibility issues with prepatched boot images.
     #[arg(
         long,
-        action = ArgAction::Count,
-        conflicts_with_all = ["magisk", "rootless"],
-        help_heading = HEADING_PREPATCHED,
+        count,
+        requires("--magisk"),
+        help_heading = "Prepatched boot image options"
     )]
     pub ignore_prepatched_compat: u8,
 
@@ -2613,7 +2592,7 @@ pub struct PatchCli {
     /// DO NOT USE THIS unless you've manually added the certificate to the
     /// system image already. Otherwise, installing further updates via a custom
     /// OTA updater app while booted into Android will not be possible.
-    #[arg(long, help_heading = HEADING_OTHER)]
+    #[arg(long, help_heading = "Other patch options")]
     pub skip_system_ota_cert: bool,
 
     /// Skip adding OTA certificate to recovery image.
@@ -2624,15 +2603,15 @@ pub struct PatchCli {
     ///
     /// When this option is used with --rootless, the boot images in the OTA
     /// will not be modified.
-    #[arg(long, help_heading = HEADING_OTHER)]
+    #[arg(long, help_heading = "Other patch options")]
     pub skip_recovery_ota_cert: bool,
 
     /// Add AVB public key to trusted keys for DSU.
-    #[arg(long, help_heading = HEADING_OTHER)]
+    #[arg(long, help_heading = "Other patch options")]
     pub dsu: bool,
 
     /// Forcibly clear vbmeta flags if they disable AVB.
-    #[arg(long, help_heading = HEADING_OTHER)]
+    #[arg(long, help_heading = "Other patch options")]
     pub clear_vbmeta_flags: bool,
 
     /// Override the virtual A/B CoW compression algorithm.
@@ -2644,7 +2623,12 @@ pub struct PatchCli {
     ///
     /// Note that selecting a newer algorithm will prevent upgrading from older
     /// Android versions before support for the algorithm was introduced.
-    #[arg(long, value_name = "ALGO", help_heading = HEADING_OTHER)]
+    #[arg(
+        long,
+        value_name = "ALGO",
+        from_str,
+        help_heading = "Other patch options"
+    )]
     pub vabc_algo: Option<VabcAlgo>,
 
     /// Zip creation mode for the output OTA zip.
@@ -2660,63 +2644,58 @@ pub struct PatchCli {
     #[arg(
         long,
         value_name = "MODE",
-        default_value_t = ZipMode::Streaming,
-        help_heading = HEADING_OTHER,
+        default_fn = ZipMode::default,
+        help_heading = "Other patch options",
     )]
     pub zip_mode: ZipMode,
 
     /// (Deprecated: no longer needed)
-    #[arg(
-        long,
-        value_name = "PARTITION",
-        hide = true,
-        help_heading = HEADING_OTHER,
-    )]
+    #[arg(long, value_name = "PARTITION", hide)]
     pub boot_partition: Option<String>,
 }
 
 #[derive(Debug, Args)]
-#[group(multiple = false)]
+#[arg(group("extract"))]
 pub struct ExtractGroup {
     /// Extract all images from the payload.
     ///
     /// By default, only images that could potentially be patched by avbroot are
     /// extracted.
-    #[arg(short, long)]
+    #[arg(short, long, group = "extract")]
     pub all: bool,
 
     /// Don't extract anything from the payload.
     ///
     /// This is useful for using --cert-ota and --public-key-avb without
     /// extracting any partition images.
-    #[arg(short, long)]
+    #[arg(short, long, group = "extract")]
     pub none: bool,
 
     /// (Deprecated: Specify an exact partition name instead.)
-    #[arg(long, hide = true)]
+    #[arg(long, hide, group = "extract")]
     pub boot_only: bool,
 
     /// Extract specific images from the payload.
-    #[arg(short, long)]
+    #[arg(short, long, group = "extract")]
     pub partition: Vec<String>,
 }
 
 /// Extract a full OTA.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct ExtractCli {
     /// Path to OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     pub input: PathBuf,
 
     /// Output directory for extracted images.
-    #[arg(short, long, value_parser, default_value = ".")]
+    #[arg(short, long, default = ".")]
     pub directory: PathBuf,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     pub extract: ExtractGroup,
 
     /// (Deprecated: no longer needed)
-    #[arg(long, value_name = "PARTITION", hide = true)]
+    #[arg(long, value_name = "PARTITION", hide)]
     pub boot_partition: Option<String>,
 
     /// Generate fastboot info files.
@@ -2726,37 +2705,37 @@ pub struct ExtractCli {
     /// Extract OTA certificate to file.
     ///
     /// This is not extracted by default.
-    #[arg(long, value_name = "FILE", value_parser)]
+    #[arg(long, value_name = "FILE")]
     pub cert_ota: Option<PathBuf>,
 
     /// Extract AVB public key to file.
     ///
     /// This is not extracted by default.
-    #[arg(long, value_name = "FILE", value_parser)]
+    #[arg(long, value_name = "FILE")]
     pub public_key_avb: Option<PathBuf>,
 }
 
 /// Verify signatures of an OTA.
 ///
 /// This includes both the whole-file signature and the payload signature.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct VerifyCli {
     /// Path to OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     pub input: PathBuf,
 
     /// Certificate for verifying the OTA signatures.
     ///
     /// If this is omitted, the check only verifies that the signatures are
     /// valid, not that they are trusted.
-    #[arg(long, value_name = "FILE", value_parser)]
+    #[arg(long, value_name = "FILE")]
     pub cert_ota: Option<PathBuf>,
 
     /// Public key for verifying the vbmeta signatures.
     ///
     /// If this is omitted, the check only verifies that the signatures are
     /// valid, not that they are trusted.
-    #[arg(long, value_name = "FILE", value_parser)]
+    #[arg(long, value_name = "FILE")]
     pub public_key_avb: Option<PathBuf>,
 
     /// Skip verifying OTA certificate in recovery image.
@@ -2765,7 +2744,7 @@ pub struct VerifyCli {
     /// that avbroot cannot parse. This certificate check ensures that the OTA
     /// is configured properly to allow sideloading further OTAs signed by the
     /// same key.
-    #[arg(long, help_heading = HEADING_OTHER)]
+    #[arg(long, help_heading = "Other patch options")]
     pub skip_recovery_ota_cert: bool,
 
     /// Fail if a referenced image is missing.
@@ -2777,10 +2756,10 @@ pub struct VerifyCli {
 }
 
 /// List partitions contained in an OTA.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct ListCli {
     /// Path to OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     pub input: PathBuf,
 }
 
@@ -2794,8 +2773,8 @@ enum OtaCommand {
 }
 
 /// Patch or extract OTA images.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct OtaCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: OtaCommand,
 }

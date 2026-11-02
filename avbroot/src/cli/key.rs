@@ -9,8 +9,8 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand, ValueEnum};
 use tracing::warn;
+use winnow_args::{Args, Subcommand, ValueEnum};
 
 use crate::{
     crypto::{self, PassphraseSource, SigningKeyType, SigningPrivateKey},
@@ -31,10 +31,7 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
             let source = get_passphrase_source(&c.passphrase, &c.output);
             let generate_key_type = c.key_type.unwrap_or_else(|| {
                 let default = GenerateKeyType::Rsa4096;
-                warn!(
-                    "Defaulting to {}; -t/--key-type will be required in avbroot 4.0",
-                    default.to_possible_value().unwrap().get_name(),
-                );
+                warn!("Defaulting to {default:?}; -t/--key-type will be required in avbroot 4.0");
                 default
             });
             let key_type = match generate_key_type {
@@ -105,34 +102,35 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
 }
 
 #[derive(Debug, Args)]
-#[group(required = true, multiple = false)]
+#[arg(group("key", required))]
 struct PublicKeyInputGroup {
     /// Path to private key.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE", group = "key")]
     key: Option<PathBuf>,
 
     /// Path to public key.
-    #[arg(short, long, value_name = "FILE", value_parser, conflicts_with_all = ["pass_env_var", "pass_file"])]
+    #[arg(short, long, value_name = "FILE", group = "key")]
     public_key: Option<PathBuf>,
 
     /// Path to certificate.
-    #[arg(short, long, value_name = "FILE", value_parser, conflicts_with_all = ["pass_env_var", "pass_file"])]
+    #[arg(short, long, value_name = "FILE", group = "key")]
     cert: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
+#[arg(group("pass"))]
 struct PassphraseGroup {
     /// Environment variable containing private key passphrase.
-    #[arg(long, value_name = "ENV_VAR", value_parser, group = "pass")]
+    #[arg(long, value_name = "ENV_VAR", group = "pass")]
     pass_env_var: Option<OsString>,
 
     /// File containing private key passphrase.
-    #[arg(long, value_name = "FILE", value_parser, group = "pass")]
+    #[arg(long, value_name = "FILE", group = "pass")]
     pass_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
-#[value(rename_all = "lower")]
+#[arg(rename_all = "lowercase")]
 pub enum GenerateKeyType {
     Rsa2048,
     Rsa4096,
@@ -144,10 +142,10 @@ pub enum GenerateKeyType {
 /// Generate a signing keypair.
 ///
 /// The output is saved in the standard PKCS8 format.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct GenerateKeyCli {
     /// Path to output private key.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// The type of key to create.
@@ -156,30 +154,30 @@ struct GenerateKeyCli {
     #[arg(short = 't', long, value_name = "TYPE")]
     key_type: Option<GenerateKeyType>,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     passphrase: PassphraseGroup,
 }
 
 /// Generate a certificate.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct GenerateCertCli {
     /// Path to input private key.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     key: PathBuf,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     passphrase: PassphraseGroup,
 
     /// Path to output certificate.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Certificate subject with comma-separated components.
-    #[arg(short, long, default_value = "CN=avbroot")]
+    #[arg(short, long, default = "CN=avbroot")]
     subject: String,
 
     /// Certificate validity in days.
-    #[arg(short, long, default_value = "10000")]
+    #[arg(short, long, default = "10000")]
     validity: u64,
 }
 
@@ -187,28 +185,28 @@ struct GenerateCertCli {
 ///
 /// The public key is stored in both the private key and the certificate. Either
 /// one can be used interchangeably.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct EncodeAvbCli {
     /// Path to output AVB public key.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     input: PublicKeyInputGroup,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     passphrase: PassphraseGroup,
 }
 
 /// Convert an AVB-encoded public key to a PKCS8-encoded public key.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct DecodeAvbCli {
     /// Path to output PKCS8-encoded public key.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Path to AVB-encoded public key.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     key: PathBuf,
 }
 
@@ -217,15 +215,15 @@ enum KeyCommand {
     GenerateKey(GenerateKeyCli),
     GenerateCert(GenerateCertCli),
     /// (Deprecated: Use `avbroot key encode-avb` instead.)
-    #[command(hide = true)]
+    #[arg(hide)]
     ExtractAvb(EncodeAvbCli),
     EncodeAvb(EncodeAvbCli),
     DecodeAvb(DecodeAvbCli),
 }
 
 /// Generate and convert keys.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct KeyCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: KeyCommand,
 }

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use winnow_args::{Args, Subcommand};
 
 use crate::{
     format::fec::FecImage,
@@ -108,64 +108,64 @@ pub fn fec_main(cli: &FecCli, cancel_signal: &AtomicBool) -> Result<()> {
 }
 
 /// Generate FEC data for a file.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct GenerateCli {
     /// Path to input data.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output FEC data.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     fec: PathBuf,
 
     /// Number of parity bytes per RS block (min 2, max 24).
-    #[arg(short, long, value_name = "BYTES", default_value = "2")]
+    #[arg(short, long, value_name = "BYTES", default = "2")]
     parity: u8,
 }
 
 /// Update FEC data after a file is modified.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct UpdateCli {
     /// Path to input data.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to FEC data.
     ///
     /// The file will be modified in place.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     fec: PathBuf,
 
     /// Input file ranges that were updated.
     ///
     /// This is a half-open range and can be specified multiple times.
-    #[arg(short, long, value_names = ["START", "END"], num_args = 2)]
+    #[arg(short, long, value_names("START", "END"))]
     range: Vec<u64>,
 }
 
 /// Verify that a file contains no errors.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct VerifyCli {
     /// Path to input data.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to input FEC data.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     fec: PathBuf,
 }
 
 /// Repair a file.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct RepairCli {
     /// Path to data.
     ///
     /// The file will be modified in place.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to input FEC data.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     fec: PathBuf,
 }
 
@@ -180,8 +180,8 @@ enum FecCommand {
 /// Generate dm-verity FEC data and verify/repair files.
 ///
 /// These commands operate on FEC files with AOSP's header format.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct FecCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: FecCommand,
 }

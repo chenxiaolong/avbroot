@@ -11,8 +11,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::{Args, Parser, Subcommand};
 use tracing::info;
+use winnow_args::{Args, Subcommand};
 
 use crate::{
     cli::ota,
@@ -430,20 +430,21 @@ pub fn payload_main(cli: &PayloadCli, cancel_signal: &AtomicBool) -> Result<()> 
 }
 
 #[derive(Debug, Args)]
+#[arg(group("pass"))]
 struct KeyGroup {
     /// Path to signing key.
     ///
     /// This should normally be a private key. However, if --signing-helper is
     /// used, then it should be a public key instead.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     key: PathBuf,
 
     /// Environment variable containing private key passphrase.
-    #[arg(long, value_name = "ENV_VAR", value_parser, group = "pass")]
+    #[arg(long, value_name = "ENV_VAR", group = "pass")]
     pass_env_var: Option<OsString>,
 
     /// File containing private key passphrase.
-    #[arg(long, value_name = "FILE", value_parser, group = "pass")]
+    #[arg(long, value_name = "FILE", group = "pass")]
     pass_file: Option<PathBuf>,
 
     /// External program for signing.
@@ -452,7 +453,7 @@ struct KeyGroup {
     /// program will be invoked as:
     ///
     /// <program> <algo> <public key> [file <pass file>|env <pass env>]
-    #[arg(long, value_name = "PROGRAM", value_parser)]
+    #[arg(long, value_name = "PROGRAM")]
     signing_helper: Option<PathBuf>,
 
     /// Preferred signing method.
@@ -467,7 +468,7 @@ struct KeyGroup {
     /// For ML-DSA, non-deterministic signatures use the hedged variant. This
     /// can help reduce the impact of broken RNGs and side channel attacks at
     /// the expense of the output no longer being byte-for-byte reproducible.
-    #[arg(long, default_value_t, conflicts_with = "signing_helper")]
+    #[arg(long, value_name = "METHOD", default_fn = SigningMethod::default, conflicts("--signing-helper"))]
     signing_method: SigningMethod,
 }
 
@@ -478,32 +479,22 @@ struct KeyGroup {
 ///
 /// If any partition names are unsafe to use in a path, the extraction process
 /// will fail and exit.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct UnpackCli {
     /// Path to input payload binary.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output info TOML.
-    #[arg(
-        long,
-        value_name = "FILE",
-        value_parser,
-        default_value = "payload.toml"
-    )]
+    #[arg(long, value_name = "FILE", default = "payload.toml")]
     output_info: PathBuf,
 
     /// Path to output images directory.
-    #[arg(
-        long,
-        value_name = "DIR",
-        value_parser,
-        default_value = "payload_images"
-    )]
+    #[arg(long, value_name = "DIR", default = "payload_images")]
     output_images: PathBuf,
 
     /// Do not output images.
-    #[arg(long, conflicts_with_all = ["output_images", "skeleton"])]
+    #[arg(long, conflicts("--output-images", "--skeleton"))]
     no_output_images: bool,
 
     /// Only create empty sparse files for output images.
@@ -517,35 +508,25 @@ struct UnpackCli {
 /// file. Extra images in the input images directory that aren't listed will be
 /// silently ignored. Images are added to the payload in the order that they are
 /// listed in the info TOML file.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct PackCli {
     /// Path to output payload binary.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Path to output payload properties file.
-    #[arg(short = 'O', long, value_name = "FILE", value_parser)]
+    #[arg(short = 'O', long, value_name = "FILE")]
     output_properties: Option<PathBuf>,
 
     /// Path to input info TOML.
-    #[arg(
-        long,
-        value_name = "FILE",
-        value_parser,
-        default_value = "payload.toml"
-    )]
+    #[arg(long, value_name = "FILE", default = "payload.toml")]
     input_info: PathBuf,
 
     /// Path to input images directory.
-    #[arg(
-        long,
-        value_name = "DIR",
-        value_parser,
-        default_value = "payload_images"
-    )]
+    #[arg(long, value_name = "DIR", default = "payload_images")]
     input_images: PathBuf,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     key: KeyGroup,
 }
 
@@ -553,29 +534,29 @@ struct PackCli {
 ///
 /// This command is equivalent to running `unpack` and `pack`, except without
 /// storing the unpacked data to disk nor recompressing the partition images.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct RepackCli {
     /// Path to input payload binary.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output payload binary.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Path to output payload properties file.
-    #[arg(short = 'O', long, value_name = "FILE", value_parser)]
+    #[arg(short = 'O', long, value_name = "FILE")]
     output_properties: Option<PathBuf>,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     key: KeyGroup,
 }
 
 /// Display payload information.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct InfoCli {
     /// Path to input payload binary.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 }
 
@@ -588,12 +569,12 @@ enum PayloadCommand {
 }
 
 /// Pack, unpack, and inspect OTA payloads.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct PayloadCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: PayloadCommand,
 
     /// Don't print payload header information.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global)]
     quiet: bool,
 }

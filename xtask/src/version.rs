@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -8,8 +8,8 @@ use std::{
 };
 
 use anyhow::{Result, bail};
-use clap::Parser;
 use toml_edit::{DocumentMut, value};
+use winnow_args::Args;
 
 use crate::WORKSPACE_DIR;
 
@@ -76,7 +76,7 @@ pub fn set_version_subcommand(cli: &SetVersionCli) -> Result<()> {
 }
 
 /// Set the version number in all Cargo.toml files.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct SetVersionCli {
     /// Version number.
     #[arg(short = 'V', long, value_name = "VERSION")]

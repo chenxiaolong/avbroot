@@ -11,8 +11,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::{Parser, Subcommand};
 use crc32fast::Hasher;
+use winnow_args::{Args, Subcommand};
 use zerocopy::{IntoBytes, little_endian};
 
 use crate::{
@@ -540,14 +540,14 @@ pub fn sparse_main(cli: &SparseCli, cancel_signal: &AtomicBool) -> Result<()> {
 }
 
 /// Unpack a sparse image.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct UnpackCli {
     /// Path to input sparse image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output raw image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Preserve existing data in the output file.
@@ -559,14 +559,14 @@ struct UnpackCli {
 }
 
 /// Pack a sparse image.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct PackCli {
     /// Path to output sparse image.
     ///
     /// If `--region` is not used and the input file is not a (native) sparse
     /// file on Linux, then the output sparse image is written with a CRC32
     /// checksum in the header.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Path to input raw image.
@@ -574,11 +574,11 @@ struct PackCli {
     /// On Linux, if this is a (native) sparse file, then the unallocated
     /// sections of the file will be skipped and will be stored in the output
     /// file as hole chunks.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Block size.
-    #[arg(short, long, value_name = "BYTES", default_value_t = 4096)]
+    #[arg(short, long, value_name = "BYTES", default = "4096")]
     block_size: u32,
 
     /// Pack certain byte regions from the file.
@@ -588,7 +588,7 @@ struct PackCli {
     /// times and in any order. Overlapping regions are allowed.
     ///
     /// Unused regions will be stored in the sparse file as hole chunks.
-    #[arg(short, long, value_names = ["START", "END"], num_args = 2)]
+    #[arg(short, long, value_names("START", "END"))]
     region: Vec<u64>,
 }
 
@@ -596,22 +596,22 @@ struct PackCli {
 ///
 /// This command is equivalent to running `unpack` and `pack`, except without
 /// storing the unpacked data to disk.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct RepackCli {
     /// Path to input sparse image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output sparse image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 }
 
 /// Display sparse image metadata.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct InfoCli {
     /// Path to input sparse image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 }
 
@@ -624,12 +624,12 @@ enum SparseCommand {
 }
 
 /// Pack, unpack, and inspect sparse images.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct SparseCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: SparseCommand,
 
     /// Don't print sparse image metadata.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global)]
     quiet: bool,
 }

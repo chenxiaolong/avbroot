@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -11,9 +11,9 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use bstr::ByteSlice;
-use clap::{Parser, Subcommand};
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
+use winnow_args::{Args, Subcommand};
 
 use crate::{
     format::{
@@ -290,22 +290,22 @@ pub fn cpio_main(cli: &CpioCli, cancel_signal: &AtomicBool) -> Result<()> {
 ///
 /// If any paths inside the cpio archive are unsafe, the extraction process will
 /// fail and exit.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct UnpackCli {
     /// Path to input cpio file.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output info TOML.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "cpio.toml")]
+    #[arg(long, value_name = "FILE", default = "cpio.toml")]
     output_info: PathBuf,
 
     /// Path to output files directory.
-    #[arg(long, value_name = "DIR", value_parser, default_value = "cpio_tree")]
+    #[arg(long, value_name = "DIR", default = "cpio_tree")]
     output_tree: PathBuf,
 
     /// Do not output files.
-    #[arg(long, conflicts_with = "output_tree")]
+    #[arg(long, conflicts("--output-tree"))]
     no_output_tree: bool,
 }
 
@@ -319,18 +319,18 @@ struct UnpackCli {
 /// All fields inside the info TOML are used as-is. Missing fields in entries
 /// are set to 0, aside from the inode number, which will be assigned a unique
 /// value.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct PackCli {
     /// Path to output cpio file.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Path to input info TOML.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "cpio.toml")]
+    #[arg(long, value_name = "FILE", default = "cpio.toml")]
     input_info: PathBuf,
 
     /// Path to input files directory.
-    #[arg(long, value_name = "DIR", value_parser, default_value = "cpio_tree")]
+    #[arg(long, value_name = "DIR", default = "cpio_tree")]
     input_tree: PathBuf,
 
     /// Sort entries before packing.
@@ -339,26 +339,26 @@ struct PackCli {
 }
 
 /// Repack a cpio archive.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct RepackCli {
     /// Path to input cpio file.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output cpio file.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 }
 
 /// Display cpio entry information.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct InfoCli {
     /// Path to input cpio file.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Show cpio trailer entry.
-    #[arg(long, global = true)]
+    #[arg(long, global)]
     trailer: bool,
 }
 
@@ -371,12 +371,12 @@ enum CpioCommand {
 }
 
 /// Pack, unpack, and inspect cpio archives.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct CpioCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: CpioCommand,
 
     /// Don't print cpio entry information.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global)]
     quiet: bool,
 }

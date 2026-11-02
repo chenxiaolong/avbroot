@@ -13,7 +13,6 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use clap::ValueEnum;
 use cms::signed_data::SignedData;
 use const_oid::{ObjectIdentifier, db::rfc5912};
 use der::Encode;
@@ -22,6 +21,7 @@ use prost::Message;
 use rawzip::{CompressionMethod, RECOMMENDED_BUFFER_SIZE, ZipArchive, ZipArchiveWriter};
 use ring::digest::{Algorithm, Context};
 use thiserror::Error;
+use winnow_args::ValueEnum;
 use x509_cert::Certificate;
 
 use crate::{
@@ -483,16 +483,11 @@ fn add_payload_metadata_entry(
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum ZipMode {
+    #[default]
     Streaming,
     Seekable,
-}
-
-impl fmt::Display for ZipMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.to_possible_value().ok_or(fmt::Error)?.get_name())
-    }
 }
 
 /// Add metadata files to the output OTA zip. `zip_entries` is the list of
