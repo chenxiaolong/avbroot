@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update dependencies ([PR #665])
+
 ### Version 3.37.1
 
 * Add support for Magisk 31100 ([PR #662])
@@ -842,3 +846,4 @@ Behind-the-scenes changes:
 [PR #660]: https://github.com/chenxiaolong/avbroot/pull/660
 [PR #661]: https://github.com/chenxiaolong/avbroot/pull/661
 [PR #662]: https://github.com/chenxiaolong/avbroot/pull/662
+[PR #665]: https://github.com/chenxiaolong/avbroot/pull/665
