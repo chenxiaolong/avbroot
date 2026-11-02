@@ -10,13 +10,13 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use clap::{Args, Parser, Subcommand};
 use rawzip::{
     CompressionMethod, RECOMMENDED_BUFFER_SIZE, ZipArchive, ZipArchiveEntryWayfinder,
     ZipArchiveWriter, ZipDataWriter, ZipEntryWriter, extra_fields::ExtraFieldId,
 };
 use serde::{Deserialize, Serialize};
 use tracing::warn;
+use winnow_args::{Args, Subcommand};
 use x509_cert::Certificate;
 
 use crate::{
@@ -573,24 +573,25 @@ pub fn zip_main(cli: &ZipCli, cancel_signal: &AtomicBool) -> Result<()> {
 }
 
 #[derive(Debug, Args)]
+#[arg(group("pass"))]
 struct KeyGroup {
     /// Path to signing key.
     ///
     /// This should normally be a private key. However, if --signing-helper is
     /// used, then it should be a public key instead.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     key: PathBuf,
 
     /// Certificate for signing key.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     cert: PathBuf,
 
     /// Environment variable containing private key passphrase.
-    #[arg(long, value_name = "ENV_VAR", value_parser, group = "pass")]
+    #[arg(long, value_name = "ENV_VAR", group = "pass")]
     pass_env_var: Option<OsString>,
 
     /// File containing private key passphrase.
-    #[arg(long, value_name = "FILE", value_parser, group = "pass")]
+    #[arg(long, value_name = "FILE", group = "pass")]
     pass_file: Option<PathBuf>,
 
     /// External program for signing.
@@ -599,7 +600,7 @@ struct KeyGroup {
     /// program will be invoked as:
     ///
     /// <program> <algo> <public key> [file <pass file>|env <pass env>]
-    #[arg(long, value_name = "PROGRAM", value_parser)]
+    #[arg(long, value_name = "PROGRAM")]
     signing_helper: Option<PathBuf>,
 
     /// Preferred signing method.
@@ -614,7 +615,12 @@ struct KeyGroup {
     /// For ML-DSA, non-deterministic signatures use the hedged variant. This
     /// can help reduce the impact of broken RNGs and side channel attacks at
     /// the expense of the output no longer being byte-for-byte reproducible.
-    #[arg(long, default_value_t, conflicts_with = "signing_helper")]
+    #[arg(
+        long,
+        value_name = "METHOD",
+        default = "deterministic",
+        conflicts("--signing-helper")
+    )]
     signing_method: SigningMethod,
 }
 
@@ -630,31 +636,27 @@ struct ZipModeGroup {
     /// The zip file is reread and hashed after it has been fully written. The
     /// output file is more likely to be compatible with devices that have
     /// broken zip file parsers.
-    #[arg(
-        long,
-        value_name = "MODE",
-        default_value_t = ZipMode::Streaming,
-    )]
+    #[arg(long, value_name = "MODE", default = "streaming")]
     zip_mode: ZipMode,
 }
 
 /// Unpack an OTA zip.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct UnpackCli {
     /// Path to input OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output info TOML.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "ota.toml")]
+    #[arg(long, value_name = "FILE", default = "ota.toml")]
     output_info: PathBuf,
 
     /// Path to output files directory.
-    #[arg(long, value_name = "DIR", value_parser, default_value = "ota_files")]
+    #[arg(long, value_name = "DIR", default = "ota_files")]
     output_files: PathBuf,
 
     /// Do not output files.
-    #[arg(long, conflicts_with = "output_files")]
+    #[arg(long, conflicts("--output-files"))]
     no_output_files: bool,
 
     /// Also unpack the payload in the OTA.
@@ -668,9 +670,8 @@ struct UnpackCli {
     #[arg(
         long,
         value_name = "FILE",
-        value_parser,
-        default_value = "payload.toml",
-        requires = "payload"
+        default = "payload.toml",
+        requires("--payload")
     )]
     output_payload_info: PathBuf,
 
@@ -678,22 +679,21 @@ struct UnpackCli {
     #[arg(
         long,
         value_name = "DIR",
-        value_parser,
-        default_value = "payload_images",
-        requires = "payload"
+        default = "payload_images",
+        requires("--payload")
     )]
     output_payload_images: PathBuf,
 
     /// Do not output payload images.
     #[arg(
         long,
-        conflicts_with_all = ["output_payload_images", "payload_skeleton"],
-        requires = "payload"
+        conflicts("--output-payload-images", "--payload-skeleton"),
+        requires("--payload")
     )]
     no_output_payload_images: bool,
 
     /// Only create empty sparse files for output payload images.
-    #[arg(long, requires = "payload")]
+    #[arg(long, requires("--payload"))]
     payload_skeleton: bool,
 }
 
@@ -706,25 +706,25 @@ struct UnpackCli {
 /// WARNING: This subcommand is for raw file manipulation and does not perform
 /// any validation of the contents of the payload binary. For normal usage, use
 /// `avbroot ota patch` instead.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct PackCli {
     /// Path to output OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Path to input info TOML.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "ota.toml")]
+    #[arg(long, value_name = "FILE", default = "ota.toml")]
     input_info: PathBuf,
 
     /// Path to output info TOML.
     ///
     /// If specified, the OTA info containing all recomputed fields will be
     /// written to this file. This can point to the same file as --input-info.
-    #[arg(long, value_name = "FILE", value_parser)]
+    #[arg(long, value_name = "FILE")]
     output_info: Option<PathBuf>,
 
     /// Path to input files directory.
-    #[arg(long, value_name = "DIR", value_parser, default_value = "ota_files")]
+    #[arg(long, value_name = "DIR", default = "ota_files")]
     input_files: PathBuf,
 
     /// Also pack the payload in the OTA.
@@ -738,9 +738,8 @@ struct PackCli {
     #[arg(
         long,
         value_name = "FILE",
-        value_parser,
-        default_value = "payload.toml",
-        requires = "payload"
+        default = "payload.toml",
+        requires("--payload")
     )]
     input_payload_info: PathBuf,
 
@@ -748,16 +747,15 @@ struct PackCli {
     #[arg(
         long,
         value_name = "DIR",
-        value_parser,
-        default_value = "payload_images",
-        requires = "payload"
+        default = "payload_images",
+        requires("--payload")
     )]
     input_payload_images: PathBuf,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     key: KeyGroup,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     zip_mode: ZipModeGroup,
 }
 
@@ -765,28 +763,28 @@ struct PackCli {
 ///
 /// This command is equivalent to running `unpack` and `pack`, except without
 /// storing the unpacked data to disk first.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct RepackCli {
     /// Path to input OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     key: KeyGroup,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     zip_mode: ZipModeGroup,
 }
 
 /// Display OTA zip information.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct InfoCli {
     /// Path to input OTA zip.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 }
 
@@ -799,12 +797,12 @@ enum ZipCommand {
 }
 
 /// Pack, unpack, and inspect OTA zips.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct ZipCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: ZipCommand,
 
     /// Don't print OTA metadata information.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global)]
     quiet: bool,
 }

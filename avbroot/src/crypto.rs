@@ -5,7 +5,6 @@ use std::{
     borrow::Cow,
     env::{self, VarError},
     ffi::{OsStr, OsString},
-    fmt,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -13,7 +12,6 @@ use std::{
     time::Duration,
 };
 
-use clap::ValueEnum;
 use cms::{
     cert::{CertificateChoices, IssuerAndSerialNumber},
     content_info::{CmsVersion, ContentInfo},
@@ -46,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
 use thiserror::Error;
+use winnow_args::ValueEnum;
 use x509_cert::{
     Certificate, TbsCertificate,
     builder::{Builder, CertificateBuilder, profile::BuilderProfile},
@@ -265,17 +264,10 @@ pub enum SigningContent<'a> {
     Digest(&'a [u8]),
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum SigningMethod {
-    #[default]
     Deterministic,
     NonDeterministic,
-}
-
-impl fmt::Display for SigningMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.to_possible_value().ok_or(fmt::Error)?.get_name())
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

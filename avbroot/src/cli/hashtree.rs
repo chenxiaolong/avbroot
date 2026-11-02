@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use winnow_args::{Args, Subcommand};
 
 use crate::{
     format::hashtree::HashTreeImage,
@@ -102,58 +102,58 @@ pub fn hash_tree_main(cli: &HashTreeCli, cancel_signal: &AtomicBool) -> Result<(
 }
 
 /// Generate hash tree data for a file.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct GenerateCli {
     /// Path to input data.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output hash tree data.
-    #[arg(short = 'H', long, value_name = "FILE", value_parser)]
+    #[arg(short = 'H', long, value_name = "FILE")]
     hash_tree: PathBuf,
 
     /// Block size.
-    #[arg(short, long, value_name = "BYTES", default_value = "4096")]
+    #[arg(short, long, value_name = "BYTES", default = "4096")]
     block_size: u32,
 
     /// Hash algorithm.
-    #[arg(short, long, value_name = "NAME", default_value = "sha256")]
+    #[arg(short, long, value_name = "NAME", default = "sha256")]
     algorithm: String,
 
     /// Salt (in hex).
-    #[arg(short, long, value_name = "HEX", default_value = "")]
+    #[arg(short, long, value_name = "HEX", default = "")]
     salt: String,
 }
 
 /// Update hash tree data after a file is modified.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct UpdateCli {
     /// Path to input data.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to hash tree data.
     ///
     /// The file will be modified in place.
-    #[arg(short = 'H', long, value_name = "FILE", value_parser)]
+    #[arg(short = 'H', long, value_name = "FILE")]
     hash_tree: PathBuf,
 
     /// Input file ranges that were updated.
     ///
     /// This is a half-open range and can be specified multiple times.
-    #[arg(short, long, value_names = ["START", "END"], num_args = 2)]
+    #[arg(short, long, value_names("START", "END"))]
     range: Vec<u64>,
 }
 
 /// Verify that a file contains no errors.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct VerifyCli {
     /// Path to input data.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to input hash tree data.
-    #[arg(short = 'H', long, value_name = "FILE", value_parser)]
+    #[arg(short = 'H', long, value_name = "FILE")]
     hash_tree: PathBuf,
 }
 
@@ -168,8 +168,8 @@ enum HashTreeCommand {
 ///
 /// These commands operate on a standard hash tree data prepended by a custom
 /// header.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct HashTreeCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: HashTreeCommand,
 }

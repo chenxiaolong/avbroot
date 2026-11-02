@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
-    fmt,
+    env, fmt,
     io::{self, IsTerminal},
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
 
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
 use tracing::{Level, debug};
 use tracing_subscriber::fmt::{format::Writer, time::FormatTime};
+use winnow_args::{Args, Subcommand, ValueEnum};
 
 use crate::cli::{avb, boot, completion, cpio, fec, hashtree, key, lp, ota, payload, sparse, zip};
 
@@ -31,42 +31,35 @@ pub enum Command {
     Sparse(sparse::SparseCli),
     Zip(zip::ZipCli),
     /// (Deprecated: Use `avbroot ota patch` instead.)
-    #[command(hide = true)]
+    #[arg(hide)]
     Patch(ota::PatchCli),
     /// (Deprecated: Use `avbroot ota extract` instead.)
-    #[command(hide = true)]
+    #[arg(hide)]
     Extract(ota::ExtractCli),
     /// (Deprecated: Use `avbroot boot magisk-info` instead.)
-    #[command(hide = true)]
+    #[arg(hide)]
     MagiskInfo(boot::MagiskInfoCli),
 }
 
-#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum LogFormat {
-    #[default]
     Short,
     Medium,
     Long,
 }
 
-impl fmt::Display for LogFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.to_possible_value().ok_or(fmt::Error)?.get_name())
-    }
-}
-
-#[derive(Debug, Parser)]
-#[command(version)]
+#[derive(Debug, Args)]
+#[arg(name = "avbroot", version)]
 pub struct Cli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     pub command: Command,
 
     /// Lowest log message severity to output.
-    #[arg(long, global = true, value_name = "LEVEL", default_value_t = Level::INFO)]
+    #[arg(long, global, value_name = "LEVEL", from_str, default = "info")]
     pub log_level: Level,
 
     /// Output format for log messages.
-    #[arg(long, global = true, value_name = "FORMAT", default_value_t)]
+    #[arg(long, global, value_name = "FORMAT", default = "short")]
     pub log_format: LogFormat,
 }
 
@@ -114,6 +107,13 @@ pub fn init_logging(log_level: Level, log_format: LogFormat) {
 }
 
 pub fn main(logging_initialized: &AtomicBool, cancel_signal: &AtomicBool) -> Result<()> {
+    let args = env::args_os().skip(1).collect::<Vec<_>>();
+
+    if let Some(answer) = Cli::completion_request(&args) {
+        print!("{answer}");
+        return Ok(());
+    }
+
     let cli = Cli::parse();
 
     init_logging(cli.log_level, cli.log_format);

@@ -51,13 +51,13 @@ use avbroot::{
     stream::{self, FromReader, HashingReader, ToWriter, UserPosFile},
     util,
 };
-use clap::Parser;
 use rand::rngs::SysRng;
 use rawzip::{CompressionMethod, ZipArchiveWriter};
 use rsa::{BoxedUint, signature::Signer, traits::PublicKeyParts};
 use tempfile::TempDir;
 use topological_sort::TopologicalSort;
 use tracing::{info, info_span};
+use winnow_args::Args;
 use x509_cert::Certificate;
 
 use crate::{
@@ -67,6 +67,13 @@ use crate::{
         OtaInfo, Partition, Profile, RamdiskContent, VbmetaData,
     },
 };
+
+fn zip_mode_str(zip_mode: ZipMode) -> &'static str {
+    match zip_mode {
+        ZipMode::Streaming => "streaming",
+        ZipMode::Seekable => "seekable",
+    }
+}
 
 fn hash_file(path: &Path, cancel_signal: &AtomicBool) -> Result<[u8; 32]> {
     info!("Calculating hash: {path:?}");
@@ -1099,11 +1106,8 @@ fn patch_image(
         (&keys.avb_key_file, &keys.ota_key_file)
     };
 
-    let zip_mode_arg = zip_mode.to_string();
-
     // We're intentionally using the CLI interface.
     let mut args: Vec<&OsStr> = vec![
-        OsStr::new("patch"),
         OsStr::new("--input"),
         input_file.as_os_str(),
         OsStr::new("--output"),
@@ -1125,7 +1129,7 @@ fn patch_image(
         keys.ota_cert_file.as_os_str(),
         OsStr::new("--dsu"),
         OsStr::new("--zip-mode"),
-        OsStr::new(&zip_mode_arg),
+        OsStr::new(zip_mode_str(zip_mode)),
     ];
 
     let argv0: OsString;
@@ -1137,7 +1141,7 @@ fn patch_image(
 
     args.extend_from_slice(extra_args);
 
-    let cli = PatchCli::try_parse_from(args)?;
+    let cli = PatchCli::parse_from(args)?;
     avbroot::cli::ota::patch_subcommand(&cli, cancel_signal)?;
 
     Ok(())
@@ -1146,8 +1150,7 @@ fn patch_image(
 fn extract_image(input_file: &Path, output_dir: &Path, cancel_signal: &AtomicBool) -> Result<()> {
     info!("Extracting AVB partitions: {input_file:?} -> {output_dir:?}");
 
-    let cli = ExtractCli::try_parse_from([
-        OsStr::new("extract"),
+    let cli = ExtractCli::parse_from([
         OsStr::new("--input"),
         input_file.as_os_str(),
         OsStr::new("--directory"),
@@ -1161,8 +1164,7 @@ fn extract_image(input_file: &Path, output_dir: &Path, cancel_signal: &AtomicBoo
 fn verify_image(input_file: &Path, keys: &KeySet, cancel_signal: &AtomicBool) -> Result<()> {
     info!("Verifying signatures: {input_file:?}");
 
-    let cli = VerifyCli::try_parse_from([
-        OsStr::new("verify"),
+    let cli = VerifyCli::parse_from([
         OsStr::new("--input"),
         input_file.as_os_str(),
         OsStr::new("--public-key-avb"),
@@ -1294,11 +1296,11 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
             (ZipMode::Streaming, &profile.hashes_streaming),
             (ZipMode::Seekable, &profile.hashes_seekable),
         ] {
-            let _span = info_span!("profile", name, %zip_mode).entered();
+            let _span = info_span!("profile", name, ?zip_mode).entered();
 
             // Can't use NamedTempFile because avbroot does atomic replaces.
             let mut profile_dir = util::path_join_single(work_dir, name)?;
-            profile_dir.push(zip_mode.to_string());
+            profile_dir.push(zip_mode_str(zip_mode));
             let out_original = profile_dir.join("ota.zip");
             let out_magisk = profile_dir.join("ota_magisk.zip");
             let out_prepatched = profile_dir.join("ota_prepatched.zip");

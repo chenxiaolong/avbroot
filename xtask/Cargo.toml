@@ -11,9 +11,9 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow = "1.0.75"
-clap = { version = "4.4.1", features = ["derive"] }
 regex = { version = "1.9.4", default-features = false, features = ["perf", "std"] }
 toml_edit = "0.25.1"
+winnow-args = { version = "0.6.0", features = ["terminal-size"] }
 
 [lints]
 workspace = true

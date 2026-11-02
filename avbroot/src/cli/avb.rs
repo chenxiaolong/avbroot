@@ -12,11 +12,11 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::{Args, Parser, Subcommand};
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{Span, debug_span, info, warn};
+use winnow_args::{Args, Subcommand};
 
 use crate::{
     crypto::{self, PassphraseSource, SigningMethod, SigningPrivateKey, SigningPublicKey},
@@ -1015,11 +1015,12 @@ pub fn avb_main(cli: &AvbCli, cancel_signal: &AtomicBool) -> Result<()> {
 #[derive(Debug, Args)]
 struct DisplayGroup {
     /// Don't print AVB image information.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global)]
     quiet: bool,
 }
 
 #[derive(Debug, Args)]
+#[arg(group("pass"))]
 struct KeyGroup {
     /// Path to signing key.
     ///
@@ -1030,7 +1031,7 @@ struct KeyGroup {
     ///
     /// This should normally be a private key. However, if --signing-helper is
     /// used, then it should be a public key instead.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     key: Option<PathBuf>,
 
     /// Force signing or clearing signature.
@@ -1043,11 +1044,11 @@ struct KeyGroup {
     force: bool,
 
     /// Environment variable containing private key passphrase.
-    #[arg(long, value_name = "ENV_VAR", value_parser, group = "pass")]
+    #[arg(long, value_name = "ENV_VAR", group = "pass")]
     pass_env_var: Option<OsString>,
 
     /// File containing private key passphrase.
-    #[arg(long, value_name = "FILE", value_parser, group = "pass")]
+    #[arg(long, value_name = "FILE", group = "pass")]
     pass_file: Option<PathBuf>,
 
     /// External program for signing.
@@ -1056,7 +1057,7 @@ struct KeyGroup {
     /// program will be invoked as:
     ///
     /// <program> <algo> <public key> [file <pass file>|env <pass env>]
-    #[arg(long, value_name = "PROGRAM", value_parser)]
+    #[arg(long, value_name = "PROGRAM")]
     signing_helper: Option<PathBuf>,
 
     /// Preferred signing method.
@@ -1071,7 +1072,12 @@ struct KeyGroup {
     /// For ML-DSA, non-deterministic signatures use the hedged variant. This
     /// can help reduce the impact of broken RNGs and side channel attacks at
     /// the expense of the output no longer being byte-for-byte reproducible.
-    #[arg(long, default_value_t, conflicts_with = "signing_helper")]
+    #[arg(
+        long,
+        value_name = "METHOD",
+        default = "deterministic",
+        conflicts("--signing-helper")
+    )]
     signing_method: SigningMethod,
 }
 
@@ -1085,34 +1091,34 @@ struct KeyGroup {
 /// For appended AVB images that contain a hash tree descriptor (eg. dm-verity
 /// protected system image), FEC data, if available, will be used to repair the
 /// extracted raw image in the event of data corruption.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct UnpackCli {
     /// Path to input AVB image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output AVB info TOML.
     ///
     /// The file will always contain a header section, but a footer section will
     /// only be present if the input is an appended AVB image.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "avb.toml")]
+    #[arg(long, value_name = "FILE", default = "avb.toml")]
     output_info: PathBuf,
 
     /// Path to output raw image.
     ///
     /// Only appended AVB images will have a raw image.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "raw.img")]
+    #[arg(long, value_name = "FILE", default = "raw.img")]
     output_raw: PathBuf,
 
     /// Do not output raw image.
-    #[arg(long, conflicts_with = "output_raw")]
+    #[arg(long, conflicts("--output-raw"))]
     no_output_raw: bool,
 
     /// Ignore invalid digests or FEC data.
     #[arg(long)]
     ignore_invalid: bool,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     display: DisplayGroup,
 }
 
@@ -1128,10 +1134,10 @@ struct UnpackCli {
 /// the header was originally signed, then the newly created image will also be
 /// signed. If a signed image is repacked without modification, then the
 /// original signature is used as-is.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct PackCli {
     /// Path to output AVB image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Path to input AVB info TOML.
@@ -1143,20 +1149,20 @@ struct PackCli {
     /// well.
     ///
     /// For root images, all header descriptor fields are left unmodified.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "avb.toml")]
+    #[arg(long, value_name = "FILE", default = "avb.toml")]
     input_info: PathBuf,
 
     /// Path to output AVB info TOML.
     ///
     /// If specified, the AVB info containing all recomputed fields will be
     /// written to this file. This can point to the same file as --input-info.
-    #[arg(long, value_name = "FILE", value_parser)]
+    #[arg(long, value_name = "FILE")]
     output_info: Option<PathBuf>,
 
     /// Path to input raw image.
     ///
     /// Appended AVB images require a raw image.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "raw.img")]
+    #[arg(long, value_name = "FILE", default = "raw.img")]
     input_raw: PathBuf,
 
     /// Recompute image size.
@@ -1168,10 +1174,10 @@ struct PackCli {
     #[arg(long)]
     recompute_size: bool,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     key: KeyGroup,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     display: DisplayGroup,
 }
 
@@ -1179,31 +1185,31 @@ struct PackCli {
 ///
 /// This command is equivalent to running `unpack` and `pack`, except without
 /// storing the unpacked data to disk.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct RepackCli {
     /// Path to input AVB image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output AVB image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     key: KeyGroup,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     display: DisplayGroup,
 }
 
 /// Display AVB header and footer information.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct InfoCli {
     /// Path to input AVB image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
-    #[command(flatten)]
+    #[arg(flatten)]
     display: DisplayGroup,
 }
 
@@ -1212,17 +1218,17 @@ struct InfoCli {
 /// If the header contains chain descriptors, then those images will be
 /// recursively verified. For hash tree descriptors, the FEC (forward error
 /// correction) data will also be verified.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct VerifyCli {
     /// Path to input AVB image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to public key in AVB binary format.
     ///
     /// If this is not specified, the signatures can only be checked for
     /// validity, not whether they are trusted.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     public_key: Option<PathBuf>,
 
     /// Repair corrupted files using FEC data if possible.
@@ -1244,17 +1250,17 @@ struct VerifyCli {
 /// This behaves like the `verify` subcommand, except that it checks the actual
 /// partitions that this device is currently booted from.
 #[cfg(target_os = "android")]
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct VerifyDeviceCli {
     /// Path to public key in AVB binary format.
     ///
     /// If this is not specified, then the signature is verified against the
     /// ro.boot.vbmeta.public_key_digest value provided by the bootloader.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     public_key: Option<PathBuf>,
 
     /// Partition to recursively verify.
-    #[arg(short = 'P', long, value_name = "NAME", default_value = "vbmeta")]
+    #[arg(short = 'P', long, value_name = "NAME", default = "vbmeta")]
     partition: String,
 }
 
@@ -1262,10 +1268,10 @@ struct VerifyDeviceCli {
 ///
 /// This value is equal to what is reported by the ro.boot.vbmeta.digest
 /// property on a real device.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct DigestCli {
     /// Path to input AVB image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 }
 
@@ -1274,7 +1280,7 @@ enum AvbCommand {
     Unpack(UnpackCli),
     Pack(PackCli),
     Repack(RepackCli),
-    #[command(alias = "dump")]
+    #[arg(alias = "dump")]
     Info(InfoCli),
     Verify(VerifyCli),
     #[cfg(target_os = "android")]
@@ -1283,8 +1289,8 @@ enum AvbCommand {
 }
 
 /// Pack, unpack, and inspect AVB-protected images.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct AvbCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: AvbCommand,
 }

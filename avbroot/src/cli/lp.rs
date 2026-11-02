@@ -9,10 +9,10 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use clap::{CommandFactory, Parser, Subcommand};
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
+use winnow_args::{Args, Subcommand};
 
 use crate::{
     format::lp::{Extent, ExtentType, ImageType, Metadata, SECTOR_SIZE},
@@ -390,42 +390,12 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
 }
 
 fn repack_subcommand(lp_cli: &LpCli, cli: &RepackCli, cancel_signal: &AtomicBool) -> Result<()> {
-    // Show a clap-style error if the number of inputs and outputs aren't equal.
     if cli.input.len() != cli.output.len() {
-        let (arg_id, actual_len, expected_len) = if cli.input.len() < cli.output.len() {
-            ("input", cli.input.len(), cli.output.len())
-        } else {
-            ("output", cli.output.len(), cli.input.len())
-        };
-
-        let mut command = RepackCli::command();
-        command.build();
-
-        let arg = command
-            .get_arguments()
-            .find(|a| a.get_id() == arg_id)
-            .expect("argument not found");
-
-        let mut error =
-            clap::Error::new(clap::error::ErrorKind::WrongNumberOfValues).with_cmd(&command);
-        error.insert(
-            clap::error::ContextKind::InvalidArg,
-            clap::error::ContextValue::String(arg.to_string()),
+        bail!(
+            "Number of input images ({}) and output images ({}) must match",
+            cli.input.len(),
+            cli.output.len(),
         );
-        error.insert(
-            clap::error::ContextKind::ActualNumValues,
-            clap::error::ContextValue::Number(actual_len.cast_signed()),
-        );
-        error.insert(
-            clap::error::ContextKind::ExpectedNumValues,
-            clap::error::ContextValue::Number(expected_len.cast_signed()),
-        );
-
-        // We don't show the usage because only Command::_build_subcommand() can
-        // create an appropriate Command instance for showing the subcommand
-        // usage and there's no way to call that, directly or indirectly.
-
-        error.exit();
     }
 
     let (inputs, mut metadata) = open_lp_inputs(&cli.input)?;
@@ -516,26 +486,26 @@ pub fn lp_main(cli: &LpCli, cancel_signal: &AtomicBool) -> Result<()> {
 ///
 /// If any partition names are unsafe to use in a path, the extraction process
 /// will fail and exit.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct UnpackCli {
     /// Path to input LP images.
     ///
     /// If there are multiple images, they must be specified in order. If the
     /// order is unknown, run `avbroot lp info` against the `super` image and
     /// look at the `block_devices` field.
-    #[arg(short, long, value_name = "FILE", value_parser, required = true)]
+    #[arg(short, long, value_name = "FILE", required)]
     input: Vec<PathBuf>,
 
     /// Path to output info TOML.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "lp.toml")]
+    #[arg(long, value_name = "FILE", default = "lp.toml")]
     output_info: PathBuf,
 
     /// Path to output images directory.
-    #[arg(long, value_name = "DIR", value_parser, default_value = "lp_images")]
+    #[arg(long, value_name = "DIR", default = "lp_images")]
     output_images: PathBuf,
 
     /// Do not output images.
-    #[arg(long, conflicts_with = "output_images")]
+    #[arg(long, conflicts("--output-images"))]
     no_output_images: bool,
 
     /// The LP metadata slot to use.
@@ -559,21 +529,21 @@ struct UnpackCli {
 /// The new LP image will *only* contain images listed in the info TOML file and
 /// they are added in the order listed. The input images directory is not used
 /// when packing an empty image.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct PackCli {
     /// Path to output LP images.
     ///
     /// If there are multiple images, they must be specified in the same order
     /// as the block device entries are listed in the info TOML.
-    #[arg(short, long, value_name = "FILE", value_parser, required = true)]
+    #[arg(short, long, value_name = "FILE", required)]
     output: Vec<PathBuf>,
 
     /// Path to input info TOML.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "lp.toml")]
+    #[arg(long, value_name = "FILE", default = "lp.toml")]
     input_info: PathBuf,
 
     /// Path to input images directory.
-    #[arg(long, value_name = "DIR", value_parser, default_value = "lp_images")]
+    #[arg(long, value_name = "DIR", default = "lp_images")]
     input_images: PathBuf,
 }
 
@@ -581,20 +551,20 @@ struct PackCli {
 ///
 /// This command is equivalent to running `unpack` and `pack`, except without
 /// storing the unpacked data to disk.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct RepackCli {
     /// Path to input LP images.
     ///
     /// If there are multiple images, they must be specified in order. If the
     /// order is unknown, run `avbroot lp info` against the `super` image and
     /// look at the `block_devices` field.
-    #[arg(short, long, value_name = "FILE", value_parser, required = true)]
+    #[arg(short, long, value_name = "FILE", required)]
     input: Vec<PathBuf>,
 
     /// Path to output LP images.
     ///
     /// The number of output images must equal the number of input images.
-    #[arg(short, long, value_name = "FILE", value_parser, required = true)]
+    #[arg(short, long, value_name = "FILE", required)]
     output: Vec<PathBuf>,
 
     /// The LP metadata slot to use.
@@ -609,7 +579,7 @@ struct RepackCli {
 }
 
 /// Display LP image metadata.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct InfoCli {
     /// Path to input LP image.
     ///
@@ -617,7 +587,7 @@ struct InfoCli {
     /// is usually the `super` image. The other images are not needed when
     /// inspecting the metadata because the metadata is only stored in the first
     /// image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 }
 
@@ -630,12 +600,12 @@ enum LpCommand {
 }
 
 /// Pack, unpack, and inspect LP images.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct LpCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: LpCommand,
 
     /// Don't print LP metadata information.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global)]
     quiet: bool,
 }

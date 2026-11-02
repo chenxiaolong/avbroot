@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use winnow_args::{Args, Subcommand};
 
 use crate::{
     format::{avb::Header, bootimage::BootImage, compression::CompressedReader, cpio::CpioReader},
@@ -347,178 +347,138 @@ pub fn boot_main(cli: &BootCli) -> Result<()> {
 }
 
 /// Unpack a boot image.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct UnpackCli {
     /// Path to input boot image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output header TOML.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "boot.toml")]
+    #[arg(long, value_name = "FILE", default = "boot.toml")]
     output_header: PathBuf,
 
     /// Path to output kernel image.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "kernel.img")]
+    #[arg(long, value_name = "FILE", default = "kernel.img")]
     output_kernel: PathBuf,
 
     /// Do not output kernel image.
-    #[arg(long, conflicts_with = "output_kernel")]
+    #[arg(long, conflicts("--output-kernel"))]
     no_output_kernel: bool,
 
     /// Path prefix for output ramdisk images.
-    #[arg(
-        long,
-        value_name = "FILE",
-        value_parser,
-        default_value = "ramdisk.img."
-    )]
+    #[arg(long, value_name = "FILE", default = "ramdisk.img.")]
     output_ramdisk_prefix: PathBuf,
 
     /// Do not output ramdisk images.
-    #[arg(long, conflicts_with = "output_ramdisk_prefix")]
+    #[arg(long, conflicts("--output-ramdisk-prefix"))]
     no_output_ramdisk: bool,
 
     /// Path to output second stage bootloader image.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "second.img")]
+    #[arg(long, value_name = "FILE", default = "second.img")]
     output_second: PathBuf,
 
     /// Do not output second stage bootloader image.
-    #[arg(long, conflicts_with = "output_second")]
+    #[arg(long, conflicts("--output-second"))]
     no_output_second: bool,
 
     /// Path to output recovery dtbo/acpio image.
-    #[arg(
-        long,
-        value_name = "FILE",
-        value_parser,
-        default_value = "recovery_dtbo.img"
-    )]
+    #[arg(long, value_name = "FILE", default = "recovery_dtbo.img")]
     output_recovery_dtbo: PathBuf,
 
     /// Do not output recovery dtbo/acpio image.
-    #[arg(long, conflicts_with = "output_recovery_dtbo")]
+    #[arg(long, conflicts("--output-recovery-dtbo"))]
     no_output_recovery_dtbo: bool,
 
     /// Path to output device tree blob image.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "dtb.img")]
+    #[arg(long, value_name = "FILE", default = "dtb.img")]
     output_dtb: PathBuf,
 
     /// Do not output device tree blob image.
-    #[arg(long, conflicts_with = "output_dtb")]
+    #[arg(long, conflicts("--output-dtb"))]
     no_output_dtb: bool,
 
     /// Path to output VTS signature.
-    #[arg(
-        long,
-        value_name = "FILE",
-        value_parser,
-        default_value = "vts_signature.img"
-    )]
+    #[arg(long, value_name = "FILE", default = "vts_signature.img")]
     output_vts_signature: PathBuf,
 
     /// Do not output VTS signature.
-    #[arg(long, conflicts_with = "output_vts_signature")]
+    #[arg(long, conflicts("--output-vts-signature"))]
     no_output_vts_signature: bool,
 
     /// Path to output bootconfig text.
-    #[arg(
-        long,
-        value_name = "FILE",
-        value_parser,
-        default_value = "bootconfig.txt"
-    )]
+    #[arg(long, value_name = "FILE", default = "bootconfig.txt")]
     output_bootconfig: PathBuf,
 
     /// Do not output bootconfig text.
-    #[arg(long, conflicts_with = "output_bootconfig")]
+    #[arg(long, conflicts("--output-bootconfig"))]
     no_output_bootconfig: bool,
 }
 
 /// Pack a boot image.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct PackCli {
     /// Path to output boot image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 
     /// Path to input header TOML.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "boot.toml")]
+    #[arg(long, value_name = "FILE", default = "boot.toml")]
     input_header: PathBuf,
 
     /// Path to input kernel image.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "kernel.img")]
+    #[arg(long, value_name = "FILE", default = "kernel.img")]
     input_kernel: PathBuf,
 
     /// Path prefix for input ramdisk images.
-    #[arg(
-        long,
-        value_name = "FILE",
-        value_parser,
-        default_value = "ramdisk.img."
-    )]
+    #[arg(long, value_name = "FILE", default = "ramdisk.img.")]
     input_ramdisk_prefix: PathBuf,
 
     /// Path to input second stage bootloader image.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "second.img")]
+    #[arg(long, value_name = "FILE", default = "second.img")]
     input_second: PathBuf,
 
     /// Path to input recovery dtbo/acpio image.
-    #[arg(
-        long,
-        value_name = "FILE",
-        value_parser,
-        default_value = "recovery_dtbo.img"
-    )]
+    #[arg(long, value_name = "FILE", default = "recovery_dtbo.img")]
     input_recovery_dtbo: PathBuf,
 
     /// Path to input device tree blob image.
-    #[arg(long, value_name = "FILE", value_parser, default_value = "dtb.img")]
+    #[arg(long, value_name = "FILE", default = "dtb.img")]
     input_dtb: PathBuf,
 
     /// Path to input VTS signature.
-    #[arg(
-        long,
-        value_name = "FILE",
-        value_parser,
-        default_value = "vts_signature.img"
-    )]
+    #[arg(long, value_name = "FILE", default = "vts_signature.img")]
     input_vts_signature: PathBuf,
 
     /// Path to input bootconfig text.
-    #[arg(
-        long,
-        value_name = "FILE",
-        value_parser,
-        default_value = "bootconfig.txt"
-    )]
+    #[arg(long, value_name = "FILE", default = "bootconfig.txt")]
     input_bootconfig: PathBuf,
 }
 
 /// Repack a boot image.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct RepackCli {
     /// Path to input boot image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 
     /// Path to output boot image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     output: PathBuf,
 }
 
 /// Display boot image header information.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 struct InfoCli {
     /// Path to input boot image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     input: PathBuf,
 }
 
 /// Print Magisk config from a patched boot image.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct MagiskInfoCli {
     /// Path to Magisk-patched boot image.
-    #[arg(short, long, value_name = "FILE", value_parser)]
+    #[arg(short, long, value_name = "FILE")]
     pub image: PathBuf,
 }
 
@@ -532,16 +492,16 @@ enum BootCommand {
 }
 
 /// Pack, unpack, and inspect boot images.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 pub struct BootCli {
-    #[command(subcommand)]
+    #[arg(subcommand)]
     command: BootCommand,
 
     /// Don't print boot image header information.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global)]
     quiet: bool,
 
     /// Print boot image header information in debug format.
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global)]
     debug: bool,
 }
