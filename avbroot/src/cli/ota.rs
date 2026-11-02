@@ -2514,7 +2514,13 @@ pub struct PatchCli {
     /// For ML-DSA, non-deterministic signatures use the hedged variant. This
     /// can help reduce the impact of broken RNGs and side channel attacks at
     /// the expense of the output no longer being byte-for-byte reproducible.
-    #[arg(long, value_name = "METHOD", default_fn = SigningMethod::default, conflicts("--signing-helper"), help_heading = "Key options")]
+    #[arg(
+        long,
+        value_name = "METHOD",
+        default = "deterministic",
+        conflicts("--signing-helper"),
+        help_heading = "Key options"
+    )]
     pub signing_method: SigningMethod,
 
     /// Use partition image from a file instead of the original payload.
@@ -2644,8 +2650,8 @@ pub struct PatchCli {
     #[arg(
         long,
         value_name = "MODE",
-        default_fn = ZipMode::default,
-        help_heading = "Other patch options",
+        default = "streaming",
+        help_heading = "Other patch options"
     )]
     pub zip_mode: ZipMode,
 

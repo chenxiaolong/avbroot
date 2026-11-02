@@ -56,25 +56,17 @@ pub enum Command {
     List(ListCli),
 }
 
-fn default_level() -> Level {
-    Level::INFO
-}
-
-fn default_format() -> LogFormat {
-    LogFormat::Medium
-}
-
 #[derive(Debug, Args)]
 pub struct Cli {
     #[arg(subcommand)]
     pub command: Command,
 
     /// Lowest log message severity to output.
-    #[arg(long, global, value_name = "LEVEL", from_str, default_fn = default_level)]
+    #[arg(long, global, value_name = "LEVEL", from_str, default = "info")]
     pub log_level: Level,
 
     /// Output format for log messages.
-    #[arg(long, global, value_name = "FORMAT", default_fn = default_format)]
+    #[arg(long, global, value_name = "FORMAT", default = "medium")]
     pub log_format: LogFormat,
 }
 

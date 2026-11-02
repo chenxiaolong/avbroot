@@ -483,9 +483,8 @@ fn add_payload_metadata_entry(
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum ZipMode {
-    #[default]
     Streaming,
     Seekable,
 }

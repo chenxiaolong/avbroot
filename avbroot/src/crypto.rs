@@ -264,9 +264,8 @@ pub enum SigningContent<'a> {
     Digest(&'a [u8]),
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum SigningMethod {
-    #[default]
     Deterministic,
     NonDeterministic,
 }

@@ -615,7 +615,12 @@ struct KeyGroup {
     /// For ML-DSA, non-deterministic signatures use the hedged variant. This
     /// can help reduce the impact of broken RNGs and side channel attacks at
     /// the expense of the output no longer being byte-for-byte reproducible.
-    #[arg(long, value_name = "METHOD", default_fn = SigningMethod::default, conflicts("--signing-helper"))]
+    #[arg(
+        long,
+        value_name = "METHOD",
+        default = "deterministic",
+        conflicts("--signing-helper")
+    )]
     signing_method: SigningMethod,
 }
 
@@ -631,7 +636,7 @@ struct ZipModeGroup {
     /// The zip file is reread and hashed after it has been fully written. The
     /// output file is more likely to be compatible with devices that have
     /// broken zip file parsers.
-    #[arg(long, value_name = "MODE", default_fn = ZipMode::default)]
+    #[arg(long, value_name = "MODE", default = "streaming")]
     zip_mode: ZipMode,
 }
 

@@ -41,16 +41,11 @@ pub enum Command {
     MagiskInfo(boot::MagiskInfoCli),
 }
 
-#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum LogFormat {
-    #[default]
     Short,
     Medium,
     Long,
-}
-
-fn default_level() -> Level {
-    Level::INFO
 }
 
 #[derive(Debug, Args)]
@@ -60,11 +55,11 @@ pub struct Cli {
     pub command: Command,
 
     /// Lowest log message severity to output.
-    #[arg(long, global, value_name = "LEVEL", from_str, default_fn = default_level)]
+    #[arg(long, global, value_name = "LEVEL", from_str, default = "info")]
     pub log_level: Level,
 
     /// Output format for log messages.
-    #[arg(long, global, value_name = "FORMAT", default_fn = LogFormat::default)]
+    #[arg(long, global, value_name = "FORMAT", default = "short")]
     pub log_format: LogFormat,
 }
 
