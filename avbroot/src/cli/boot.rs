@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use tracing::warn;
 use winnow_args::{Args, Subcommand};
 
 use crate::{
@@ -121,11 +122,7 @@ fn write_avb_header(path: &Path, header: &Header) -> Result<()> {
 
 fn display_info(cli: &BootCli, image: &BootImage) {
     if !cli.quiet {
-        if cli.debug {
-            println!("{image:#?}");
-        } else {
-            println!("{image}");
-        }
+        println!("{image:#?}");
     }
 }
 
@@ -337,6 +334,10 @@ pub fn magisk_info_subcommand(cli: &MagiskInfoCli) -> Result<()> {
 }
 
 pub fn boot_main(cli: &BootCli) -> Result<()> {
+    if cli.debug {
+        warn!("Ignoring --debug: it is the default behavior and is no longer needed");
+    }
+
     match &cli.command {
         BootCommand::Unpack(c) => unpack_subcommand(cli, c),
         BootCommand::Pack(c) => pack_subcommand(cli, c),
@@ -501,7 +502,7 @@ pub struct BootCli {
     #[arg(short, long, global)]
     quiet: bool,
 
-    /// Print boot image header information in debug format.
-    #[arg(short, long, global)]
+    /// (Deprecated: This is the default behavior now.)
+    #[arg(short, long, global, hide)]
     debug: bool,
 }

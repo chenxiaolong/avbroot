@@ -180,7 +180,7 @@ pub struct V2Extra {
 impl fmt::Debug for V2Extra {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("V2Extra")
-            .field("dtb_addr", &self.dtb_addr)
+            .field("dtb_addr", &format_args!("{:#x}", self.dtb_addr))
             .field("dtb", &NumBytes(self.dtb.len()))
             .finish()
     }
@@ -214,16 +214,16 @@ pub struct BootImageV0Through2 {
 impl fmt::Debug for BootImageV0Through2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BootImageV0Through2")
-            .field("kernel_addr", &self.kernel_addr)
-            .field("ramdisk_addr", &self.ramdisk_addr)
-            .field("second_addr", &self.second_addr)
-            .field("tags_addr", &self.tags_addr)
+            .field("kernel_addr", &format_args!("{:#x}", self.kernel_addr))
+            .field("ramdisk_addr", &format_args!("{:#x}", self.ramdisk_addr))
+            .field("second_addr", &format_args!("{:#x}", self.second_addr))
+            .field("tags_addr", &format_args!("{:#x}", self.tags_addr))
             .field("page_size", &self.page_size)
             .field("header_version", &self.header_version())
-            .field("os_version", &self.os_version)
+            .field("os_version", &format_args!("{:#x}", self.os_version))
             .field("name", &self.name)
             .field("cmdline", &self.cmdline)
-            .field("id", &self.id)
+            .field("id", &format_args!("{:?}", self.id))
             .field("extra_cmdline", &self.extra_cmdline)
             .field("kernel", &NumBytes(self.kernel.len()))
             .field("ramdisk", &NumBytes(self.ramdisk.len()))
@@ -231,38 +231,6 @@ impl fmt::Debug for BootImageV0Through2 {
             .field("v1_extra", &self.v1_extra)
             .field("v2_extra", &self.v2_extra)
             .finish()
-    }
-}
-
-impl fmt::Display for BootImageV0Through2 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Boot image v{} header:", self.header_version())?;
-        writeln!(f, "- Kernel size:          {}", self.kernel.len())?;
-        writeln!(f, "- Kernel address:       {:#x}", self.kernel_addr)?;
-        writeln!(f, "- Ramdisk size:         {}", self.ramdisk.len())?;
-        writeln!(f, "- Ramdisk address:      {:#x}", self.ramdisk_addr)?;
-        writeln!(f, "- Second stage size:    {}", self.second.len())?;
-        writeln!(f, "- Second stage address: {:#x}", self.second_addr)?;
-        writeln!(f, "- Kernel tags address:  {:#x}", self.tags_addr)?;
-        writeln!(f, "- Page size:            {}", self.page_size)?;
-        writeln!(f, "- OS version:           {:#x}", self.os_version)?;
-        writeln!(f, "- Name:                 {:?}", self.name)?;
-        writeln!(f, "- Kernel cmdline:       {:?}", self.cmdline)?;
-        writeln!(f, "- ID:                   {:?}", self.id)?;
-        write!(f, "- Extra kernel cmdline: {:?}", self.extra_cmdline)?;
-
-        if let Some(v1) = &self.v1_extra {
-            writeln!(f)?;
-            write!(f, "- Recovery dtbo size:   {}", v1.recovery_dtbo.len())?;
-        }
-
-        if let Some(v2) = &self.v2_extra {
-            writeln!(f)?;
-            writeln!(f, "- Device tree size:     {}", v2.dtb.len())?;
-            write!(f, "- Device tree address:  {:#x}", v2.dtb_addr)?;
-        }
-
-        Ok(())
     }
 }
 
@@ -671,31 +639,14 @@ pub struct BootImageV3Through4 {
 impl fmt::Debug for BootImageV3Through4 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BootImageV3Through4")
-            .field("os_version", &self.os_version)
-            .field("reserved", &self.reserved)
+            .field("os_version", &format_args!("{:#x}", self.os_version))
+            .field("reserved", &format_args!("{:?}", self.reserved))
+            .field("header_version", &self.header_version())
             .field("cmdline", &self.cmdline)
             .field("v4_extra", &self.v4_extra)
             .field("kernel", &NumBytes(self.kernel.len()))
             .field("ramdisk", &NumBytes(self.ramdisk.len()))
             .finish()
-    }
-}
-
-impl fmt::Display for BootImageV3Through4 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Boot image v{} header:", self.header_version())?;
-        writeln!(f, "- Kernel size:       {}", self.kernel.len())?;
-        writeln!(f, "- Ramdisk size:      {}", self.ramdisk.len())?;
-        writeln!(f, "- OS version:        {:#x}", self.os_version)?;
-        writeln!(f, "- Reserved:          {:?}", self.reserved)?;
-        write!(f, "- Kernel cmdline:    {:?}", self.cmdline)?;
-
-        if let Some(v4) = &self.v4_extra {
-            writeln!(f)?;
-            write!(f, "- Has VTS signature: {:?}", v4.signature.is_some())?;
-        }
-
-        Ok(())
     }
 }
 
@@ -1026,11 +977,32 @@ struct RawVendorV4RamdiskTableEntry {
     board_id: [little_endian::U32; VENDOR_RAMDISK_TABLE_ENTRY_BOARD_ID_SIZE],
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RamdiskMeta {
     pub ramdisk_type: u32,
     pub ramdisk_name: String,
     pub board_id: [u32; VENDOR_RAMDISK_TABLE_ENTRY_BOARD_ID_SIZE],
+}
+
+impl fmt::Debug for RamdiskMeta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let type_str = match self.ramdisk_type {
+            VENDOR_RAMDISK_TYPE_NONE => "none",
+            VENDOR_RAMDISK_TYPE_PLATFORM => "platform",
+            VENDOR_RAMDISK_TYPE_RECOVERY => "recovery",
+            VENDOR_RAMDISK_TYPE_DLKM => "dlkm",
+            _ => "<unknown>",
+        };
+
+        f.debug_struct("RamdiskMeta")
+            .field(
+                "ramdisk_type",
+                &format_args!("{} ({type_str})", self.ramdisk_type),
+            )
+            .field("ramdisk_name", &self.ramdisk_name)
+            .field("board_id", &format_args!("{:?}", self.board_id))
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -1059,14 +1031,15 @@ pub struct VendorBootImageV3Through4 {
 impl fmt::Debug for VendorBootImageV3Through4 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("VendorBootImageV3Through4")
+            .field("header_version", &self.header_version())
             .field("page_size", &self.page_size)
-            .field("kernel_addr", &self.kernel_addr)
-            .field("ramdisk_addr", &self.ramdisk_addr)
+            .field("kernel_addr", &format_args!("{:#x}", self.kernel_addr))
+            .field("ramdisk_addr", &format_args!("{:#x}", self.ramdisk_addr))
             .field("cmdline", &self.cmdline)
-            .field("tags_addr", &self.tags_addr)
+            .field("tags_addr", &format_args!("{:#x}", self.tags_addr))
             .field("name", &self.name)
             .field("dtb", &NumBytes(self.dtb.len()))
-            .field("dtb_addr", &self.dtb_addr)
+            .field("dtb_addr", &format_args!("{:#x}", self.dtb_addr))
             .field(
                 "ramdisks",
                 &self
@@ -1077,44 +1050,6 @@ impl fmt::Debug for VendorBootImageV3Through4 {
             )
             .field("v4_extra", &self.v4_extra)
             .finish()
-    }
-}
-
-impl fmt::Display for VendorBootImageV3Through4 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let header_version = self.header_version();
-
-        writeln!(f, "Vendor boot image v{header_version} header:")?;
-        writeln!(f, "- Page size:           {}", self.page_size)?;
-        writeln!(f, "- Kernel address:      {:#x}", self.kernel_addr)?;
-
-        if header_version == 3 {
-            let ramdisk_size = self.ramdisks.iter().map(|r| r.len()).sum::<usize>();
-            writeln!(f, "- Ramdisk size:        {ramdisk_size}")?;
-        }
-
-        writeln!(f, "- Ramdisk address:     {:#x}", self.ramdisk_addr)?;
-        writeln!(f, "- Kernel cmdline:      {:?}", self.cmdline)?;
-        writeln!(f, "- Kernel tags address: {:#x}", self.tags_addr)?;
-        writeln!(f, "- Name:                {:?}", self.name)?;
-        writeln!(f, "- Device tree size:    {}", self.dtb.len())?;
-        write!(f, "- Device tree address: {:#x}", self.dtb_addr)?;
-
-        if let Some(v4) = &self.v4_extra {
-            writeln!(f)?;
-
-            for (ramdisk, meta) in self.ramdisks.iter().zip(&v4.ramdisk_metas) {
-                writeln!(f, "- Ramdisk:")?;
-                writeln!(f, "  - Size:     {}", ramdisk.len())?;
-                writeln!(f, "  - Type:     {}", meta.ramdisk_type)?;
-                writeln!(f, "  - Name:     {:?}", meta.ramdisk_name)?;
-                writeln!(f, "  - Board ID: {:?}", meta.board_id)?;
-            }
-
-            write!(f, "- Bootconfig size:     {}", v4.bootconfig.len())?;
-        }
-
-        Ok(())
     }
 }
 
@@ -1498,16 +1433,6 @@ pub enum BootImage {
     V0Through2(BootImageV0Through2),
     V3Through4(BootImageV3Through4),
     VendorV3Through4(VendorBootImageV3Through4),
-}
-
-impl fmt::Display for BootImage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::V0Through2(b) => b.fmt(f),
-            Self::V3Through4(b) => b.fmt(f),
-            Self::VendorV3Through4(b) => b.fmt(f),
-        }
-    }
 }
 
 impl BootImageExt for BootImage {
