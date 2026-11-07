@@ -11,7 +11,7 @@
 
 * Switch from clap to winnow-args for command line argument parsing ([PR #664])
   * Reduces executable size by 4% to 8%, depending on platform.
-* Update dependencies ([PR #665])
+* Update dependencies ([PR #665], [PR #666])
 
 ### Version 3.37.1
 
@@ -850,3 +850,4 @@ Behind-the-scenes changes:
 [PR #662]: https://github.com/chenxiaolong/avbroot/pull/662
 [PR #664]: https://github.com/chenxiaolong/avbroot/pull/664
 [PR #665]: https://github.com/chenxiaolong/avbroot/pull/665
+[PR #666]: https://github.com/chenxiaolong/avbroot/pull/666
