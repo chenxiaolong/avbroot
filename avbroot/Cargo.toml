@@ -17,7 +17,7 @@ bstr = "1.6.2"
 bzip2 = "0.6.0"
 # Waiting for stable release that's compatible with the rest of the newer
 # RustCrypto dependencies.
-cms = { git = "https://github.com/RustCrypto/formats", rev = "c478c6bb0db65677e85e2c0297962817eed90352", features = ["std"] }
+cms = { version = "0.3.0-rc.1", features = ["std"] }
 const-oid = "0.10.2"
 crc32fast = "1.4.2"
 crypto-bigint = "0.7.5"
@@ -44,7 +44,7 @@ regex = { version = "1.9.4", default-features = false, features = ["perf", "std"
 # instructions. sha2 is still used for signing purposes.
 # https://github.com/RustCrypto/hashes/issues/327
 ring = "0.17.14"
-rsa = { version = "0.10.0-rc.19", features = ["sha1", "sha2"] }
+rsa = { version = "0.10.0-rc.22", features = ["pkcs1v15", "sha1"] }
 ruzstd = "0.9.0"
 scrypt = { version = "0.12.0", features = ["phc"] }
 serde = { version = "1.0.188", features = ["derive"] }

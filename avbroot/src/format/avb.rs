@@ -14,7 +14,7 @@ use bstr::ByteSlice;
 use crypto_bigint::modular::BoxedMontyParams;
 use ml_dsa::{EncodedVerifyingKey, MlDsa65, MlDsa87, VerifyingKey};
 use ring::digest::{Algorithm, Context};
-use rsa::{BoxedUint, RsaPublicKey, traits::PublicKeyParts};
+use rsa::{BoxedUint, traits::PublicKeyParts};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zerocopy::{FromBytes, IntoBytes, big_endian};
@@ -2151,7 +2151,7 @@ pub fn decode_public_key(data: &[u8]) -> Result<SigningPublicKey> {
             let modulus_be = &data[8..8 + modulus_bytes];
             let modulus = BoxedUint::from_be_slice_vartime(modulus_be);
 
-            let public_key = RsaPublicKey::new(modulus.clone(), BoxedUint::from(65537u32))
+            let public_key = rsa::PublicKey::new(modulus.clone(), BoxedUint::from(65537u32))
                 .map_err(|e| Error::InvalidRsaModulus(modulus, Box::new(e)))?;
 
             Ok(SigningPublicKey::Rsa(public_key))

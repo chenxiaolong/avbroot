@@ -23,9 +23,7 @@ use cms::{
 use der::{
     Any, Decode, DecodePem, EncodePem, SecretDocument, pem::PemLabel, referenced::OwnedToRef,
 };
-use ml_dsa::{
-    EncodedSignature, Generate, Keypair, MlDsa65, MlDsa87, Signer, Verifier, VerifyingKey,
-};
+use ml_dsa::{EncodedSignature, Generate, Keypair, MlDsa65, MlDsa87, Signer, Verifier};
 use passterm::PromptError;
 use pkcs8::{
     DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey,
@@ -36,10 +34,7 @@ use rand::{
     Rng, SeedableRng,
     rngs::{StdRng, SysRng},
 };
-use rsa::{
-    Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey, pkcs1, pkcs1v15, signature::RandomizedSigner,
-    traits::PublicKeyParts,
-};
+use rsa::{Pkcs1v15Sign, pkcs1, pkcs1v15, signature::RandomizedSigner, traits::PublicKeyParts};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
@@ -272,9 +267,9 @@ pub enum SigningMethod {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SigningPublicKey {
-    Rsa(RsaPublicKey),
-    MlDsa65(VerifyingKey<MlDsa65>),
-    MlDsa87(VerifyingKey<MlDsa87>),
+    Rsa(rsa::PublicKey),
+    MlDsa65(ml_dsa::VerifyingKey<MlDsa65>),
+    MlDsa87(ml_dsa::VerifyingKey<MlDsa87>),
 }
 
 impl SigningPublicKey {
@@ -373,12 +368,12 @@ impl TryFrom<SubjectPublicKeyInfoRef<'_>> for SigningPublicKey {
 
     fn try_from(spki: SubjectPublicKeyInfoRef<'_>) -> Result<Self, Self::Error> {
         match spki.algorithm {
-            a if a == pkcs1::ALGORITHM_ID => RsaPublicKey::try_from(spki).map(Self::Rsa),
+            a if a == pkcs1::ALGORITHM_ID => rsa::PublicKey::try_from(spki).map(Self::Rsa),
             a if a == MlDsa65::ALGORITHM_IDENTIFIER => {
-                VerifyingKey::try_from(spki).map(Self::MlDsa65)
+                ml_dsa::VerifyingKey::try_from(spki).map(Self::MlDsa65)
             }
             a if a == MlDsa87::ALGORITHM_IDENTIFIER => {
-                VerifyingKey::try_from(spki).map(Self::MlDsa87)
+                ml_dsa::VerifyingKey::try_from(spki).map(Self::MlDsa87)
             }
             a => Err(spki::Error::OidUnknown { oid: a.oid }),
         }
@@ -387,7 +382,7 @@ impl TryFrom<SubjectPublicKeyInfoRef<'_>> for SigningPublicKey {
 
 #[derive(Clone, PartialEq)]
 pub enum SigningPrivateKey {
-    Rsa(RsaPrivateKey),
+    Rsa(rsa::PrivateKey),
     MlDsa65(ml_dsa::SigningKey<MlDsa65>),
     MlDsa87(ml_dsa::SigningKey<MlDsa87>),
     External {
@@ -404,7 +399,7 @@ impl SigningPrivateKey {
 
         match key_type {
             SigningKeyType::Rsa(bytes) => {
-                let key = RsaPrivateKey::new(&mut rng, bytes * 8)
+                let key = rsa::PrivateKey::new(&mut rng, bytes * 8)
                     .map_err(|e| Error::RsaGenerate(Box::new(e)))?;
 
                 Ok(Self::Rsa(key))
@@ -664,7 +659,7 @@ impl TryFrom<PrivateKeyInfoRef<'_>> for SigningPrivateKey {
     fn try_from(private_key_info: PrivateKeyInfoRef<'_>) -> Result<Self, Self::Error> {
         match private_key_info.algorithm {
             a if a == pkcs1::ALGORITHM_ID => {
-                RsaPrivateKey::try_from(private_key_info).map(Self::Rsa)
+                rsa::PrivateKey::try_from(private_key_info).map(Self::Rsa)
             }
             // Note that the ml-dsa crate intentionally only supports parsing
             // keys containing just the seed. Keys containing the expanded key
