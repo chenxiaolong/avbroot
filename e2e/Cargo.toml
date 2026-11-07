@@ -24,7 +24,7 @@ toml = { version = "1.0.1", features = ["serde"] }
 topological-sort = "0.3.1"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
-winnow-args = { version = "0.6.0", features = ["terminal-size"] }
+winnow-args = { version = "0.6.1", features = ["terminal-size"] }
 x509-cert = "0.3.0"
 
 [lints]

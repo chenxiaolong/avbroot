@@ -31,7 +31,10 @@ pub fn key_main(cli: &KeyCli) -> Result<()> {
             let source = get_passphrase_source(&c.passphrase, &c.output);
             let generate_key_type = c.key_type.unwrap_or_else(|| {
                 let default = GenerateKeyType::Rsa4096;
-                warn!("Defaulting to {default:?}; -t/--key-type will be required in avbroot 4.0");
+                warn!(
+                    "Defaulting to {}; -t/--key-type will be required in avbroot 4.0",
+                    default.name(),
+                );
                 default
             });
             let key_type = match generate_key_type {

@@ -2013,9 +2013,9 @@ dependencies = [
 
 [[package]]
 name = "winnow-args"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccfdd2eeff4a8c3f3628a429821f0683a6a7277306fbc6a806643e50fab74532"
+checksum = "f7d83d54311d2e07890c5d453596eba319c366065630d8800cb6ecaa47a271e3"
 dependencies = [
  "terminal_size",
  "winnow",
@@ -2024,9 +2024,9 @@ dependencies = [
 
 [[package]]
 name = "winnow-args-derive"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a4317df522e25332010cf1ef5aec53f1a1e996690c9a18cfdfb5597f48fab16"
+checksum = "90f6c0e613c8d3c4719038e35c8103294838e1521833642933ddf0b44be708dc"
 dependencies = [
  "proc-macro2",
  "quote",

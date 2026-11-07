@@ -13,7 +13,7 @@ rust-version.workspace = true
 anyhow = "1.0.75"
 regex = { version = "1.9.4", default-features = false, features = ["perf", "std"] }
 toml_edit = "0.25.1"
-winnow-args = { version = "0.6.0", features = ["terminal-size"] }
+winnow-args = { version = "0.6.1", features = ["terminal-size"] }
 
 [lints]
 workspace = true

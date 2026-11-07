@@ -57,7 +57,7 @@ use rsa::{BoxedUint, signature::Signer, traits::PublicKeyParts};
 use tempfile::TempDir;
 use topological_sort::TopologicalSort;
 use tracing::{info, info_span};
-use winnow_args::Args;
+use winnow_args::{Args, ValueEnum};
 use x509_cert::Certificate;
 
 use crate::{
@@ -67,13 +67,6 @@ use crate::{
         OtaInfo, Partition, Profile, RamdiskContent, VbmetaData,
     },
 };
-
-fn zip_mode_str(zip_mode: ZipMode) -> &'static str {
-    match zip_mode {
-        ZipMode::Streaming => "streaming",
-        ZipMode::Seekable => "seekable",
-    }
-}
 
 fn hash_file(path: &Path, cancel_signal: &AtomicBool) -> Result<[u8; 32]> {
     info!("Calculating hash: {path:?}");
@@ -1129,7 +1122,7 @@ fn patch_image(
         keys.ota_cert_file.as_os_str(),
         OsStr::new("--dsu"),
         OsStr::new("--zip-mode"),
-        OsStr::new(zip_mode_str(zip_mode)),
+        OsStr::new(zip_mode.name()),
     ];
 
     let argv0: OsString;
@@ -1300,7 +1293,7 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
 
             // Can't use NamedTempFile because avbroot does atomic replaces.
             let mut profile_dir = util::path_join_single(work_dir, name)?;
-            profile_dir.push(zip_mode_str(zip_mode));
+            profile_dir.push(zip_mode.name());
             let out_original = profile_dir.join("ota.zip");
             let out_magisk = profile_dir.join("ota_magisk.zip");
             let out_prepatched = profile_dir.join("ota_prepatched.zip");
