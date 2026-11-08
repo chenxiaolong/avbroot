@@ -7,7 +7,7 @@
     to update the actual links at the bottom of the file.
 -->
 
-### Unreleased
+### Version 3.39.0
 
 * Update `id` field for boot v0-v2 images during patching if it was originally a SHA-1 checksum ([Issue #668], [PR #669])
   * Fixes booting into recovery mode on some devices, like Sony pdx206.
