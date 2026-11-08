@@ -7,6 +7,11 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update `id` field for boot v0-v2 images during patching if it was originally a SHA-1 checksum ([Issue #668], [PR #669])
+  * Fixes booting into recovery mode on some devices, like Sony pdx206.
+
 ### Version 3.38.0
 
 * Switch from clap to winnow-args for command line argument parsing ([PR #664])
@@ -586,6 +591,7 @@ Behind-the-scenes changes:
 [Issue #643]: https://github.com/chenxiaolong/avbroot/issues/643
 [Issue #656]: https://github.com/chenxiaolong/avbroot/issues/656
 [Issue #659]: https://github.com/chenxiaolong/avbroot/issues/659
+[Issue #668]: https://github.com/chenxiaolong/avbroot/issues/668
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -853,3 +859,4 @@ Behind-the-scenes changes:
 [PR #665]: https://github.com/chenxiaolong/avbroot/pull/665
 [PR #666]: https://github.com/chenxiaolong/avbroot/pull/666
 [PR #667]: https://github.com/chenxiaolong/avbroot/pull/667
+[PR #669]: https://github.com/chenxiaolong/avbroot/pull/669
