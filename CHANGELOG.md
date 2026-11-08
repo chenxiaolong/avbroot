@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Update dependencies ([PR #670])
+
 ### Version 3.39.0
 
 * Update `id` field for boot v0-v2 images during patching if it was originally a SHA-1 checksum ([Issue #668], [PR #669])
@@ -860,3 +864,4 @@ Behind-the-scenes changes:
 [PR #666]: https://github.com/chenxiaolong/avbroot/pull/666
 [PR #667]: https://github.com/chenxiaolong/avbroot/pull/667
 [PR #669]: https://github.com/chenxiaolong/avbroot/pull/669
+[PR #670]: https://github.com/chenxiaolong/avbroot/pull/670
