@@ -9,8 +9,8 @@ use avbroot::{
     format::{
         avb::{AlgorithmType, Descriptor, HashDescriptor, Header},
         bootimage::{
-            self, BootImage, BootImageExt, BootImageV0Through2, BootImageV3Through4, RamdiskMeta,
-            V1Extra, V2Extra, V4Extra, VendorBootImageV3Through4, VendorV4Extra,
+            self, BootImage, BootImageExt, BootImageV0Through2, BootImageV3Through4, Id,
+            RamdiskMeta, V1Extra, V2Extra, V4Extra, VendorBootImageV3Through4, VendorV4Extra,
         },
     },
     stream::{FromReader, ToWriter},
@@ -68,10 +68,10 @@ fn round_trip_v0() {
         os_version: 0x76543210,
         name: repeat("Name", 16),
         cmdline: repeat("Cmdline", 512),
-        id: [
+        id: Id::Custom([
             0x00112233, 0x44556677, 0x8899aabb, 0xccddeeff, 0xffeeddcc, 0xbbaa9988, 0x77665544,
             0x33221100,
-        ],
+        ]),
         extra_cmdline: repeat("ExtraCmdline", 1024),
         kernel: b"kernel data".to_vec(),
         ramdisk: b"ramdisk data".to_vec(),
@@ -101,10 +101,10 @@ fn round_trip_v1() {
         os_version: 0x76543210,
         name: repeat("Name", 16),
         cmdline: repeat("Cmdline", 512),
-        id: [
+        id: Id::Custom([
             0x00112233, 0x44556677, 0x8899aabb, 0xccddeeff, 0xffeeddcc, 0xbbaa9988, 0x77665544,
             0x33221100,
-        ],
+        ]),
         extra_cmdline: repeat("ExtraCmdline", 1024),
         kernel: b"kernel data".to_vec(),
         ramdisk: b"ramdisk data".to_vec(),
@@ -136,10 +136,10 @@ fn round_trip_v2() {
         os_version: 0x76543210,
         name: repeat("Name", 16),
         cmdline: repeat("Cmdline", 512),
-        id: [
+        id: Id::Custom([
             0x00112233, 0x44556677, 0x8899aabb, 0xccddeeff, 0xffeeddcc, 0xbbaa9988, 0x77665544,
             0x33221100,
-        ],
+        ]),
         extra_cmdline: repeat("ExtraCmdline", 1024),
         kernel: b"kernel data".to_vec(),
         ramdisk: b"ramdisk data".to_vec(),

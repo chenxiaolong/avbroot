@@ -29,7 +29,7 @@ use avbroot::{
             HashTreeDescriptor, Header, PropertyDescriptor,
         },
         bootimage::{
-            self, BootImage, BootImageV0Through2, BootImageV3Through4, RamdiskMeta, V1Extra,
+            self, BootImage, BootImageV0Through2, BootImageV3Through4, Id, RamdiskMeta, V1Extra,
             V2Extra, V4Extra, VendorBootImageV3Through4, VendorV4Extra,
         },
         care_map,
@@ -336,7 +336,7 @@ fn create_boot_image(
                 os_version: 0,
                 name: String::new(),
                 cmdline: String::new(),
-                id: Default::default(),
+                id: Id::Sha1,
                 extra_cmdline: String::new(),
                 kernel,
                 ramdisk: ramdisks.into_iter().next().unwrap_or_default(),

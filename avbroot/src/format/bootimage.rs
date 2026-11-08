@@ -186,6 +186,25 @@ impl fmt::Debug for V2Extra {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "type", content = "value")]
+pub enum Id {
+    Sha1,
+    Custom([u32; 8]),
+}
+
+impl fmt::Debug for Id {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Sha1 => f.debug_tuple("Sha1").finish(),
+            Self::Custom(id) => f
+                .debug_tuple("Custom")
+                .field(&format_args!("{id:?}"))
+                .finish(),
+        }
+    }
+}
+
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct BootImageV0Through2 {
     // v0+ fields.
@@ -197,7 +216,7 @@ pub struct BootImageV0Through2 {
     pub os_version: u32,
     pub name: String,
     pub cmdline: String,
-    pub id: [u32; 8],
+    pub id: Id,
     pub extra_cmdline: String,
     // Images.
     #[serde(skip)]
@@ -231,6 +250,46 @@ impl fmt::Debug for BootImageV0Through2 {
             .field("v1_extra", &self.v1_extra)
             .field("v2_extra", &self.v2_extra)
             .finish()
+    }
+}
+
+impl BootImageV0Through2 {
+    fn sha1_id(
+        kernel: &[u8],
+        ramdisk: &[u8],
+        second: &[u8],
+        recovery_dtbo: Option<&[u8]>,
+        dtb: Option<&[u8]>,
+    ) -> [u32; 8] {
+        let mut sha1 = Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY);
+
+        sha1.update(kernel);
+        sha1.update(&(kernel.len() as u32).to_le_bytes());
+
+        sha1.update(ramdisk);
+        sha1.update(&(ramdisk.len() as u32).to_le_bytes());
+
+        sha1.update(second);
+        sha1.update(&(second.len() as u32).to_le_bytes());
+
+        if let Some(recovery_dtbo) = recovery_dtbo {
+            sha1.update(recovery_dtbo);
+            sha1.update(&(recovery_dtbo.len() as u32).to_le_bytes());
+        }
+
+        if let Some(dtb) = dtb {
+            sha1.update(dtb);
+            sha1.update(&(dtb.len() as u32).to_le_bytes());
+        }
+
+        let digest = sha1.finish();
+        let mut id = [0u32; 8];
+
+        for (i, chunk) in digest.as_ref().as_chunks::<4>().0.iter().enumerate() {
+            id[i] = u32::from_le_bytes(*chunk);
+        }
+
+        id
     }
 }
 
@@ -412,6 +471,26 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
                 .map_err(|e| Error::DataRead("Boot::V2::dtb_padding", e))?;
         }
 
+        let v1_extra = v1_data.map(|d| d.v1_extra);
+        let v2_extra = v2_data.map(|d| d.v2_extra);
+
+        let raw_id = raw_v0.id.map(|id| id.get());
+        let sha1_id = Self::sha1_id(
+            &kernel,
+            &ramdisk,
+            &second,
+            v1_extra.as_ref().map(|v1| v1.recovery_dtbo.as_slice()),
+            v2_extra.as_ref().map(|v2| v2.dtb.as_slice()),
+        );
+
+        // If the original ID was a checksum, remember that so it can be
+        // recomputed during serialization.
+        let id = if raw_id == sha1_id {
+            Id::Sha1
+        } else {
+            Id::Custom(raw_id)
+        };
+
         let image = Self {
             kernel_addr: raw_v0.kernel_addr.get(),
             ramdisk_addr: raw_v0.ramdisk_addr.get(),
@@ -421,13 +500,13 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
             os_version: raw_v0.os_version.get(),
             name: name.to_owned(),
             cmdline: cmdline.to_owned(),
-            id: raw_v0.id.map(|id| id.get()),
+            id,
             extra_cmdline: extra_cmdline.to_owned(),
             kernel,
             ramdisk,
             second,
-            v1_extra: v1_data.map(|d| d.v1_extra),
-            v2_extra: v2_data.map(|d| d.v2_extra),
+            v1_extra,
+            v2_extra,
         };
 
         Ok(image)
@@ -484,6 +563,17 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
                 )
             })?;
 
+        let raw_id = match self.id {
+            Id::Sha1 => Self::sha1_id(
+                &self.kernel,
+                &self.ramdisk,
+                &self.second,
+                self.v1_extra.as_ref().map(|v1| v1.recovery_dtbo.as_slice()),
+                self.v2_extra.as_ref().map(|v2| v2.dtb.as_slice()),
+            ),
+            Id::Custom(id) => id,
+        };
+
         let mut writer = CountingWriter::new(writer);
 
         let raw_v0 = RawV0 {
@@ -500,7 +590,7 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
             os_version: self.os_version.into(),
             name,
             cmdline,
-            id: self.id.map(|id| id.into()),
+            id: raw_id.map(|id| id.into()),
             extra_cmdline,
         };
 
