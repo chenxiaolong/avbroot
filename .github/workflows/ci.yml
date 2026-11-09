@@ -20,7 +20,6 @@ jobs:
       # https://github.com/rust-lang/cargo/pull/15462
       RUSTDOCFLAGS: -C target-feature=+crt-static
       TARGETS: ${{ join(matrix.artifact.targets, ' ') || matrix.artifact.name }}
-      ANDROID_API: ${{ matrix.artifact.android_api }}
     strategy:
       fail-fast: false
       matrix:
@@ -33,26 +32,6 @@ jobs:
         with:
           # For git describe
           fetch-depth: 0
-
-      - name: Install qemu-user-static
-        if: ${{ contains(matrix.artifact.name, 'android') }}
-        shell: bash
-        run: |
-          sudo apt-get -y update
-          sudo apt-get -y install qemu-user-static
-
-      - name: Set Android temporary directory
-        if: ${{ contains(matrix.artifact.name, 'android') }}
-        shell: bash
-        run: |
-          echo "TMPDIR=/tmp" >> "${GITHUB_ENV}"
-
-      - name: Install cargo-android
-        shell: bash
-        run: |
-          cargo install \
-              --git https://github.com/chenxiaolong/cargo-android \
-              --tag v0.1.6
 
       - name: Get version
         id: get_version
@@ -81,7 +60,7 @@ jobs:
         shell: bash
         run: |
           for target in ${TARGETS}; do
-              cargo android \
+              cargo \
                   build --release --workspace \
                   --target "${target}"
           done
