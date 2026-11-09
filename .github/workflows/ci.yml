@@ -32,6 +32,11 @@ jobs:
         run: |-
           for i in /etc/apt/apt.conf.d/*; do echo "BEGIN ${i}"; cat "${i}"; done
 
+      - name: List installed packages
+        shell: bash
+        run: |-
+          dpkg -l
+
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
