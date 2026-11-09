@@ -66,6 +66,8 @@ jobs:
       - name: Install toolchains
         shell: bash
         run: |
+          rustc -V
+
           for target in ${TARGETS}; do
               rustup target add "${target}"
           done
