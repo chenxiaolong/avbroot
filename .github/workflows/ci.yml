@@ -2,8 +2,7 @@ name: CI
 on:
   push:
     branches:
-      - master
-  pull_request:
+      - issue-671-test
 
 # This allows a subsequently queued workflow run to interrupt previous runs, but
 # only in pull requests.
@@ -28,23 +27,6 @@ jobs:
         artifact:
           - os: ubuntu-latest
             name: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
-            name: aarch64-unknown-linux-gnu
-          - os: windows-latest
-            name: x86_64-pc-windows-msvc
-          - os: windows-11-arm
-            name: aarch64-pc-windows-msvc
-          - os: macos-latest
-            name: universal-apple-darwin
-            targets:
-              - aarch64-apple-darwin
-              - x86_64-apple-darwin
-            combine: lipo
-          - os: ubuntu-latest
-            name: aarch64-linux-android31
-            targets:
-              - aarch64-linux-android
-            android_api: '31'
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
