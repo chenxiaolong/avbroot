@@ -28,11 +28,12 @@ jobs:
             name: x86_64-unknown-linux-gnu
     steps:
       - name: Avoid amd64v3 glibc static libraries
+        if: ${{ matrix.artifact.name == 'x86_64-unknown-linux-gnu' }}
         shell: bash
         run: |-
           sudo rm /etc/apt/apt.conf.d/90arch-variant
           sudo apt-get -y update
-          sudo apt-get -y upgrade libc6-dev
+          sudo apt-get -y install --reinstall libc6-dev
 
       - name: Archive apt configs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
