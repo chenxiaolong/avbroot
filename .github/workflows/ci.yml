@@ -17,7 +17,8 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       # https://github.com/rust-lang/rust/issues/78210
-      RUSTFLAGS: -C strip=symbols -C target-feature=+crt-static
+      RUSTFLAGS: -C strip=symbols -C target-feature=+crt-static ${{ matrix.artifact.rustflags }}
+      CFLAGS: ${{ matrix.artifact.cflags }}
       # https://github.com/rust-lang/cargo/pull/15462
       RUSTDOCFLAGS: -C target-feature=+crt-static
       TARGETS: ${{ join(matrix.artifact.targets, ' ') || matrix.artifact.name }}
@@ -28,6 +29,8 @@ jobs:
         artifact:
           - os: ubuntu-latest
             name: x86_64-unknown-linux-gnu
+            cflags: -march=x86-64-v2
+            rustflags: -C target-cpu=x86-64-v2
           - os: ubuntu-26.04-arm
             name: aarch64-unknown-linux-gnu
           - os: windows-latest
@@ -51,6 +54,14 @@ jobs:
         with:
           # For git describe
           fetch-depth: 0
+
+      - name: Avoid amd64v3 glibc static libraries
+        if: ${{ matrix.artifact.name == 'x86_64-unknown-linux-gnu' }}
+        shell: bash
+        run: |-
+          sudo rm /etc/apt/apt.conf.d/90arch-variant
+          sudo apt-get -y update
+          sudo apt-get -y install --reinstall libc6-dev
 
       - name: Install qemu-user-binfmt
         if: ${{ contains(matrix.artifact.name, 'android') }}
