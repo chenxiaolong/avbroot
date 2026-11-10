@@ -9,6 +9,8 @@
 
 ### Unreleased
 
+* Fix support for older x86_64 CPUs that don't support AVX instructions in the prebuilt binaries ([Issue #671], [PR #673])
+  * This affected versions >=3.37.1, which were built after Github Actions upgraded `ubuntu-latest` to Ubuntu 26.04.
 * Update dependencies ([PR #670])
 
 ### Version 3.39.0
@@ -596,6 +598,7 @@ Behind-the-scenes changes:
 [Issue #656]: https://github.com/chenxiaolong/avbroot/issues/656
 [Issue #659]: https://github.com/chenxiaolong/avbroot/issues/659
 [Issue #668]: https://github.com/chenxiaolong/avbroot/issues/668
+[Issue #671]: https://github.com/chenxiaolong/avbroot/issues/671
 [PR #130]: https://github.com/chenxiaolong/avbroot/pull/130
 [PR #132]: https://github.com/chenxiaolong/avbroot/pull/132
 [PR #133]: https://github.com/chenxiaolong/avbroot/pull/133
@@ -865,3 +868,4 @@ Behind-the-scenes changes:
 [PR #667]: https://github.com/chenxiaolong/avbroot/pull/667
 [PR #669]: https://github.com/chenxiaolong/avbroot/pull/669
 [PR #670]: https://github.com/chenxiaolong/avbroot/pull/670
+[PR #673]: https://github.com/chenxiaolong/avbroot/pull/673
