@@ -17,28 +17,19 @@ use crate::util;
 
 /// This is only needed because `dyn Read + Seek` is not a valid construct in
 /// Rust yet.
-pub trait ReadSeek: Read + Seek {
-    // https://github.com/rust-lang/rust/issues/145752
-    fn issue_145752(&self) {}
-}
+pub trait ReadSeek: Read + Seek {}
 
 impl<R: Read + Seek> ReadSeek for R {}
 
 /// This is only needed because `dyn Write + Seek` is not a valid construct in
 /// Rust yet.
-pub trait WriteSeek: Write + Seek {
-    // https://github.com/rust-lang/rust/issues/145752
-    fn issue_145752(&self) {}
-}
+pub trait WriteSeek: Write + Seek {}
 
 impl<W: Write + Seek> WriteSeek for W {}
 
 /// This is only needed because `dyn Read + Write + Seek` is not a valid
 /// construct in Rust yet.
-pub trait ReadWriteSeek: ReadSeek + WriteSeek {
-    // https://github.com/rust-lang/rust/issues/145752
-    fn issue_145752(&self) {}
-}
+pub trait ReadWriteSeek: ReadSeek + WriteSeek {}
 
 impl<W: ReadSeek + WriteSeek> ReadWriteSeek for W {}
 
@@ -231,10 +222,7 @@ write_at_blanket_impl!(Box<W>);
 
 /// This is only needed because `dyn ReadAt + WriteAt` is not a valid construct
 /// in Rust yet.
-pub trait ReadWriteAt: ReadAt + WriteAt {
-    // https://github.com/rust-lang/rust/issues/145752
-    fn issue_145752(&self) {}
-}
+pub trait ReadWriteAt: ReadAt + WriteAt {}
 
 impl<F: ReadAt + WriteAt> ReadWriteAt for F {}
 
