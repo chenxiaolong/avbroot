@@ -35,11 +35,11 @@ use crate::{
         DeltaArchiveManifest, Extent, InstallOperation, PartitionInfo, PartitionUpdate, Signatures,
         install_operation::Type, signatures::Signature,
     },
+    range::{self, ValueTooLargeError},
     stream::{
         self, CountingReader, HashingReader, HashingWriter, ReadAt, ReadDiscardExt,
         ReadFixedSizeExt, ReadSeek, UserPosFile, WriteAt, WriteSeek,
     },
-    util::{self, SizeTooLargeError},
 };
 
 const PAYLOAD_MAGIC: &[u8; 4] = b"CrAU";
@@ -102,7 +102,7 @@ pub enum Error {
     #[error("{0:?} field is missing")]
     MissingField(&'static str),
     #[error("{0:?} field is out of bounds")]
-    IntOutOfBounds(&'static str, #[source] SizeTooLargeError),
+    IntOutOfBounds(&'static str, #[source] ValueTooLargeError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
     #[error("Failed to decode payload manifest protobuf message")]
@@ -185,8 +185,8 @@ impl PayloadHeader {
             return Err(Error::UnsupportedVersion(header.file_format_version.get()));
         }
 
-        let manifest_size: usize = util::try_cast_size(header.manifest_size.get())
-            .and_then(|s| util::check_size(s, MANIFEST_MAX_SIZE))
+        let manifest_size: usize = range::try_cast(header.manifest_size.get())
+            .and_then(|s| range::ensure_within(s, MANIFEST_MAX_SIZE))
             .map_err(|e| Error::IntOutOfBounds("manifest_size", e))?;
 
         let manifest_raw = reader
@@ -1634,7 +1634,7 @@ pub fn compress_modified_image(
                 let extents_end = extents_start
                     .checked_add(extents_size)
                     .ok_or(Error::IntOverflow("extents_end"))?;
-                let extents_size: usize = util::try_cast_size(extents_size)
+                let extents_size: usize = range::try_cast(extents_size)
                     .map_err(|e| Error::IntOutOfBounds("extents_size", e))?;
 
                 let mut reader = UserPosFile::new(input);
@@ -1647,7 +1647,7 @@ pub fn compress_modified_image(
                     .read_vec_exact(extents_size)
                     .map_err(Error::ChunkRead)?;
 
-                let was_modified = util::ranges_overlaps(ranges, &(extents_start..extents_end));
+                let was_modified = range::overlaps(ranges, &(extents_start..extents_end));
 
                 Ok((data, was_modified))
             })
@@ -1701,5 +1701,5 @@ pub fn compress_modified_image(
     let digest_uncompressed = context_uncompressed.finish();
     partition_info.hash = Some(digest_uncompressed.as_ref().to_vec());
 
-    Ok(util::merge_overlapping(&modified_operations))
+    Ok(range::merge_overlapping(&modified_operations))
 }

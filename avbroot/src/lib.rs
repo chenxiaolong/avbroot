@@ -18,5 +18,6 @@ pub mod format;
 pub mod octal;
 pub mod patch;
 pub mod protobuf;
+pub mod range;
 pub mod stream;
 pub mod util;

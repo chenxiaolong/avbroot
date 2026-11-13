@@ -22,8 +22,8 @@ use crate::{
         zip::{ZipFileHeaderRecordExt, ZipSliceEntriesSafeExt},
     },
     patch::otacert,
+    range,
     stream::{self, ReadFixedSizeExt, ReadWriteAt, UserPosFile},
-    util,
 };
 
 #[derive(Debug, Error)]
@@ -230,7 +230,7 @@ pub fn patch_system_image(
         .ok_or(Error::IntOverflow("avb_end"))?;
     let footer_start = image_size - Footer::SIZE as u64;
 
-    let other_ranges = util::merge_overlapping(&[
+    let other_ranges = range::merge_overlapping(&[
         descriptor.tree_offset..hash_tree_end,
         descriptor.fec_offset..fec_data_end,
         footer.vbmeta_offset..header_end,

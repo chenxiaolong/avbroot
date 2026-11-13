@@ -24,8 +24,9 @@ use crate::{
         avb,
         padding::{self, ZeroPadding},
     },
+    range::{self, ValueTooLargeError},
     stream::{self, ReadAt, ReadFixedSizeExt, UserPosFile},
-    util::{self, NumBytes, SizeTooLargeError},
+    util::NumBytes,
 };
 
 #[derive(Debug, Error)]
@@ -47,7 +48,7 @@ pub enum Error {
     #[error("Hashing algorithm not supported: {:?}", .0.as_bstr())]
     UnsupportedHashAlgorithm(Vec<u8>),
     #[error("{0:?} field is out of bounds")]
-    IntOutOfBounds(&'static str, #[source] SizeTooLargeError),
+    IntOutOfBounds(&'static str, #[source] ValueTooLargeError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
     #[error("Failed to get input file size")]
@@ -97,8 +98,8 @@ impl HashTree {
 
             // Depending on the chosen block size, the original file size could
             // overflow a usize without the first level's size doing the same.
-            let level_size_usize: usize = util::try_cast_size(level_size)
-                .map_err(|e| Error::IntOutOfBounds("level_size", e))?;
+            let level_size_usize: usize =
+                range::try_cast(level_size).map_err(|e| Error::IntOutOfBounds("level_size", e))?;
 
             ranges.push(0..level_size_usize);
         }
@@ -118,9 +119,9 @@ impl HashTree {
     /// Convert a list of ranges of byte offsets to a sorted, non-overlapping
     /// list of block ranges.
     fn blocks_for_ranges(&self, image_size: u64, ranges: &[Range<u64>]) -> Result<Vec<Range<u64>>> {
-        let ranges = util::merge_overlapping(ranges);
+        let ranges = range::merge_overlapping(ranges);
         if let Some(last) = ranges.last() {
-            util::check_size(last.end, image_size)
+            range::ensure_within(last.end, image_size)
                 .map_err(|e| Error::IntOutOfBounds("ranges", e))?;
         }
 
@@ -138,7 +139,7 @@ impl HashTree {
             result.push(start_block..end_block);
         }
 
-        Ok(util::merge_overlapping(&result))
+        Ok(range::merge_overlapping(&result))
     }
 
     /// Calculate the hash tree digests for a single level of the tree. If the
@@ -235,7 +236,7 @@ impl HashTree {
         level_data
             .par_chunks_exact_mut(digest_size)
             .enumerate()
-            .filter(|(chunk, _)| util::ranges_contains(block_ranges, &(*chunk as u64)))
+            .filter(|(chunk, _)| range::contains(block_ranges, &(*chunk as u64)))
             .try_for_each(|(chunk, out_data)| -> io::Result<()> {
                 let in_start = (chunk as u64) * u64::from(self.block_size);
                 let in_size = u64::from(self.block_size).min(size - in_start);
@@ -531,11 +532,11 @@ impl HashTreeImage {
             .to_padded_array::<16>()
             .ok_or_else(|| Error::UnsupportedHashAlgorithm(self.algorithm.as_bytes().to_vec()))?;
 
-        let salt_size: u16 = util::try_cast_size(self.salt.len())
-            .map_err(|e| Error::IntOutOfBounds("salt_size", e))?;
-        let root_digest_size: u16 = util::try_cast_size(self.root_digest.len())
+        let salt_size: u16 =
+            range::try_cast(self.salt.len()).map_err(|e| Error::IntOutOfBounds("salt_size", e))?;
+        let root_digest_size: u16 = range::try_cast(self.root_digest.len())
             .map_err(|e| Error::IntOutOfBounds("root_digest_size", e))?;
-        let hash_tree_size: u32 = util::try_cast_size(self.hash_tree.len())
+        let hash_tree_size: u32 = range::try_cast(self.hash_tree.len())
             .map_err(|e| Error::IntOutOfBounds("hash_tree_size", e))?;
 
         let header = RawHeader {

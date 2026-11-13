@@ -2,14 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
-    cmp::Ordering,
     fmt::{self, Display},
-    mem,
-    ops::Range,
     path::{Component, Path, PathBuf},
 };
 
-use num_traits::{NumCast, PrimInt, Unsigned};
+use num_traits::PrimInt;
 use thiserror::Error;
 
 pub const ZEROS: [u8; 16384] = [0u8; 16384];
@@ -42,57 +39,6 @@ impl fmt::Debug for DebugString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
-}
-
-/// An error returned when a value exceeds a maximum allowed value.
-#[derive(Clone, Debug, Error)]
-#[error("{value} exceeds maximum size {max_inclusive}")]
-pub struct SizeTooLargeError {
-    pub value: u64,
-    pub max_inclusive: u64,
-}
-
-/// Verify that unsigned size `value` does not exceed `max_inclusive` and then
-/// return `value`.
-pub fn check_size<T>(value: T, max_inclusive: T) -> Result<T, SizeTooLargeError>
-where
-    T: PrimInt + Unsigned,
-{
-    const {
-        assert!(
-            mem::size_of::<T>() <= 8,
-            "Integer must be 64 bits or smaller"
-        );
-    }
-
-    if value > max_inclusive {
-        return Err(SizeTooLargeError {
-            value: NumCast::from(value).unwrap(),
-            max_inclusive: NumCast::from(max_inclusive).unwrap(),
-        });
-    }
-
-    Ok(value)
-}
-
-/// Try to cast unsigned size `value` to unsigned type `T`. If it does not fit,
-/// the error will indicate the maximum value.
-pub fn try_cast_size<T, V>(value: V) -> Result<T, SizeTooLargeError>
-where
-    T: PrimInt + Unsigned,
-    V: PrimInt + Unsigned,
-{
-    const {
-        assert!(
-            mem::size_of::<T>() <= 8,
-            "Integer must be 64 bits or smaller"
-        );
-    }
-
-    NumCast::from(value).ok_or_else(|| SizeTooLargeError {
-        value: NumCast::from(value).unwrap(),
-        max_inclusive: NumCast::from(T::max_value()).unwrap(),
-    })
 }
 
 /// Check if a byte slice is all zeros.
@@ -182,72 +128,6 @@ pub fn path_join_single(
     path_join(parent.as_ref(), child.as_ref())
 }
 
-/// Sort and merge overlapping intervals.
-pub fn merge_overlapping<T>(sections: &[Range<T>]) -> Vec<Range<T>>
-where
-    T: Ord + Clone + Copy,
-{
-    let mut sections = sections.to_vec();
-    sections.sort_by_key(|r| (r.start, r.end));
-
-    let mut result = Vec::<Range<T>>::new();
-
-    for section in sections {
-        if section.start >= section.end {
-            continue;
-        } else if let Some(last) = result.last_mut()
-            && section.start <= last.end
-        {
-            last.end = last.end.max(section.end);
-            continue;
-        }
-
-        result.push(section);
-    }
-
-    result
-}
-
-/// Binary search to determine if the needle overlaps any of the ranges.
-pub fn ranges_overlaps<T>(ranges: &[Range<T>], needle: &Range<T>) -> bool
-where
-    T: Ord,
-{
-    if needle.start < needle.end {
-        ranges
-            .binary_search_by(|range| {
-                if range.start > needle.end {
-                    Ordering::Greater
-                } else if range.end <= needle.start {
-                    Ordering::Less
-                } else {
-                    Ordering::Equal
-                }
-            })
-            .is_ok()
-    } else {
-        false
-    }
-}
-
-/// Binary search to determine if any of the ranges contain the needle.
-pub fn ranges_contains<T>(ranges: &[Range<T>], needle: &T) -> bool
-where
-    T: Ord,
-{
-    ranges
-        .binary_search_by(|range| {
-            if range.start > *needle {
-                Ordering::Greater
-            } else if range.end <= *needle {
-                Ordering::Less
-            } else {
-                Ordering::Equal
-            }
-        })
-        .is_ok()
-}
-
 /// Join arbitrary displayable items with a separator.
 pub fn join(into_iter: impl IntoIterator<Item = impl Display>, sep: &str) -> String {
     use std::fmt::Write;
@@ -270,52 +150,4 @@ pub fn sort<T: Ord>(iter: impl Iterator<Item = T>) -> Vec<T> {
     let mut items = iter.collect::<Vec<_>>();
     items.sort();
     items
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_check_size() {
-        check_size(u64::MIN, u64::MIN).unwrap();
-        check_size(u64::MAX, u64::MAX).unwrap();
-        check_size(1u8, 2).unwrap();
-
-        let err = check_size(u8::MAX, 0).unwrap_err();
-        assert_eq!(err.value, 255);
-        assert_eq!(err.max_inclusive, 0);
-    }
-
-    #[test]
-    fn test_try_cast_size() {
-        let value: u8 = try_cast_size(255u16).unwrap();
-        assert_eq!(value, 255);
-
-        let err = try_cast_size::<u8, _>(256u16).unwrap_err();
-        assert_eq!(err.value, 256);
-        assert_eq!(err.max_inclusive, 255);
-    }
-
-    #[test]
-    fn test_ranges_overlaps() {
-        assert!(!ranges_overlaps(&[0..4], &(0..0)));
-        assert!(ranges_overlaps(&[0..4], &(0..4)));
-        assert!(ranges_overlaps(&[0..4], &(1..4)));
-        assert!(ranges_overlaps(&[0..4], &(0..3)));
-        assert!(!ranges_overlaps(&[0..4], &(4..5)));
-        assert!(ranges_overlaps(&[5..8], &(5..9)));
-        assert!(ranges_overlaps(&[5..8], &(4..8)));
-        assert!(ranges_overlaps(&[5..8], &(4..9)));
-        assert!(ranges_overlaps(&[0..4, 5..8], &(4..5)));
-        assert!(ranges_overlaps(&[0..4, 5..8], &(0..9)));
-    }
-
-    #[test]
-    fn test_ranges_contains() {
-        assert!(ranges_contains(&[0..4], &0));
-        assert!(!ranges_contains(&[0..4], &4));
-        assert!(!ranges_contains(&[0..4, 5..8], &4));
-        assert!(ranges_contains(&[0..4, 5..8], &6));
-    }
 }

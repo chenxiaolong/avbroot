@@ -31,11 +31,12 @@ use crate::{
         hashtree::{self, HashTree},
         padding::{self, ZeroPadding},
     },
+    range::{self, ValueTooLargeError},
     stream::{
         self, CountingReader, CountingWriter, ReadAt, ReadFixedSizeExt, ReadWriteAt, UserPosFile,
         WriteZerosExt,
     },
-    util::{self, SizeTooLargeError},
+    util,
 };
 
 pub const HEADER_MAGIC: [u8; 4] = *b"AVB0";
@@ -90,7 +91,7 @@ pub enum Error {
     #[error("{0:?} field padding contains non-zero bytes")]
     PaddingNotZero(&'static str),
     #[error("{0:?} field is out of bounds")]
-    IntOutOfBounds(&'static str, #[source] SizeTooLargeError),
+    IntOutOfBounds(&'static str, #[source] ValueTooLargeError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
     #[error("Invalid VBMeta header magic: {0:?}")]
@@ -344,9 +345,9 @@ impl PropertyDescriptor {
         let raw_descriptor = RawPropertyDescriptor::read_from_io(&mut reader)
             .map_err(|e| Error::DataRead("Property::descriptor", e))?;
 
-        let key_size = util::check_size(raw_descriptor.key_size.get(), HEADER_MAX_SIZE)
+        let key_size = range::ensure_within(raw_descriptor.key_size.get(), HEADER_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Property::key_size", e))?;
-        let value_size = util::check_size(raw_descriptor.value_size.get(), HEADER_MAX_SIZE)
+        let value_size = range::ensure_within(raw_descriptor.value_size.get(), HEADER_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Property::value_size", e))?;
 
         let key = reader
@@ -378,9 +379,9 @@ impl PropertyDescriptor {
     }
 
     pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
-        util::check_size(self.key.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.key.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Property::key_size", e))?;
-        util::check_size(self.value.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.value.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Property::value_size", e))?;
 
         let raw_descriptor = RawPropertyDescriptor {
@@ -496,15 +497,15 @@ impl HashTreeDescriptor {
             ));
         }
 
-        let partition_name_len = util::check_size(
+        let partition_name_len = range::ensure_within(
             raw_descriptor.partition_name_len.get(),
             HEADER_MAX_SIZE as u32,
         )
         .map_err(|e| Error::IntOutOfBounds("HashTree::partition_name_len", e))?;
-        let salt_len = util::check_size(raw_descriptor.salt_len.get(), HEADER_MAX_SIZE as u32)
+        let salt_len = range::ensure_within(raw_descriptor.salt_len.get(), HEADER_MAX_SIZE as u32)
             .map_err(|e| Error::IntOutOfBounds("HashTree::salt_len", e))?;
         let root_digest_len =
-            util::check_size(raw_descriptor.root_digest_len.get(), HEADER_MAX_SIZE as u32)
+            range::ensure_within(raw_descriptor.root_digest_len.get(), HEADER_MAX_SIZE as u32)
                 .map_err(|e| Error::IntOutOfBounds("HashTree::root_digest_len", e))?;
 
         // Not NULL-terminated.
@@ -545,11 +546,11 @@ impl HashTreeDescriptor {
     }
 
     pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
-        util::check_size(self.partition_name.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.partition_name.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("HashTree::partition_name_len", e))?;
-        util::check_size(self.salt.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.salt.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("HashTree::salt_len", e))?;
-        util::check_size(self.root_digest.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.root_digest.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("HashTree::root_digest_len", e))?;
 
         if !self.hash_algorithm.is_ascii() {
@@ -629,11 +630,11 @@ impl HashTreeDescriptor {
             return Err(Error::FecMissing);
         }
 
-        util::check_size(self.fec_size, FEC_DATA_MAX_SIZE)
+        range::ensure_within(self.fec_size, FEC_DATA_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("HashTree::fec_size", e))?;
 
         // Fec will check the validity of this field.
-        let parity: u8 = util::try_cast_size(self.fec_num_roots)
+        let parity: u8 = range::try_cast(self.fec_num_roots)
             .map_err(|e| Error::IntOutOfBounds("HashTree::fec_num_roots", e))?;
 
         // The FEC covers the hash tree as well.
@@ -695,7 +696,7 @@ impl HashTreeDescriptor {
                 .map_err(Error::HashTreeGenerate)?,
         };
 
-        util::check_size(hash_tree_data.len(), HASH_TREE_MAX_SIZE as usize)
+        range::ensure_within(hash_tree_data.len(), HASH_TREE_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("HashTree::tree_size", e))?;
 
         let tree_size = hash_tree_data.len() as u64;
@@ -716,7 +717,7 @@ impl HashTreeDescriptor {
                 });
             }
 
-            let parity: u8 = util::try_cast_size(self.fec_num_roots)
+            let parity: u8 = range::try_cast(self.fec_num_roots)
                 .map_err(|e| Error::IntOutOfBounds("HashTree::fec_num_roots", e))?;
             let fec_offset = tree_offset + tree_size;
 
@@ -770,7 +771,7 @@ impl HashTreeDescriptor {
 
         let algorithm = digest_algorithm(&self.hash_algorithm)?;
 
-        util::check_size(self.tree_size, HASH_TREE_MAX_SIZE)
+        range::ensure_within(self.tree_size, HASH_TREE_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("HashTree::tree_size", e))?;
 
         let mut reader = UserPosFile::new(input);
@@ -908,15 +909,15 @@ impl HashDescriptor {
             ));
         }
 
-        let partition_name_len = util::check_size(
+        let partition_name_len = range::ensure_within(
             raw_descriptor.partition_name_len.get(),
             HEADER_MAX_SIZE as u32,
         )
         .map_err(|e| Error::IntOutOfBounds("Hash::partition_name_len", e))?;
-        let salt_len = util::check_size(raw_descriptor.salt_len.get(), HEADER_MAX_SIZE as u32)
+        let salt_len = range::ensure_within(raw_descriptor.salt_len.get(), HEADER_MAX_SIZE as u32)
             .map_err(|e| Error::IntOutOfBounds("Hash::salt_len", e))?;
         let root_digest_len =
-            util::check_size(raw_descriptor.root_digest_len.get(), HEADER_MAX_SIZE as u32)
+            range::ensure_within(raw_descriptor.root_digest_len.get(), HEADER_MAX_SIZE as u32)
                 .map_err(|e| Error::IntOutOfBounds("Hash::root_digest_len", e))?;
 
         // Not NULL-terminated.
@@ -949,11 +950,11 @@ impl HashDescriptor {
     }
 
     pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
-        util::check_size(self.partition_name.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.partition_name.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Hash::partition_name_len", e))?;
-        util::check_size(self.salt.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.salt.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Hash::salt_len", e))?;
-        util::check_size(self.root_digest.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.root_digest.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Hash::root_digest_len", e))?;
 
         if !self.hash_algorithm.is_ascii() {
@@ -1068,7 +1069,7 @@ impl KernelCmdlineDescriptor {
             .map_err(|e| Error::DataRead("KernelCmdline::descriptor", e))?;
 
         let cmdline_len =
-            util::check_size(raw_descriptor.cmdline_len.get(), HEADER_MAX_SIZE as u32)
+            range::ensure_within(raw_descriptor.cmdline_len.get(), HEADER_MAX_SIZE as u32)
                 .map_err(|e| Error::IntOutOfBounds("KernelCmdline::cmdline_len", e))?;
 
         // Not NULL-terminated.
@@ -1088,7 +1089,7 @@ impl KernelCmdlineDescriptor {
     }
 
     pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
-        util::check_size(self.cmdline.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.cmdline.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("KernelCmdline::cmdline_len", e))?;
 
         let raw_descriptor = RawKernelCmdlineDescriptor {
@@ -1152,13 +1153,13 @@ impl ChainPartitionDescriptor {
         let raw_descriptor = RawChainPartitionDescriptor::read_from_io(&mut reader)
             .map_err(|e| Error::DataRead("ChainPartition::descriptor", e))?;
 
-        let partition_name_len = util::check_size(
+        let partition_name_len = range::ensure_within(
             raw_descriptor.partition_name_len.get(),
             HEADER_MAX_SIZE as u32,
         )
         .map_err(|e| Error::IntOutOfBounds("ChainPartition::partition_name_len", e))?;
         let public_key_len =
-            util::check_size(raw_descriptor.public_key_len.get(), HEADER_MAX_SIZE as u32)
+            range::ensure_within(raw_descriptor.public_key_len.get(), HEADER_MAX_SIZE as u32)
                 .map_err(|e| Error::IntOutOfBounds("ChainPartition::public_key_len", e))?;
 
         // Not NULL-terminated.
@@ -1189,9 +1190,9 @@ impl ChainPartitionDescriptor {
     }
 
     pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
-        util::check_size(self.partition_name.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.partition_name.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("ChainPartition::partition_name_len", e))?;
-        util::check_size(self.public_key.len(), HEADER_MAX_SIZE as usize)
+        range::ensure_within(self.public_key.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("ChainPartition::public_key_len", e))?;
 
         let raw_descriptor = RawChainPartitionDescriptor {
@@ -1244,7 +1245,7 @@ impl Descriptor {
         let raw_descriptor = RawDescriptor::read_from_io(&mut reader)
             .map_err(|e| Error::DataRead("Descriptor::prefix", e))?;
 
-        let nbf = util::check_size(raw_descriptor.num_bytes_following.get(), HEADER_MAX_SIZE)
+        let nbf = range::ensure_within(raw_descriptor.num_bytes_following.get(), HEADER_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Descriptor::num_bytes_following", e))?;
 
         let mut inner_reader = CountingReader::new(reader.take(nbf));
@@ -1327,7 +1328,7 @@ impl Descriptor {
 
         let inner_data = inner_writer.into_inner();
 
-        let nbf_unpadded = util::check_size(inner_data.len(), HEADER_MAX_SIZE as usize)
+        let nbf_unpadded = range::ensure_within(inner_data.len(), HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Descriptor::num_bytes_following", e))?;
 
         let padding_len = padding::calc(nbf_unpadded, 8);
@@ -1974,7 +1975,7 @@ impl Footer {
             return Err(Error::InvalidFooterMagic(raw_footer.magic));
         }
 
-        let vbmeta_size = util::check_size(raw_footer.vbmeta_size.get(), HEADER_MAX_SIZE)
+        let vbmeta_size = range::ensure_within(raw_footer.vbmeta_size.get(), HEADER_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Footer::vbmeta_size", e))?;
 
         let footer = Self {
@@ -1990,7 +1991,7 @@ impl Footer {
     }
 
     pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
-        util::check_size(self.vbmeta_size, HEADER_MAX_SIZE)
+        range::ensure_within(self.vbmeta_size, HEADER_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Footer::vbmeta_size", e))?;
 
         let raw_footer = RawFooter {

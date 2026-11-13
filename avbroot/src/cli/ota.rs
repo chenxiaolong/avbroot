@@ -53,6 +53,7 @@ use crate::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
         recovery_update_verifier::CareMap,
     },
+    range,
     stream::{
         self, HashingWriter, MutexFile, ReadAt, ReadSeek, SectionReaderAt, UserPosFile, WriteAt,
         WriteSeek,
@@ -1215,7 +1216,7 @@ fn patch_ota_payload(
         // laid out sequentially and data_offset is set to the offset within
         // that file.
         if let Some((input_file, modified_operations)) = compressed_files.get_mut(&name)
-            && util::ranges_contains(modified_operations, &oi)
+            && range::contains(modified_operations, &oi)
         {
             input_file
                 .file
