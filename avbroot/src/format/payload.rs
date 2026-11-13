@@ -11,8 +11,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use bzip2::write::BzDecoder;
 use flate2::{Compression, write::GzEncoder};
 use lzma_rust2::{CheckType, XzOptions, XzReader, XzWriter};
