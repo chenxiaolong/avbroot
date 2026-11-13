@@ -49,6 +49,7 @@ use crate::{
         },
         system,
     },
+    path::PathExt,
     protobuf::{
         build::tools::releasetools::OtaMetadata, chromeos_update_engine::DeltaArchiveManifest,
         recovery_update_verifier::CareMap,
@@ -1569,7 +1570,7 @@ pub fn extract_payload(
     let output_files = images
         .iter()
         .map(|name| {
-            let path = util::path_join_single(directory, format!("{name}.img"))?;
+            let path = directory.join_single(format!("{name}.img"))?;
             let file = File::create(&path)
                 .map(Arc::new)
                 .with_context(|| format!("Failed to open for writing: {path:?}"))?;
@@ -1617,7 +1618,7 @@ fn verify_partition_hashes(
             .and_then(|info| info.hash.as_ref())
             .ok_or_else(|| anyhow!("Hash not found for partition: {name}"))?;
 
-        let path = util::path_join_single(directory, format!("{name}.img"))?;
+        let path = directory.join_single(format!("{name}.img"))?;
         let file =
             File::open(&path).with_context(|| format!("Failed to open for reading: {path:?}"))?;
 
@@ -1768,7 +1769,7 @@ pub fn patch_subcommand(cli: &PatchCli, cancel_signal: &AtomicBool) -> Result<()
         output
             .file_name()
             .unwrap_or_else(|| OsStr::new("avbroot.tmp")),
-        util::parent_path(&output),
+        output.parent_or_dot(),
     )
     .context("Failed to open temporary output file")?;
     let temp_path = temp_writer.path().to_owned();
@@ -2015,7 +2016,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
             .and_then(|p| p.device.first())
             .ok_or_else(|| anyhow!("Device codename not found in OTA metadata"))?;
 
-        let android_info_path = util::path_join_single(&cli.directory, ANDROID_INFO)?;
+        let android_info_path = cli.directory.join_single(ANDROID_INFO)?;
         fs::write(&android_info_path, format!("require board={device}\n"))
             .with_context(|| format!("Failed to write file: {android_info_path:?}"))?;
 
@@ -2026,7 +2027,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         let mut flashable_images = BTreeSet::new();
 
         for name in &unique_images {
-            let path = util::path_join_single(&cli.directory, format!("{name}.img"))?;
+            let path = cli.directory.join_single(format!("{name}.img"))?;
             let file = File::open(&path)
                 .with_context(|| format!("Failed to open image for reading: {path:?}"))?;
 
@@ -2124,7 +2125,7 @@ pub fn extract_subcommand(cli: &ExtractCli, cancel_signal: &AtomicBool) -> Resul
         fastboot_info.push_str("if-wipe erase userdata\n");
         fastboot_info.push_str("if-wipe erase metadata\n");
 
-        let fastboot_info_path = util::path_join_single(&cli.directory, FASTBOOT_INFO)?;
+        let fastboot_info_path = cli.directory.join_single(FASTBOOT_INFO)?;
         fs::write(&fastboot_info_path, fastboot_info)
             .with_context(|| format!("Failed to write file: {fastboot_info_path:?}"))?;
     }
@@ -2295,7 +2296,9 @@ pub fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<
 
     impl BootImageOpener for Opener<'_> {
         fn open_original(&self, name: &str) -> io::Result<Box<dyn ReadSeek + Sync>> {
-            let path = util::path_join_single(self.0, format!("{name}.img"))
+            let path = self
+                .0
+                .join_single(format!("{name}.img"))
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
             Ok(Box::new(File::open(path)?))
@@ -2386,7 +2389,7 @@ pub fn list_subcommand(cli: &ListCli) -> Result<()> {
         for partition in header.manifest.partitions {
             let name = &partition.partition_name;
 
-            util::path_ensure_single(name)?;
+            Path::new(name).ensure_single()?;
 
             // Ensure the output cannot be misparsed since we use newlines as a
             // separator.

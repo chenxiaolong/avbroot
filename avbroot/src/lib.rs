@@ -17,6 +17,7 @@ pub mod escape;
 pub mod format;
 pub mod octal;
 pub mod patch;
+pub mod path;
 pub mod protobuf;
 pub mod range;
 pub mod stream;

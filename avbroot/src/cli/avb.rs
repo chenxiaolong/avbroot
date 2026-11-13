@@ -24,6 +24,7 @@ use crate::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
         HashTreeDescriptor, Header, KernelCmdlineDescriptor,
     },
+    path::PathExt,
     stream::{self, ReadFixedSizeExt, UserPosFile, check_cancel},
     util,
 };
@@ -504,7 +505,9 @@ impl ImageOpener {
 
     fn open(&self, name: &str, options: &OpenOptions) -> io::Result<(PathBuf, File)> {
         for search in &self.search {
-            let path = util::path_join_single(&search.dir, format!("{name}{}", search.suffix))
+            let path = search
+                .dir
+                .join_single(format!("{name}{}", search.suffix))
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
             match options.open(&path) {
@@ -725,7 +728,7 @@ fn compute_digest_recursive(
 
     seen.insert(name.to_owned());
 
-    let path = util::path_join_single(directory, format!("{name}.img"))?;
+    let path = directory.join_single(format!("{name}.img"))?;
     let mut raw_reader = File::open(&path)
         .map(BufReader::new)
         .with_context(|| format!("Failed to open for reading: {path:?}"))?;
@@ -920,7 +923,7 @@ fn verify_internal(
 }
 
 fn verify_subcommand(cli: &VerifyCli, cancel_signal: &AtomicBool) -> Result<()> {
-    let directory = util::parent_path(&cli.input);
+    let directory = cli.input.parent_or_dot();
     let name = cli
         .input
         .file_stem()
@@ -984,7 +987,7 @@ fn verify_device_subcommand(cli: &VerifyDeviceCli, cancel_signal: &AtomicBool) -
 }
 
 fn digest_subcommand(cli: &DigestCli, cancel_signal: &AtomicBool) -> Result<()> {
-    let directory = util::parent_path(&cli.input);
+    let directory = cli.input.parent_or_dot();
     let name = cli
         .input
         .file_stem()

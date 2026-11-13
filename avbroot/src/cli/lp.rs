@@ -16,8 +16,8 @@ use winnow_args::{Args, Subcommand};
 
 use crate::{
     format::lp::{Extent, ExtentType, ImageType, Metadata, SECTOR_SIZE},
+    path::PathExt,
     stream::{self, UserPosFile},
-    util,
 };
 
 fn open_lp_inputs(paths: &[impl AsRef<Path>]) -> Result<(Vec<File>, Metadata)> {
@@ -206,8 +206,9 @@ fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool
 
         for partition in &group.partitions {
             // A partition name with unsafe characters fails during parsing.
-            let path =
-                util::path_join_single(&cli.output_images, format!("{}.img", partition.name))?;
+            let path = cli
+                .output_images
+                .join_single(format!("{}.img", partition.name))?;
 
             let file = File::create(&path)
                 .with_context(|| format!("Failed to open for writing: {path:?}"))?;
@@ -298,8 +299,9 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
             let mut group_files = vec![];
 
             for partition in &mut group.partitions {
-                let path =
-                    util::path_join_single(&cli.input_images, format!("{}.img", partition.name))?;
+                let path = cli
+                    .input_images
+                    .join_single(format!("{}.img", partition.name))?;
 
                 let mut file = File::open(&path)
                     .with_context(|| format!("Failed to open for reading: {path:?}"))?;

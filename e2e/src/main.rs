@@ -41,6 +41,7 @@ use avbroot::{
         zip,
     },
     patch::otacert::{self, OtaCertBuildFlags},
+    path::PathExt,
     protobuf::{
         build::tools::releasetools::{DeviceState, OtaMetadata, ota_metadata::OtaType},
         chromeos_update_engine::{
@@ -49,7 +50,6 @@ use avbroot::{
         recovery_update_verifier::CareMap,
     },
     stream::{self, HashingReader, UserPosFile},
-    util,
 };
 use rand::rngs::SysRng;
 use rawzip::{CompressionMethod, ZipArchiveWriter};
@@ -1292,7 +1292,7 @@ fn test_subcommand(cli: &TestCli, cancel_signal: &AtomicBool) -> Result<()> {
             let _span = info_span!("profile", name, ?zip_mode).entered();
 
             // Can't use NamedTempFile because avbroot does atomic replaces.
-            let mut profile_dir = util::path_join_single(work_dir, name)?;
+            let mut profile_dir = work_dir.join_single(name)?;
             profile_dir.push(zip_mode.name());
             let out_original = profile_dir.join("ota.zip");
             let out_magisk = profile_dir.join("ota_magisk.zip");

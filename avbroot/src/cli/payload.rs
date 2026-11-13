@@ -21,9 +21,9 @@ use crate::{
         care_map,
         payload::{PayloadHeader, PayloadWriter},
     },
+    path::PathExt,
     protobuf::recovery_update_verifier::CareMap,
     stream::{self, SectionReader, UserPosFile},
-    util,
 };
 
 fn open_raw_reader(path: &Path) -> Result<File> {
@@ -133,7 +133,7 @@ pub fn unpack_payload(
         if skeleton {
             for partition in &header.manifest.partitions {
                 let name = &partition.partition_name;
-                let path = util::path_join_single(output_images, format!("{name}.img"))?;
+                let path = output_images.join_single(format!("{name}.img"))?;
                 let size = partition
                     .new_partition_info
                     .as_ref()
@@ -212,7 +212,7 @@ pub fn pack_payload(
         .partitions
         .iter()
         .map(|p| {
-            let path = util::path_join_single(input_images, format!("{}.img", p.partition_name))?;
+            let path = input_images.join_single(format!("{}.img", p.partition_name))?;
             let file = File::open(&path)
                 .map(Arc::new)
                 .with_context(|| format!("Failed to open file: {path:?}"))?;

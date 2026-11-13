@@ -20,7 +20,8 @@ use crate::{
         compression::{CompressedFormat, CompressedReader, CompressedWriter},
         cpio::{self, CpioEntry, CpioEntryData, CpioEntryType, CpioReader, CpioWriter},
     },
-    stream, util,
+    path::PathExt,
+    stream,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -99,7 +100,7 @@ fn open_tree_file(tree: &Path, entry: &CpioEntry) -> Result<Option<(BufReader<Fi
             .as_bstr()
             .to_path()
             .with_context(|| format!("Invalid entry path: {:?}", entry.path.as_bstr()))?;
-        let path = util::path_join(tree, sub_path)?;
+        let path = tree.join_safe(sub_path)?;
 
         let mut reader = File::open(&path)
             .map(BufReader::new)
@@ -130,8 +131,8 @@ fn create_tree_file(tree: &Path, entry: &CpioEntry) -> Result<Option<BufWriter<F
             .as_bstr()
             .to_path()
             .with_context(|| format!("Invalid entry path: {:?}", entry.path.as_bstr()))?;
-        let path = util::path_join(tree, sub_path)?;
-        let parent = util::parent_path(&path);
+        let path = tree.join_safe(sub_path)?;
+        let parent = path.parent_or_dot();
 
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create directory: {parent:?}"))?;

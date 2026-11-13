@@ -30,9 +30,9 @@ use crate::{
             self, ReaderAtWrapper, ZipArchiveReadAtExt, ZipEntriesSafeExt, ZipFileHeaderRecordExt,
         },
     },
+    path::PathExt,
     protobuf::build::tools::releasetools::OtaMetadata,
     stream::{self, SectionReaderAt, UserPosFile},
-    util,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -317,7 +317,7 @@ fn unpack_subcommand(zip_cli: &ZipCli, cli: &UnpackCli, cancel_signal: &AtomicBo
             let mut entry_reader = zip::verifying_reader(&entry, input_entry.compression_method)
                 .with_context(|| format!("Failed to open zip entry: {path}"))?;
 
-            let output_path = util::path_join(&cli.output_files, path)?;
+            let output_path = cli.output_files.join_safe(path)?;
             let output_parent = output_path.parent().expect("No parent path");
 
             fs::create_dir_all(output_parent)
@@ -359,7 +359,7 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
             if cli.payload && (path == ota::PATH_PAYLOAD || path == ota::PATH_PROPERTIES) {
                 0
             } else {
-                let input_path = util::path_join(&cli.input_files, path)?;
+                let input_path = cli.input_files.join_safe(path)?;
                 fs::metadata(&input_path)
                     .map(|m| m.len())
                     .with_context(|| format!("Failed to get file size: {input_path:?}"))?
@@ -416,7 +416,7 @@ fn pack_subcommand(zip_cli: &ZipCli, cli: &PackCli, cancel_signal: &AtomicBool) 
                 .write_all(properties.as_bytes())
                 .with_context(|| format!("Failed to write zip entry: {path}"))?;
         } else {
-            let input_path = util::path_join(&cli.input_files, path)?;
+            let input_path = cli.input_files.join_safe(path)?;
             let mut input_file = File::open(&input_path)
                 .with_context(|| format!("Failed to open for reading: {input_path:?}"))?;
 
