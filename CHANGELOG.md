@@ -10,7 +10,7 @@
 ### Unreleased
 
 * Drop unneeded explicit dependency on scrypt crate ([PR #674])
-* Code cleanup ([PR #675])
+* Code cleanup ([PR #675], [PR #677])
 * Bump minimum Rust version to 1.90.0 and remove workaround for an [old upstream segfault bug](https://github.com/rust-lang/rust/issues/145752) ([PR #676])
 
 ### Version 3.39.1
@@ -878,3 +878,4 @@ Behind-the-scenes changes:
 [PR #674]: https://github.com/chenxiaolong/avbroot/pull/674
 [PR #675]: https://github.com/chenxiaolong/avbroot/pull/675
 [PR #676]: https://github.com/chenxiaolong/avbroot/pull/676
+[PR #677]: https://github.com/chenxiaolong/avbroot/pull/677
