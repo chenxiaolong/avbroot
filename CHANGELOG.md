@@ -7,6 +7,10 @@
     to update the actual links at the bottom of the file.
 -->
 
+### Unreleased
+
+* Drop unneeded explicit dependency on scrypt crate ([PR #674])
+
 ### Version 3.39.1
 
 * Fix support for older x86_64 CPUs that don't support AVX instructions in the prebuilt binaries ([Issue #671], [PR #673])
@@ -869,3 +873,4 @@ Behind-the-scenes changes:
 [PR #669]: https://github.com/chenxiaolong/avbroot/pull/669
 [PR #670]: https://github.com/chenxiaolong/avbroot/pull/670
 [PR #673]: https://github.com/chenxiaolong/avbroot/pull/673
+[PR #674]: https://github.com/chenxiaolong/avbroot/pull/674
