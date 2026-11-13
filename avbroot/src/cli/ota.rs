@@ -54,8 +54,8 @@ use crate::{
         recovery_update_verifier::CareMap,
     },
     stream::{
-        self, FromReader, HashingWriter, MutexFile, ReadAt, ReadSeek, SectionReaderAt, UserPosFile,
-        WriteAt, WriteSeek,
+        self, HashingWriter, MutexFile, ReadAt, ReadSeek, SectionReaderAt, UserPosFile, WriteAt,
+        WriteSeek,
     },
     util,
 };

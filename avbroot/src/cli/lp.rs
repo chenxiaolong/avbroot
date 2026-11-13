@@ -16,7 +16,7 @@ use winnow_args::{Args, Subcommand};
 
 use crate::{
     format::lp::{Extent, ExtentType, ImageType, Metadata, SECTOR_SIZE},
-    stream::{self, FromReader, ToWriter, UserPosFile},
+    stream::{self, UserPosFile},
     util,
 };
 

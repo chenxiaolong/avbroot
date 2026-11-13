@@ -22,9 +22,7 @@ use crate::{
         avb::{self, Descriptor, Header},
         padding::{self, ZeroPadding},
     },
-    stream::{
-        CountingReader, CountingWriter, FromReader, HashingWriter, ReadFixedSizeExt, ToWriter,
-    },
+    stream::{CountingReader, CountingWriter, HashingWriter, ReadFixedSizeExt},
     util::{self, NumBytes, OutOfBoundsError},
 };
 
@@ -291,39 +289,8 @@ impl BootImageV0Through2 {
 
         id
     }
-}
 
-impl BootImageExt for BootImageV0Through2 {
-    fn header_version(&self) -> u32 {
-        #[allow(clippy::bool_to_int_with_if)]
-        if self.v2_extra.is_some() {
-            2
-        } else if self.v1_extra.is_some() {
-            1
-        } else {
-            0
-        }
-    }
-
-    fn header_size(&self) -> u32 {
-        let version = self.header_version();
-        let mut size = mem::size_of::<RawV0>();
-
-        if version >= 1 {
-            size += mem::size_of::<RawV1Extra>();
-        }
-        if version == 2 {
-            size += mem::size_of::<RawV2Extra>();
-        }
-
-        size as u32
-    }
-}
-
-impl<R: Read> FromReader<R> for BootImageV0Through2 {
-    type Error = Error;
-
-    fn from_reader(reader: R) -> Result<Self> {
+    pub fn from_reader(reader: impl Read) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
         let raw_v0 =
@@ -511,12 +478,8 @@ impl<R: Read> FromReader<R> for BootImageV0Through2 {
 
         Ok(image)
     }
-}
 
-impl<W: Write> ToWriter<W> for BootImageV0Through2 {
-    type Error = Error;
-
-    fn to_writer(&self, writer: W) -> Result<()> {
+    pub fn to_writer(&self, writer: impl Write) -> Result<()> {
         util::check_bounds(self.kernel.len(), ..=COMPONENT_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Boot::V0::kernel_size", e))?;
         util::check_bounds(self.ramdisk.len(), ..=COMPONENT_MAX_SIZE as usize)
@@ -684,6 +647,33 @@ impl<W: Write> ToWriter<W> for BootImageV0Through2 {
     }
 }
 
+impl BootImageExt for BootImageV0Through2 {
+    fn header_version(&self) -> u32 {
+        #[allow(clippy::bool_to_int_with_if)]
+        if self.v2_extra.is_some() {
+            2
+        } else if self.v1_extra.is_some() {
+            1
+        } else {
+            0
+        }
+    }
+
+    fn header_size(&self) -> u32 {
+        let version = self.header_version();
+        let mut size = mem::size_of::<RawV0>();
+
+        if version >= 1 {
+            size += mem::size_of::<RawV1Extra>();
+        }
+        if version == 2 {
+            size += mem::size_of::<RawV2Extra>();
+        }
+
+        size as u32
+    }
+}
+
 /// Raw on-disk layout for the v3 image header.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(C, packed)]
@@ -740,27 +730,8 @@ impl fmt::Debug for BootImageV3Through4 {
     }
 }
 
-impl BootImageExt for BootImageV3Through4 {
-    fn header_version(&self) -> u32 {
-        if self.v4_extra.is_some() { 4 } else { 3 }
-    }
-
-    fn header_size(&self) -> u32 {
-        let version = self.header_version();
-        let mut size = mem::size_of::<RawV3>();
-
-        if version >= 4 {
-            size += mem::size_of::<RawV4Extra>();
-        }
-
-        size as u32
-    }
-}
-
-impl<R: Read> FromReader<R> for BootImageV3Through4 {
-    type Error = Error;
-
-    fn from_reader(reader: R) -> Result<Self> {
+impl BootImageV3Through4 {
+    pub fn from_reader(reader: impl Read) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
         let raw_v3 =
@@ -857,9 +828,7 @@ impl<R: Read> FromReader<R> for BootImageV3Through4 {
 
         Ok(image)
     }
-}
 
-impl BootImageV3Through4 {
     fn to_writer_internal(&self, writer: impl Write, skip_v4_sig: bool) -> Result<()> {
         util::check_bounds(self.kernel.len(), ..=COMPONENT_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Boot::V3::kernel_size", e))?;
@@ -954,6 +923,10 @@ impl BootImageV3Through4 {
         Ok(())
     }
 
+    pub fn to_writer(&self, writer: impl Write) -> Result<()> {
+        self.to_writer_internal(writer, false)
+    }
+
     /// Sign the boot image with a legacy VTS signature. Returns true if the
     /// image was successfully signed. Returns false if there's no vbmeta
     /// structure to sign in [`V4Extra::signature`].
@@ -1019,11 +992,20 @@ impl BootImageV3Through4 {
     }
 }
 
-impl<W: Write> ToWriter<W> for BootImageV3Through4 {
-    type Error = Error;
+impl BootImageExt for BootImageV3Through4 {
+    fn header_version(&self) -> u32 {
+        if self.v4_extra.is_some() { 4 } else { 3 }
+    }
 
-    fn to_writer(&self, writer: W) -> Result<()> {
-        self.to_writer_internal(writer, false)
+    fn header_size(&self) -> u32 {
+        let version = self.header_version();
+        let mut size = mem::size_of::<RawV3>();
+
+        if version >= 4 {
+            size += mem::size_of::<RawV4Extra>();
+        }
+
+        size as u32
     }
 }
 
@@ -1143,27 +1125,8 @@ impl fmt::Debug for VendorBootImageV3Through4 {
     }
 }
 
-impl BootImageExt for VendorBootImageV3Through4 {
-    fn header_version(&self) -> u32 {
-        if self.v4_extra.is_some() { 4 } else { 3 }
-    }
-
-    fn header_size(&self) -> u32 {
-        let version = self.header_version();
-        let mut size = mem::size_of::<RawVendorV3>();
-
-        if version >= 4 {
-            size += mem::size_of::<RawVendorV4Extra>();
-        }
-
-        size as u32
-    }
-}
-
-impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
-    type Error = Error;
-
-    fn from_reader(reader: R) -> Result<Self> {
+impl VendorBootImageV3Through4 {
+    pub fn from_reader(reader: impl Read) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
         let raw_v3 = RawVendorV3::read_from_io(&mut reader)
@@ -1358,12 +1321,8 @@ impl<R: Read> FromReader<R> for VendorBootImageV3Through4 {
 
         Ok(image)
     }
-}
 
-impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
-    type Error = Error;
-
-    fn to_writer(&self, writer: W) -> Result<()> {
+    pub fn to_writer(&self, writer: impl Write) -> Result<()> {
         // These are programmer errors. These states can't exist if this
         // instance was just parsed from a real boot image.
         if let Some(v4) = &self.v4_extra {
@@ -1517,6 +1476,23 @@ impl<W: Write> ToWriter<W> for VendorBootImageV3Through4 {
     }
 }
 
+impl BootImageExt for VendorBootImageV3Through4 {
+    fn header_version(&self) -> u32 {
+        if self.v4_extra.is_some() { 4 } else { 3 }
+    }
+
+    fn header_size(&self) -> u32 {
+        let version = self.header_version();
+        let mut size = mem::size_of::<RawVendorV3>();
+
+        if version >= 4 {
+            size += mem::size_of::<RawVendorV4Extra>();
+        }
+
+        size as u32
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum BootImage {
@@ -1525,28 +1501,8 @@ pub enum BootImage {
     VendorV3Through4(VendorBootImageV3Through4),
 }
 
-impl BootImageExt for BootImage {
-    fn header_version(&self) -> u32 {
-        match self {
-            Self::V0Through2(b) => b.header_version(),
-            Self::V3Through4(b) => b.header_version(),
-            Self::VendorV3Through4(b) => b.header_version(),
-        }
-    }
-
-    fn header_size(&self) -> u32 {
-        match self {
-            Self::V0Through2(b) => b.header_size(),
-            Self::V3Through4(b) => b.header_size(),
-            Self::VendorV3Through4(b) => b.header_size(),
-        }
-    }
-}
-
-impl<R: Read + Seek> FromReader<R> for BootImage {
-    type Error = Error;
-
-    fn from_reader(mut reader: R) -> Result<Self> {
+impl BootImage {
+    pub fn from_reader(mut reader: impl Read + Seek) -> Result<Self> {
         reader
             .rewind()
             .map_err(|e| Error::DataRead("Boot::V0::autodetect", e))?;
@@ -1579,16 +1535,30 @@ impl<R: Read + Seek> FromReader<R> for BootImage {
 
         Err(Error::UnknownFormat)
     }
-}
 
-impl<W: Write> ToWriter<W> for BootImage {
-    type Error = Error;
-
-    fn to_writer(&self, writer: W) -> Result<()> {
+    pub fn to_writer(&self, writer: impl Write) -> Result<()> {
         match self {
             Self::V0Through2(b) => b.to_writer(writer),
             Self::V3Through4(b) => b.to_writer(writer),
             Self::VendorV3Through4(b) => b.to_writer(writer),
+        }
+    }
+}
+
+impl BootImageExt for BootImage {
+    fn header_version(&self) -> u32 {
+        match self {
+            Self::V0Through2(b) => b.header_version(),
+            Self::V3Through4(b) => b.header_version(),
+            Self::VendorV3Through4(b) => b.header_version(),
+        }
+    }
+
+    fn header_size(&self) -> u32 {
+        match self {
+            Self::V0Through2(b) => b.header_size(),
+            Self::V3Through4(b) => b.header_size(),
+            Self::VendorV3Through4(b) => b.header_size(),
         }
     }
 }

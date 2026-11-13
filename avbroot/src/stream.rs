@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -41,20 +41,6 @@ pub trait ReadWriteSeek: ReadSeek + WriteSeek {
 }
 
 impl<W: ReadSeek + WriteSeek> ReadWriteSeek for W {}
-
-/// Common function for reading a structure from a reader.
-pub trait FromReader<R: Read>: Sized {
-    type Error;
-
-    fn from_reader(reader: R) -> Result<Self, Self::Error>;
-}
-
-/// Common function for writing a structure to a writer.
-pub trait ToWriter<W: Write>: Sized {
-    type Error;
-
-    fn to_writer(&self, writer: W) -> Result<(), Self::Error>;
-}
 
 /// Extensions for readers to read and discard data (eg. for padding).
 pub trait ReadDiscardExt {

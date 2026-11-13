@@ -35,7 +35,7 @@ use crate::{
         build::tools::releasetools::{OtaMetadata, ota_metadata::OtaType},
         recovery_update_verifier::CareMap,
     },
-    stream::{self, FromReader, HashingReader, HashingWriter, ReadFixedSizeExt},
+    stream::{self, HashingReader, HashingWriter, ReadFixedSizeExt},
     util,
 };
 

@@ -7,7 +7,7 @@ mod fuzz {
 
     use avbroot::{
         format::fec::FecImage,
-        stream::{FromReader, MutexFile, UserPosFile, WriteZerosExt},
+        stream::{MutexFile, UserPosFile, WriteZerosExt},
     };
     use honggfuzz::fuzz;
 

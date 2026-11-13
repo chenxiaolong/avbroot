@@ -32,8 +32,8 @@ use crate::{
         padding::{self, ZeroPadding},
     },
     stream::{
-        self, CountingReader, CountingWriter, FromReader, ReadAt, ReadFixedSizeExt, ReadWriteAt,
-        ToWriter, UserPosFile, WriteZerosExt,
+        self, CountingReader, CountingWriter, ReadAt, ReadFixedSizeExt, ReadWriteAt, UserPosFile,
+        WriteZerosExt,
     },
     util::{self, OutOfBoundsError},
 };
@@ -339,10 +339,8 @@ impl DescriptorTag for PropertyDescriptor {
     const TAG: u64 = 0;
 }
 
-impl<R: Read> FromReader<R> for PropertyDescriptor {
-    type Error = Error;
-
-    fn from_reader(mut reader: R) -> Result<Self> {
+impl PropertyDescriptor {
+    pub fn from_reader(mut reader: impl Read) -> Result<Self> {
         let raw_descriptor = RawPropertyDescriptor::read_from_io(&mut reader)
             .map_err(|e| Error::DataRead("Property::descriptor", e))?;
 
@@ -378,12 +376,8 @@ impl<R: Read> FromReader<R> for PropertyDescriptor {
 
         Ok(Self { key, value })
     }
-}
 
-impl<W: Write> ToWriter<W> for PropertyDescriptor {
-    type Error = Error;
-
-    fn to_writer(&self, mut writer: W) -> Result<()> {
+    pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
         util::check_bounds(self.key.len(), ..=HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Property::key_size", e))?;
         util::check_bounds(self.value.len(), ..=HEADER_MAX_SIZE as usize)
@@ -479,9 +473,135 @@ impl fmt::Debug for HashTreeDescriptor {
     }
 }
 
+impl DescriptorTag for HashTreeDescriptor {
+    const TAG: u64 = 1;
+}
+
 impl HashTreeDescriptor {
     pub const FLAG_DO_NOT_USE_AB: u32 = 1 << 0;
     pub const FLAG_CHECK_AT_MOST_ONCE: u32 = 1 << 1;
+
+    pub fn from_reader(mut reader: impl Read) -> Result<Self> {
+        let raw_descriptor = RawHashTreeDescriptor::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("HashTree::descriptor", e))?;
+
+        let hash_algorithm = raw_descriptor.hash_algorithm.trim_end_padding();
+        let hash_algorithm = str::from_utf8(hash_algorithm).map_err(|e| {
+            Error::StringNotUtf8("HashTree::hash_algorithm", e, hash_algorithm.to_vec())
+        })?;
+        if !hash_algorithm.is_ascii() {
+            return Err(Error::StringNotAscii(
+                "HashTree::hash_algorithm",
+                hash_algorithm.to_owned(),
+            ));
+        }
+
+        let partition_name_len = util::check_bounds(
+            raw_descriptor.partition_name_len.get(),
+            ..=HEADER_MAX_SIZE as u32,
+        )
+        .map_err(|e| Error::IntOutOfBounds("HashTree::partition_name_len", e))?;
+        let salt_len = util::check_bounds(raw_descriptor.salt_len.get(), ..=HEADER_MAX_SIZE as u32)
+            .map_err(|e| Error::IntOutOfBounds("HashTree::salt_len", e))?;
+        let root_digest_len = util::check_bounds(
+            raw_descriptor.root_digest_len.get(),
+            ..=HEADER_MAX_SIZE as u32,
+        )
+        .map_err(|e| Error::IntOutOfBounds("HashTree::root_digest_len", e))?;
+
+        // Not NULL-terminated.
+        let partition_name = reader
+            .read_vec_exact(partition_name_len as usize)
+            .map_err(|e| Error::DataRead("HashTree::partition_name", e))?;
+        let partition_name = String::from_utf8(partition_name).map_err(|e| {
+            Error::StringNotUtf8("HashTree::partition_name", e.utf8_error(), e.into_bytes())
+        })?;
+
+        let salt = reader
+            .read_vec_exact(salt_len as usize)
+            .map_err(|e| Error::DataRead("HashTree::salt", e))?;
+
+        let root_digest = reader
+            .read_vec_exact(root_digest_len as usize)
+            .map_err(|e| Error::DataRead("HashTree::root_digest", e))?;
+
+        let descriptor = Self {
+            dm_verity_version: raw_descriptor.dm_verity_version.into(),
+            image_size: raw_descriptor.image_size.into(),
+            tree_offset: raw_descriptor.tree_offset.into(),
+            tree_size: raw_descriptor.tree_size.into(),
+            data_block_size: raw_descriptor.data_block_size.into(),
+            hash_block_size: raw_descriptor.hash_block_size.into(),
+            fec_num_roots: raw_descriptor.fec_num_roots.into(),
+            fec_offset: raw_descriptor.fec_offset.into(),
+            fec_size: raw_descriptor.fec_size.into(),
+            hash_algorithm: hash_algorithm.to_owned(),
+            partition_name,
+            salt,
+            root_digest,
+            flags: raw_descriptor.flags.get(),
+            reserved: raw_descriptor.reserved,
+        };
+
+        Ok(descriptor)
+    }
+
+    pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
+        util::check_bounds(self.partition_name.len(), ..=HEADER_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("HashTree::partition_name_len", e))?;
+        util::check_bounds(self.salt.len(), ..=HEADER_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("HashTree::salt_len", e))?;
+        util::check_bounds(self.root_digest.len(), ..=HEADER_MAX_SIZE as usize)
+            .map_err(|e| Error::IntOutOfBounds("HashTree::root_digest_len", e))?;
+
+        if !self.hash_algorithm.is_ascii() {
+            return Err(Error::StringNotAscii(
+                "HashTree::hash_algorithm",
+                self.hash_algorithm.clone(),
+            ));
+        }
+
+        let hash_algorithm = self
+            .hash_algorithm
+            .as_bytes()
+            .to_padded_array::<32>()
+            .ok_or_else(|| {
+                Error::StringTooLong("HashTree::hash_algorithm", self.hash_algorithm.clone())
+            })?;
+
+        let raw_descriptor = RawHashTreeDescriptor {
+            dm_verity_version: self.dm_verity_version.into(),
+            image_size: self.image_size.into(),
+            tree_offset: self.tree_offset.into(),
+            tree_size: self.tree_size.into(),
+            data_block_size: self.data_block_size.into(),
+            hash_block_size: self.hash_block_size.into(),
+            fec_num_roots: self.fec_num_roots.into(),
+            fec_offset: self.fec_offset.into(),
+            fec_size: self.fec_size.into(),
+            hash_algorithm,
+            partition_name_len: (self.partition_name.len() as u32).into(),
+            salt_len: (self.salt.len() as u32).into(),
+            root_digest_len: (self.root_digest.len() as u32).into(),
+            flags: self.flags.into(),
+            reserved: self.reserved,
+        };
+
+        raw_descriptor
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("HashTree::descriptor", e))?;
+        writer
+            .write_all(self.partition_name.as_bytes())
+            .map_err(|e| Error::DataWrite("HashTree::partition_name", e))?;
+        writer
+            .write_all(&self.salt)
+            .map_err(|e| Error::DataWrite("HashTree::salt", e))?;
+        writer
+            .write_all(&self.root_digest)
+            .map_err(|e| Error::DataWrite("HashTree::root_digest", e))?;
+
+        Ok(())
+    }
 
     /// Ensure that the image data is immediately followed by the hash tree and
     /// then the FEC data.
@@ -729,140 +849,6 @@ impl HashTreeDescriptor {
     }
 }
 
-impl DescriptorTag for HashTreeDescriptor {
-    const TAG: u64 = 1;
-}
-
-impl<R: Read> FromReader<R> for HashTreeDescriptor {
-    type Error = Error;
-
-    fn from_reader(mut reader: R) -> Result<Self> {
-        let raw_descriptor = RawHashTreeDescriptor::read_from_io(&mut reader)
-            .map_err(|e| Error::DataRead("HashTree::descriptor", e))?;
-
-        let hash_algorithm = raw_descriptor.hash_algorithm.trim_end_padding();
-        let hash_algorithm = str::from_utf8(hash_algorithm).map_err(|e| {
-            Error::StringNotUtf8("HashTree::hash_algorithm", e, hash_algorithm.to_vec())
-        })?;
-        if !hash_algorithm.is_ascii() {
-            return Err(Error::StringNotAscii(
-                "HashTree::hash_algorithm",
-                hash_algorithm.to_owned(),
-            ));
-        }
-
-        let partition_name_len = util::check_bounds(
-            raw_descriptor.partition_name_len.get(),
-            ..=HEADER_MAX_SIZE as u32,
-        )
-        .map_err(|e| Error::IntOutOfBounds("HashTree::partition_name_len", e))?;
-        let salt_len = util::check_bounds(raw_descriptor.salt_len.get(), ..=HEADER_MAX_SIZE as u32)
-            .map_err(|e| Error::IntOutOfBounds("HashTree::salt_len", e))?;
-        let root_digest_len = util::check_bounds(
-            raw_descriptor.root_digest_len.get(),
-            ..=HEADER_MAX_SIZE as u32,
-        )
-        .map_err(|e| Error::IntOutOfBounds("HashTree::root_digest_len", e))?;
-
-        // Not NULL-terminated.
-        let partition_name = reader
-            .read_vec_exact(partition_name_len as usize)
-            .map_err(|e| Error::DataRead("HashTree::partition_name", e))?;
-        let partition_name = String::from_utf8(partition_name).map_err(|e| {
-            Error::StringNotUtf8("HashTree::partition_name", e.utf8_error(), e.into_bytes())
-        })?;
-
-        let salt = reader
-            .read_vec_exact(salt_len as usize)
-            .map_err(|e| Error::DataRead("HashTree::salt", e))?;
-
-        let root_digest = reader
-            .read_vec_exact(root_digest_len as usize)
-            .map_err(|e| Error::DataRead("HashTree::root_digest", e))?;
-
-        let descriptor = Self {
-            dm_verity_version: raw_descriptor.dm_verity_version.into(),
-            image_size: raw_descriptor.image_size.into(),
-            tree_offset: raw_descriptor.tree_offset.into(),
-            tree_size: raw_descriptor.tree_size.into(),
-            data_block_size: raw_descriptor.data_block_size.into(),
-            hash_block_size: raw_descriptor.hash_block_size.into(),
-            fec_num_roots: raw_descriptor.fec_num_roots.into(),
-            fec_offset: raw_descriptor.fec_offset.into(),
-            fec_size: raw_descriptor.fec_size.into(),
-            hash_algorithm: hash_algorithm.to_owned(),
-            partition_name,
-            salt,
-            root_digest,
-            flags: raw_descriptor.flags.get(),
-            reserved: raw_descriptor.reserved,
-        };
-
-        Ok(descriptor)
-    }
-}
-
-impl<W: Write> ToWriter<W> for HashTreeDescriptor {
-    type Error = Error;
-
-    fn to_writer(&self, mut writer: W) -> Result<()> {
-        util::check_bounds(self.partition_name.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("HashTree::partition_name_len", e))?;
-        util::check_bounds(self.salt.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("HashTree::salt_len", e))?;
-        util::check_bounds(self.root_digest.len(), ..=HEADER_MAX_SIZE as usize)
-            .map_err(|e| Error::IntOutOfBounds("HashTree::root_digest_len", e))?;
-
-        if !self.hash_algorithm.is_ascii() {
-            return Err(Error::StringNotAscii(
-                "HashTree::hash_algorithm",
-                self.hash_algorithm.clone(),
-            ));
-        }
-
-        let hash_algorithm = self
-            .hash_algorithm
-            .as_bytes()
-            .to_padded_array::<32>()
-            .ok_or_else(|| {
-                Error::StringTooLong("HashTree::hash_algorithm", self.hash_algorithm.clone())
-            })?;
-
-        let raw_descriptor = RawHashTreeDescriptor {
-            dm_verity_version: self.dm_verity_version.into(),
-            image_size: self.image_size.into(),
-            tree_offset: self.tree_offset.into(),
-            tree_size: self.tree_size.into(),
-            data_block_size: self.data_block_size.into(),
-            hash_block_size: self.hash_block_size.into(),
-            fec_num_roots: self.fec_num_roots.into(),
-            fec_offset: self.fec_offset.into(),
-            fec_size: self.fec_size.into(),
-            hash_algorithm,
-            partition_name_len: (self.partition_name.len() as u32).into(),
-            salt_len: (self.salt.len() as u32).into(),
-            root_digest_len: (self.root_digest.len() as u32).into(),
-            flags: self.flags.into(),
-            reserved: self.reserved,
-        };
-
-        raw_descriptor
-            .write_to_io(&mut writer)
-            .map_err(|e| Error::DataWrite("HashTree::descriptor", e))?;
-        writer
-            .write_all(self.partition_name.as_bytes())
-            .map_err(|e| Error::DataWrite("HashTree::partition_name", e))?;
-        writer
-            .write_all(&self.salt)
-            .map_err(|e| Error::DataWrite("HashTree::salt", e))?;
-        writer
-            .write_all(&self.root_digest)
-            .map_err(|e| Error::DataWrite("HashTree::root_digest", e))?;
-
-        Ok(())
-    }
-}
-
 /// Raw on-disk layout for the AVB hash descriptor after the prefix.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(C, packed)]
@@ -904,58 +890,12 @@ impl fmt::Debug for HashDescriptor {
     }
 }
 
-impl HashDescriptor {
-    fn calculate(
-        &self,
-        reader: impl Read,
-        cancel_signal: &AtomicBool,
-    ) -> Result<ring::digest::Digest> {
-        let algorithm = digest_algorithm(&self.hash_algorithm)?;
-        let mut context = Context::new(algorithm);
-        context.update(&self.salt);
-
-        stream::copy_n_inspect(
-            reader,
-            io::sink(),
-            self.image_size,
-            |data| context.update(data),
-            cancel_signal,
-        )
-        .map_err(Error::InputDigest)?;
-
-        Ok(context.finish())
-    }
-
-    /// Update the root hash from the input reader's contents.
-    pub fn update(&mut self, reader: impl Read, cancel_signal: &AtomicBool) -> Result<()> {
-        let digest = self.calculate(reader, cancel_signal)?;
-        self.root_digest = digest.as_ref().to_vec();
-        Ok(())
-    }
-
-    /// Verify the root hash against the input reader.
-    pub fn verify(&self, reader: impl Read, cancel_signal: &AtomicBool) -> Result<()> {
-        let digest = self.calculate(reader, cancel_signal)?;
-
-        if self.root_digest != digest.as_ref() {
-            return Err(Error::InvalidRootDigest {
-                expected: hex::encode(&self.root_digest),
-                actual: hex::encode(digest),
-            });
-        }
-
-        Ok(())
-    }
-}
-
 impl DescriptorTag for HashDescriptor {
     const TAG: u64 = 2;
 }
 
-impl<R: Read> FromReader<R> for HashDescriptor {
-    type Error = Error;
-
-    fn from_reader(mut reader: R) -> Result<Self> {
+impl HashDescriptor {
+    pub fn from_reader(mut reader: impl Read) -> Result<Self> {
         let raw_descriptor = RawHashDescriptor::read_from_io(&mut reader)
             .map_err(|e| Error::DataRead("Hash::descriptor", e))?;
 
@@ -1011,12 +951,8 @@ impl<R: Read> FromReader<R> for HashDescriptor {
 
         Ok(descriptor)
     }
-}
 
-impl<W: Write> ToWriter<W> for HashDescriptor {
-    type Error = Error;
-
-    fn to_writer(&self, mut writer: W) -> Result<()> {
+    pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
         util::check_bounds(self.partition_name.len(), ..=HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Hash::partition_name_len", e))?;
         util::check_bounds(self.salt.len(), ..=HEADER_MAX_SIZE as usize)
@@ -1064,6 +1000,48 @@ impl<W: Write> ToWriter<W> for HashDescriptor {
 
         Ok(())
     }
+
+    fn calculate(
+        &self,
+        reader: impl Read,
+        cancel_signal: &AtomicBool,
+    ) -> Result<ring::digest::Digest> {
+        let algorithm = digest_algorithm(&self.hash_algorithm)?;
+        let mut context = Context::new(algorithm);
+        context.update(&self.salt);
+
+        stream::copy_n_inspect(
+            reader,
+            io::sink(),
+            self.image_size,
+            |data| context.update(data),
+            cancel_signal,
+        )
+        .map_err(Error::InputDigest)?;
+
+        Ok(context.finish())
+    }
+
+    /// Update the root hash from the input reader's contents.
+    pub fn update(&mut self, reader: impl Read, cancel_signal: &AtomicBool) -> Result<()> {
+        let digest = self.calculate(reader, cancel_signal)?;
+        self.root_digest = digest.as_ref().to_vec();
+        Ok(())
+    }
+
+    /// Verify the root hash against the input reader.
+    pub fn verify(&self, reader: impl Read, cancel_signal: &AtomicBool) -> Result<()> {
+        let digest = self.calculate(reader, cancel_signal)?;
+
+        if self.root_digest != digest.as_ref() {
+            return Err(Error::InvalidRootDigest {
+                expected: hex::encode(&self.root_digest),
+                actual: hex::encode(digest),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 /// Raw on-disk layout for the AVB kernel command line descriptor after the
@@ -1081,19 +1059,15 @@ pub struct KernelCmdlineDescriptor {
     pub cmdline: String,
 }
 
-impl KernelCmdlineDescriptor {
-    pub const FLAG_USE_ONLY_IF_HASHTREE_NOT_DISABLED: u32 = 1 << 0;
-    pub const FLAG_USE_ONLY_IF_HASHTREE_DISABLED: u32 = 1 << 1;
-}
-
 impl DescriptorTag for KernelCmdlineDescriptor {
     const TAG: u64 = 3;
 }
 
-impl<R: Read> FromReader<R> for KernelCmdlineDescriptor {
-    type Error = Error;
+impl KernelCmdlineDescriptor {
+    pub const FLAG_USE_ONLY_IF_HASHTREE_NOT_DISABLED: u32 = 1 << 0;
+    pub const FLAG_USE_ONLY_IF_HASHTREE_DISABLED: u32 = 1 << 1;
 
-    fn from_reader(mut reader: R) -> Result<Self> {
+    pub fn from_reader(mut reader: impl Read) -> Result<Self> {
         let raw_descriptor = RawKernelCmdlineDescriptor::read_from_io(&mut reader)
             .map_err(|e| Error::DataRead("KernelCmdline::descriptor", e))?;
 
@@ -1116,12 +1090,8 @@ impl<R: Read> FromReader<R> for KernelCmdlineDescriptor {
 
         Ok(descriptor)
     }
-}
 
-impl<W: Write> ToWriter<W> for KernelCmdlineDescriptor {
-    type Error = Error;
-
-    fn to_writer(&self, mut writer: W) -> Result<()> {
+    pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
         util::check_bounds(self.cmdline.len(), ..=HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("KernelCmdline::cmdline_len", e))?;
 
@@ -1163,10 +1133,6 @@ pub struct ChainPartitionDescriptor {
     pub reserved: [u8; 60],
 }
 
-impl ChainPartitionDescriptor {
-    pub const FLAG_DO_NOT_USE_AB: u32 = 1 << 0;
-}
-
 impl fmt::Debug for ChainPartitionDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ChainPartitionDescriptor")
@@ -1183,10 +1149,10 @@ impl DescriptorTag for ChainPartitionDescriptor {
     const TAG: u64 = 4;
 }
 
-impl<R: Read> FromReader<R> for ChainPartitionDescriptor {
-    type Error = Error;
+impl ChainPartitionDescriptor {
+    pub const FLAG_DO_NOT_USE_AB: u32 = 1 << 0;
 
-    fn from_reader(mut reader: R) -> Result<Self> {
+    pub fn from_reader(mut reader: impl Read) -> Result<Self> {
         let raw_descriptor = RawChainPartitionDescriptor::read_from_io(&mut reader)
             .map_err(|e| Error::DataRead("ChainPartition::descriptor", e))?;
 
@@ -1227,12 +1193,8 @@ impl<R: Read> FromReader<R> for ChainPartitionDescriptor {
 
         Ok(descriptor)
     }
-}
 
-impl<W: Write> ToWriter<W> for ChainPartitionDescriptor {
-    type Error = Error;
-
-    fn to_writer(&self, mut writer: W) -> Result<()> {
+    pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
         util::check_bounds(self.partition_name.len(), ..=HEADER_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("ChainPartition::partition_name_len", e))?;
         util::check_bounds(self.public_key.len(), ..=HEADER_MAX_SIZE as usize)
@@ -1284,31 +1246,7 @@ pub enum Descriptor {
 }
 
 impl Descriptor {
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            Self::Property(_) => "Property",
-            Self::HashTree(_) => "HashTree",
-            Self::Hash(_) => "Hash",
-            Self::KernelCmdline(_) => "KernelCmdline",
-            Self::ChainPartition(_) => "ChainPartition",
-            Self::Unknown { .. } => "Unknown",
-        }
-    }
-
-    pub fn partition_name(&self) -> Option<&str> {
-        match self {
-            Self::HashTree(d) => Some(&d.partition_name),
-            Self::Hash(d) => Some(&d.partition_name),
-            Self::ChainPartition(d) => Some(&d.partition_name),
-            _ => None,
-        }
-    }
-}
-
-impl<R: Read> FromReader<R> for Descriptor {
-    type Error = Error;
-
-    fn from_reader(mut reader: R) -> Result<Self> {
+    pub fn from_reader(mut reader: impl Read) -> Result<Self> {
         let raw_descriptor = RawDescriptor::read_from_io(&mut reader)
             .map_err(|e| Error::DataRead("Descriptor::prefix", e))?;
 
@@ -1360,12 +1298,8 @@ impl<R: Read> FromReader<R> for Descriptor {
 
         Ok(descriptor)
     }
-}
 
-impl<W: Write> ToWriter<W> for Descriptor {
-    type Error = Error;
-
-    fn to_writer(&self, mut writer: W) -> Result<()> {
+    pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
         let mut inner_writer = Cursor::new(Vec::new());
 
         let tag = match self {
@@ -1421,6 +1355,26 @@ impl<W: Write> ToWriter<W> for Descriptor {
             .map_err(|e| Error::DataWrite("Descriptor::padding", e))?;
 
         Ok(())
+    }
+
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Property(_) => "Property",
+            Self::HashTree(_) => "HashTree",
+            Self::Hash(_) => "Hash",
+            Self::KernelCmdline(_) => "KernelCmdline",
+            Self::ChainPartition(_) => "ChainPartition",
+            Self::Unknown { .. } => "Unknown",
+        }
+    }
+
+    pub fn partition_name(&self) -> Option<&str> {
+        match self {
+            Self::HashTree(d) => Some(&d.partition_name),
+            Self::Hash(d) => Some(&d.partition_name),
+            Self::ChainPartition(d) => Some(&d.partition_name),
+            _ => None,
+        }
     }
 }
 
@@ -1548,6 +1502,138 @@ impl Header {
 
     pub const SIZE: usize = mem::size_of::<RawHeader>();
 
+    pub fn from_reader(reader: impl Read) -> Result<Self> {
+        let mut reader = CountingReader::new(reader);
+
+        let raw_header = RawHeader::read_from_io(&mut reader)
+            .map_err(|e| Error::DataRead("Header::header", e))?;
+
+        if raw_header.magic != HEADER_MAGIC {
+            return Err(Error::InvalidHeaderMagic(raw_header.magic));
+        }
+
+        let auth_block_size = raw_header.auth_block_size.get();
+        let aux_block_size = raw_header.aux_block_size.get();
+        let algorithm_type = AlgorithmType::from_raw(raw_header.algorithm_type.get());
+        let hash_offset = raw_header.hash_offset.get();
+        let hash_size = raw_header.hash_size.get();
+        let signature_offset = raw_header.signature_offset.get();
+        let signature_size = raw_header.signature_size.get();
+
+        let auth_block_combined = hash_size
+            .checked_add(signature_size)
+            .ok_or(Error::IntOverflow("Header::auth_block_combined"))?;
+        let auth_block_padding = padding::calc(auth_block_combined, 64);
+        if auth_block_combined.checked_add(auth_block_padding) != Some(auth_block_size) {
+            return Err(Error::IntOverflow("Header::auth_block_size"));
+        } else if hash_offset > auth_block_combined - hash_size {
+            return Err(Error::IntOverflow("Header::hash_offset"));
+        } else if signature_offset > auth_block_combined - signature_size {
+            return Err(Error::IntOverflow("Header::signature_offset"));
+        }
+
+        let public_key_offset = raw_header.public_key_offset.get();
+        let public_key_size = raw_header.public_key_size.get();
+        let public_key_metadata_offset = raw_header.public_key_metadata_offset.get();
+        let public_key_metadata_size = raw_header.public_key_metadata_size.get();
+        let descriptors_offset = raw_header.descriptors_offset.get();
+        let descriptors_size = raw_header.descriptors_size.get();
+
+        let aux_block_combined = public_key_size
+            .checked_add(public_key_metadata_size)
+            .and_then(|s| s.checked_add(descriptors_size))
+            .ok_or(Error::IntOverflow("Header::aux_block_combined"))?;
+        let aux_block_padding = padding::calc(aux_block_combined, 64);
+        if aux_block_combined.checked_add(aux_block_padding) != Some(aux_block_size) {
+            return Err(Error::IntOverflow("Header::aux_block_size"));
+        } else if public_key_offset > aux_block_combined - public_key_size {
+            return Err(Error::IntOverflow("Header::public_key_offset"));
+        } else if public_key_metadata_offset > aux_block_combined - public_key_metadata_size {
+            return Err(Error::IntOverflow("Header::public_key_metadata_size"));
+        } else if descriptors_offset > aux_block_combined - descriptors_size {
+            return Err(Error::IntOverflow("Header::descriptors_offset"));
+        }
+
+        let release_string = raw_header.release_string.trim_end_padding();
+        let release_string = str::from_utf8(release_string).map_err(|e| {
+            Error::StringNotUtf8("Header::release_string", e, release_string.to_vec())
+        })?;
+
+        let header_size = reader
+            .stream_position()
+            .map_err(|e| Error::DataRead("Header::header_size", e))?;
+        let total_size = header_size
+            .checked_add(auth_block_size)
+            .and_then(|v| v.checked_add(aux_block_size))
+            .ok_or(Error::IntOverflow("Header::total_size"))?;
+        if total_size > HEADER_MAX_SIZE {
+            return Err(Error::HeaderTooLarge);
+        }
+
+        // All of the size fields above are now guaranteed to fit in usize.
+
+        let auth_block = reader
+            .read_vec_exact(auth_block_size as usize)
+            .map_err(|e| Error::DataRead("Header::auth_block", e))?;
+
+        let aux_block = reader
+            .read_vec_exact(aux_block_size as usize)
+            .map_err(|e| Error::DataRead("Header::aux_block", e))?;
+
+        // When we verify() the signatures, we're doing so on re-serialized
+        // fields. The padding is the only thing that can escape this, so make
+        // sure they don't contain any data.
+        if !util::is_zero(
+            &auth_block[auth_block_combined as usize..][..auth_block_padding as usize],
+        ) {
+            return Err(Error::PaddingNotZero("Header::auth_block"));
+        }
+        if !util::is_zero(&aux_block[aux_block_combined as usize..][..aux_block_padding as usize]) {
+            return Err(Error::PaddingNotZero("Header::aux_block"));
+        }
+
+        // Auth block data.
+        let hash = &auth_block[hash_offset as usize..][..hash_size as usize];
+        let signature = &auth_block[signature_offset as usize..][..signature_size as usize];
+
+        // Aux block data.
+        let public_key = &aux_block[public_key_offset as usize..][..public_key_size as usize];
+        let public_key_metadata =
+            &aux_block[public_key_metadata_offset as usize..][..public_key_metadata_size as usize];
+
+        let mut descriptors: Vec<Descriptor> = vec![];
+        let mut descriptor_reader = Cursor::new(&aux_block);
+        let mut pos = descriptor_reader
+            .seek(SeekFrom::Start(descriptors_offset))
+            .map_err(|e| Error::DataRead("Header::descriptors_offset", e))?;
+
+        while pos < descriptors_offset + descriptors_size {
+            let descriptor = Descriptor::from_reader(&mut descriptor_reader)?;
+            descriptors.push(descriptor);
+            pos = descriptor_reader
+                .stream_position()
+                .map_err(|e| Error::DataRead("Header::descriptors_offset", e))?;
+        }
+
+        let header = Self {
+            required_libavb_version_major: raw_header.required_libavb_version_major.get(),
+            required_libavb_version_minor: raw_header.required_libavb_version_minor.get(),
+            algorithm_type,
+            hash: hash.to_owned(),
+            signature: signature.to_owned(),
+            public_key: public_key.to_owned(),
+            public_key_metadata: public_key_metadata.to_owned(),
+            descriptors,
+            rollback_index: raw_header.rollback_index.get(),
+            flags: raw_header.flags.get(),
+            rollback_index_location: raw_header.rollback_index_location.get(),
+            release_string: release_string.to_owned(),
+            reserved: raw_header.reserved,
+        };
+
+        Ok(header)
+    }
+
     fn to_writer_internal(&self, mut writer: impl Write, skip_auth_block: bool) -> Result<()> {
         let mut descriptors_writer = Cursor::new(Vec::new());
         for d in &self.descriptors {
@@ -1661,6 +1747,10 @@ impl Header {
             .map_err(|e| Error::DataWrite("Header::aux_block_padding", e))?;
 
         Ok(())
+    }
+
+    pub fn to_writer(&self, writer: impl Write) -> Result<()> {
+        self.to_writer_internal(writer, false)
     }
 
     /// Get the first hash or hash tree descriptor if there is only one. This is
@@ -1841,150 +1931,6 @@ impl Header {
     }
 }
 
-impl<R: Read> FromReader<R> for Header {
-    type Error = Error;
-
-    fn from_reader(reader: R) -> Result<Self> {
-        let mut reader = CountingReader::new(reader);
-
-        let raw_header = RawHeader::read_from_io(&mut reader)
-            .map_err(|e| Error::DataRead("Header::header", e))?;
-
-        if raw_header.magic != HEADER_MAGIC {
-            return Err(Error::InvalidHeaderMagic(raw_header.magic));
-        }
-
-        let auth_block_size = raw_header.auth_block_size.get();
-        let aux_block_size = raw_header.aux_block_size.get();
-        let algorithm_type = AlgorithmType::from_raw(raw_header.algorithm_type.get());
-        let hash_offset = raw_header.hash_offset.get();
-        let hash_size = raw_header.hash_size.get();
-        let signature_offset = raw_header.signature_offset.get();
-        let signature_size = raw_header.signature_size.get();
-
-        let auth_block_combined = hash_size
-            .checked_add(signature_size)
-            .ok_or(Error::IntOverflow("Header::auth_block_combined"))?;
-        let auth_block_padding = padding::calc(auth_block_combined, 64);
-        if auth_block_combined.checked_add(auth_block_padding) != Some(auth_block_size) {
-            return Err(Error::IntOverflow("Header::auth_block_size"));
-        } else if hash_offset > auth_block_combined - hash_size {
-            return Err(Error::IntOverflow("Header::hash_offset"));
-        } else if signature_offset > auth_block_combined - signature_size {
-            return Err(Error::IntOverflow("Header::signature_offset"));
-        }
-
-        let public_key_offset = raw_header.public_key_offset.get();
-        let public_key_size = raw_header.public_key_size.get();
-        let public_key_metadata_offset = raw_header.public_key_metadata_offset.get();
-        let public_key_metadata_size = raw_header.public_key_metadata_size.get();
-        let descriptors_offset = raw_header.descriptors_offset.get();
-        let descriptors_size = raw_header.descriptors_size.get();
-
-        let aux_block_combined = public_key_size
-            .checked_add(public_key_metadata_size)
-            .and_then(|s| s.checked_add(descriptors_size))
-            .ok_or(Error::IntOverflow("Header::aux_block_combined"))?;
-        let aux_block_padding = padding::calc(aux_block_combined, 64);
-        if aux_block_combined.checked_add(aux_block_padding) != Some(aux_block_size) {
-            return Err(Error::IntOverflow("Header::aux_block_size"));
-        } else if public_key_offset > aux_block_combined - public_key_size {
-            return Err(Error::IntOverflow("Header::public_key_offset"));
-        } else if public_key_metadata_offset > aux_block_combined - public_key_metadata_size {
-            return Err(Error::IntOverflow("Header::public_key_metadata_size"));
-        } else if descriptors_offset > aux_block_combined - descriptors_size {
-            return Err(Error::IntOverflow("Header::descriptors_offset"));
-        }
-
-        let release_string = raw_header.release_string.trim_end_padding();
-        let release_string = str::from_utf8(release_string).map_err(|e| {
-            Error::StringNotUtf8("Header::release_string", e, release_string.to_vec())
-        })?;
-
-        let header_size = reader
-            .stream_position()
-            .map_err(|e| Error::DataRead("Header::header_size", e))?;
-        let total_size = header_size
-            .checked_add(auth_block_size)
-            .and_then(|v| v.checked_add(aux_block_size))
-            .ok_or(Error::IntOverflow("Header::total_size"))?;
-        if total_size > HEADER_MAX_SIZE {
-            return Err(Error::HeaderTooLarge);
-        }
-
-        // All of the size fields above are now guaranteed to fit in usize.
-
-        let auth_block = reader
-            .read_vec_exact(auth_block_size as usize)
-            .map_err(|e| Error::DataRead("Header::auth_block", e))?;
-
-        let aux_block = reader
-            .read_vec_exact(aux_block_size as usize)
-            .map_err(|e| Error::DataRead("Header::aux_block", e))?;
-
-        // When we verify() the signatures, we're doing so on re-serialized
-        // fields. The padding is the only thing that can escape this, so make
-        // sure they don't contain any data.
-        if !util::is_zero(
-            &auth_block[auth_block_combined as usize..][..auth_block_padding as usize],
-        ) {
-            return Err(Error::PaddingNotZero("Header::auth_block"));
-        }
-        if !util::is_zero(&aux_block[aux_block_combined as usize..][..aux_block_padding as usize]) {
-            return Err(Error::PaddingNotZero("Header::aux_block"));
-        }
-
-        // Auth block data.
-        let hash = &auth_block[hash_offset as usize..][..hash_size as usize];
-        let signature = &auth_block[signature_offset as usize..][..signature_size as usize];
-
-        // Aux block data.
-        let public_key = &aux_block[public_key_offset as usize..][..public_key_size as usize];
-        let public_key_metadata =
-            &aux_block[public_key_metadata_offset as usize..][..public_key_metadata_size as usize];
-
-        let mut descriptors: Vec<Descriptor> = vec![];
-        let mut descriptor_reader = Cursor::new(&aux_block);
-        let mut pos = descriptor_reader
-            .seek(SeekFrom::Start(descriptors_offset))
-            .map_err(|e| Error::DataRead("Header::descriptors_offset", e))?;
-
-        while pos < descriptors_offset + descriptors_size {
-            let descriptor = Descriptor::from_reader(&mut descriptor_reader)?;
-            descriptors.push(descriptor);
-            pos = descriptor_reader
-                .stream_position()
-                .map_err(|e| Error::DataRead("Header::descriptors_offset", e))?;
-        }
-
-        let header = Self {
-            required_libavb_version_major: raw_header.required_libavb_version_major.get(),
-            required_libavb_version_minor: raw_header.required_libavb_version_minor.get(),
-            algorithm_type,
-            hash: hash.to_owned(),
-            signature: signature.to_owned(),
-            public_key: public_key.to_owned(),
-            public_key_metadata: public_key_metadata.to_owned(),
-            descriptors,
-            rollback_index: raw_header.rollback_index.get(),
-            flags: raw_header.flags.get(),
-            rollback_index_location: raw_header.rollback_index_location.get(),
-            release_string: release_string.to_owned(),
-            reserved: raw_header.reserved,
-        };
-
-        Ok(header)
-    }
-}
-
-impl<W: Write> ToWriter<W> for Header {
-    type Error = Error;
-
-    fn to_writer(&self, writer: W) -> Result<()> {
-        self.to_writer_internal(writer, false)
-    }
-}
-
 /// Raw on-disk layout for the AVB footer.
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(C, packed)]
@@ -2025,12 +1971,8 @@ impl fmt::Debug for Footer {
 
 impl Footer {
     pub const SIZE: usize = mem::size_of::<RawFooter>();
-}
 
-impl<R: Read> FromReader<R> for Footer {
-    type Error = Error;
-
-    fn from_reader(mut reader: R) -> Result<Self> {
+    pub fn from_reader(mut reader: impl Read) -> Result<Self> {
         let raw_footer = RawFooter::read_from_io(&mut reader)
             .map_err(|e| Error::DataRead("Footer::footer", e))?;
 
@@ -2052,12 +1994,8 @@ impl<R: Read> FromReader<R> for Footer {
 
         Ok(footer)
     }
-}
 
-impl<W: Write> ToWriter<W> for Footer {
-    type Error = Error;
-
-    fn to_writer(&self, mut writer: W) -> Result<()> {
+    pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
         util::check_bounds(self.vbmeta_size, ..=HEADER_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Footer::vbmeta_size", e))?;
 

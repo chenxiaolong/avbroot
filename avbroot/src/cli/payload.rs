@@ -22,7 +22,7 @@ use crate::{
         payload::{PayloadHeader, PayloadWriter},
     },
     protobuf::recovery_update_verifier::CareMap,
-    stream::{self, FromReader, SectionReader, UserPosFile},
+    stream::{self, SectionReader, UserPosFile},
     util,
 };
 

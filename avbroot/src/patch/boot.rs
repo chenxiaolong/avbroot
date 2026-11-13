@@ -35,7 +35,7 @@ use crate::{
         zip::{self, ZipEntriesSafeExt, ZipFileHeaderRecordExt, ZipSliceEntriesSafeExt},
     },
     patch::otacert::{self, OtaCertBuildFlags},
-    stream::{self, FromReader, HashingWriter, ReadSeek, SectionReader, ToWriter, WriteSeek},
+    stream::{self, HashingWriter, ReadSeek, SectionReader, WriteSeek},
     util,
 };
 

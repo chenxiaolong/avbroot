@@ -18,9 +18,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 use crate::{
     format::padding,
-    stream::{
-        CountingReader, FromReader, ReadDiscardExt, ReadFixedSizeExt, ToWriter, WriteZerosExt,
-    },
+    stream::{CountingReader, ReadDiscardExt, ReadFixedSizeExt, WriteZerosExt},
     util::{self, DebugString, is_zero},
 };
 
@@ -1187,12 +1185,8 @@ impl RawMetadata {
 
         Ok(())
     }
-}
 
-impl<R: Read> FromReader<R> for RawMetadata {
-    type Error = Error;
-
-    fn from_reader(reader: R) -> Result<Self> {
+    pub fn from_reader(reader: impl Read) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
         let (image_type, geometry) = Self::read_geometry(&mut reader)?;
@@ -1247,12 +1241,8 @@ impl<R: Read> FromReader<R> for RawMetadata {
             slots,
         })
     }
-}
 
-impl<W: Write> ToWriter<W> for RawMetadata {
-    type Error = Error;
-
-    fn to_writer(&self, mut writer: W) -> Result<()> {
+    pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
         self.validate()?;
 
         let geometry = self.geometry.as_bytes();
@@ -1888,6 +1878,18 @@ pub struct Metadata {
     pub slots: Vec<MetadataSlot>,
 }
 
+impl Metadata {
+    pub fn from_reader(reader: impl Read) -> Result<Self> {
+        RawMetadata::from_reader(reader)?.try_into()
+    }
+
+    pub fn to_writer(&self, writer: impl Write) -> Result<()> {
+        let raw_metadata: RawMetadata = self.try_into()?;
+        raw_metadata.validate()?;
+        raw_metadata.to_writer(writer)
+    }
+}
+
 impl TryFrom<&RawMetadata> for Metadata {
     type Error = Error;
 
@@ -1960,23 +1962,5 @@ impl TryFrom<Metadata> for RawMetadata {
 
     fn try_from(metadata: Metadata) -> Result<Self> {
         (&metadata).try_into()
-    }
-}
-
-impl<R: Read> FromReader<R> for Metadata {
-    type Error = Error;
-
-    fn from_reader(reader: R) -> Result<Self> {
-        RawMetadata::from_reader(reader)?.try_into()
-    }
-}
-
-impl<W: Write> ToWriter<W> for Metadata {
-    type Error = Error;
-
-    fn to_writer(&self, writer: W) -> Result<()> {
-        let raw_metadata: RawMetadata = self.try_into()?;
-        raw_metadata.validate()?;
-        raw_metadata.to_writer(writer)
     }
 }

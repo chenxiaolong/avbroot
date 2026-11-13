@@ -20,9 +20,7 @@ use crate::{
     escape,
     format::padding,
     octal,
-    stream::{
-        self, CountingReader, CountingWriter, FromReader, ReadDiscardExt, ToWriter, WriteZerosExt,
-    },
+    stream::{self, CountingReader, CountingWriter, ReadDiscardExt, WriteZerosExt},
     util::NumBytes,
 };
 
@@ -373,56 +371,7 @@ impl fmt::Display for CpioEntry {
 }
 
 impl CpioEntry {
-    pub fn new_trailer() -> Self {
-        Self {
-            path: CPIO_TRAILER.to_vec(),
-            // Must be 1 for CRC format.
-            nlink: 1,
-            ..Default::default()
-        }
-    }
-
-    pub fn new_symlink(path: &[u8], link_target: &[u8]) -> Self {
-        Self {
-            path: path.to_owned(),
-            data: CpioEntryData::Data(link_target.to_owned()),
-            file_type: CpioEntryType::Symlink,
-            file_mode: 0o777,
-            nlink: 1,
-            ..Default::default()
-        }
-    }
-
-    pub fn new_directory(path: &[u8], mode: u16) -> Self {
-        Self {
-            path: path.to_owned(),
-            file_type: CpioEntryType::Directory,
-            file_mode: mode,
-            nlink: 1,
-            ..Default::default()
-        }
-    }
-
-    pub fn new_file(path: &[u8], mode: u16, data: CpioEntryData) -> Self {
-        Self {
-            path: path.to_owned(),
-            data,
-            file_type: CpioEntryType::Regular,
-            file_mode: mode,
-            nlink: 1,
-            ..Default::default()
-        }
-    }
-
-    pub fn is_trailer(&self) -> bool {
-        self.path == CPIO_TRAILER
-    }
-}
-
-impl<R: Read> FromReader<R> for CpioEntry {
-    type Error = Error;
-
-    fn from_reader(reader: R) -> Result<Self> {
+    pub fn from_reader(reader: impl Read) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
         let header =
@@ -504,12 +453,8 @@ impl<R: Read> FromReader<R> for CpioEntry {
             crc32,
         })
     }
-}
 
-impl<W: Write> ToWriter<W> for CpioEntry {
-    type Error = Error;
-
-    fn to_writer(&self, writer: W) -> Result<()> {
+    pub fn to_writer(&self, writer: impl Write) -> Result<()> {
         let mut writer = CountingWriter::new(writer);
 
         let path_size = self
@@ -571,6 +516,51 @@ impl<W: Write> ToWriter<W> for CpioEntry {
         }
 
         Ok(())
+    }
+
+    pub fn new_trailer() -> Self {
+        Self {
+            path: CPIO_TRAILER.to_vec(),
+            // Must be 1 for CRC format.
+            nlink: 1,
+            ..Default::default()
+        }
+    }
+
+    pub fn new_symlink(path: &[u8], link_target: &[u8]) -> Self {
+        Self {
+            path: path.to_owned(),
+            data: CpioEntryData::Data(link_target.to_owned()),
+            file_type: CpioEntryType::Symlink,
+            file_mode: 0o777,
+            nlink: 1,
+            ..Default::default()
+        }
+    }
+
+    pub fn new_directory(path: &[u8], mode: u16) -> Self {
+        Self {
+            path: path.to_owned(),
+            file_type: CpioEntryType::Directory,
+            file_mode: mode,
+            nlink: 1,
+            ..Default::default()
+        }
+    }
+
+    pub fn new_file(path: &[u8], mode: u16, data: CpioEntryData) -> Self {
+        Self {
+            path: path.to_owned(),
+            data,
+            file_type: CpioEntryType::Regular,
+            file_mode: mode,
+            nlink: 1,
+            ..Default::default()
+        }
+    }
+
+    pub fn is_trailer(&self) -> bool {
+        self.path == CPIO_TRAILER
     }
 }
 

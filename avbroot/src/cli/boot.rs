@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -11,9 +11,8 @@ use anyhow::{Context, Result, bail};
 use tracing::warn;
 use winnow_args::{Args, Subcommand};
 
-use crate::{
-    format::{avb::Header, bootimage::BootImage, compression::CompressedReader, cpio::CpioReader},
-    stream::{FromReader, ToWriter},
+use crate::format::{
+    avb::Header, bootimage::BootImage, compression::CompressedReader, cpio::CpioReader,
 };
 
 fn read_image(path: &Path) -> Result<BootImage> {

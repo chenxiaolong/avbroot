@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2023-2024 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
@@ -24,7 +24,7 @@ use crate::{
         avb,
         padding::{self, ZeroPadding},
     },
-    stream::{self, FromReader, ReadAt, ReadFixedSizeExt, ToWriter, UserPosFile},
+    stream::{self, ReadAt, ReadFixedSizeExt, UserPosFile},
     util::{self, NumBytes, OutOfBoundsError},
 };
 
@@ -486,6 +486,85 @@ impl HashTreeImage {
     const MAGIC: &'static [u8; 16] = b"avbroot!hashtree";
     const VERSION: u16 = 1;
 
+    pub fn from_reader(mut reader: impl Read) -> Result<Self> {
+        let header =
+            RawHeader::read_from_io(&mut reader).map_err(|e| Error::DataRead("header", e))?;
+
+        if header.magic != *Self::MAGIC {
+            return Err(Error::InvalidHeaderMagic(header.magic));
+        }
+
+        if header.version != Self::VERSION {
+            return Err(Error::InvalidHeaderVersion(header.version.get()));
+        }
+
+        let algorithm = header.algorithm.trim_end_padding();
+        let algorithm = str::from_utf8(algorithm)
+            .map_err(|_| Error::UnsupportedHashAlgorithm(algorithm.to_vec()))?;
+
+        let salt = reader
+            .read_vec_exact(usize::from(header.salt_size))
+            .map_err(|e| Error::DataRead("header", e))?;
+
+        let root_digest = reader
+            .read_vec_exact(usize::from(header.root_digest_size))
+            .map_err(|e| Error::DataRead("root_digest", e))?;
+
+        let hash_tree = reader
+            .read_vec_exact(header.hash_tree_size.get() as usize)
+            .map_err(|e| Error::DataRead("hash_tree", e))?;
+
+        Ok(Self {
+            image_size: header.image_size.get(),
+            block_size: header.block_size.get(),
+            algorithm: algorithm.to_owned(),
+            salt,
+            root_digest,
+            hash_tree,
+        })
+    }
+
+    pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
+        let algorithm = self
+            .algorithm
+            .as_bytes()
+            .to_padded_array::<16>()
+            .ok_or_else(|| Error::UnsupportedHashAlgorithm(self.algorithm.as_bytes().to_vec()))?;
+
+        let salt_size: u16 =
+            util::try_cast(self.salt.len()).map_err(|e| Error::IntOutOfBounds("salt_size", e))?;
+        let root_digest_size: u16 = util::try_cast(self.root_digest.len())
+            .map_err(|e| Error::IntOutOfBounds("root_digest_size", e))?;
+        let hash_tree_size: u32 = util::try_cast(self.hash_tree.len())
+            .map_err(|e| Error::IntOutOfBounds("hash_tree_size", e))?;
+
+        let header = RawHeader {
+            magic: *Self::MAGIC,
+            version: Self::VERSION.into(),
+            image_size: self.image_size.into(),
+            block_size: self.block_size.into(),
+            algorithm,
+            salt_size: salt_size.into(),
+            root_digest_size: root_digest_size.into(),
+            hash_tree_size: hash_tree_size.into(),
+        };
+
+        header
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("header", e))?;
+        writer
+            .write_all(&self.salt)
+            .map_err(|e| Error::DataWrite("salt", e))?;
+        writer
+            .write_all(&self.root_digest)
+            .map_err(|e| Error::DataWrite("root_digest", e))?;
+        writer
+            .write_all(&self.hash_tree)
+            .map_err(|e| Error::DataWrite("hash_tree", e))?;
+
+        Ok(())
+    }
+
     fn digest_algorithm(name: &str) -> Result<&'static Algorithm> {
         avb::digest_algorithm(name)
             .map_err(|_| Error::UnsupportedHashAlgorithm(name.to_owned().into_bytes()))
@@ -547,93 +626,6 @@ impl HashTreeImage {
             &self.hash_tree,
             cancel_signal,
         )
-    }
-}
-
-impl<R: Read> FromReader<R> for HashTreeImage {
-    type Error = Error;
-
-    fn from_reader(mut reader: R) -> Result<Self> {
-        let header =
-            RawHeader::read_from_io(&mut reader).map_err(|e| Error::DataRead("header", e))?;
-
-        if header.magic != *Self::MAGIC {
-            return Err(Error::InvalidHeaderMagic(header.magic));
-        }
-
-        if header.version != Self::VERSION {
-            return Err(Error::InvalidHeaderVersion(header.version.get()));
-        }
-
-        let algorithm = header.algorithm.trim_end_padding();
-        let algorithm = str::from_utf8(algorithm)
-            .map_err(|_| Error::UnsupportedHashAlgorithm(algorithm.to_vec()))?;
-
-        let salt = reader
-            .read_vec_exact(usize::from(header.salt_size))
-            .map_err(|e| Error::DataRead("header", e))?;
-
-        let root_digest = reader
-            .read_vec_exact(usize::from(header.root_digest_size))
-            .map_err(|e| Error::DataRead("root_digest", e))?;
-
-        let hash_tree = reader
-            .read_vec_exact(header.hash_tree_size.get() as usize)
-            .map_err(|e| Error::DataRead("hash_tree", e))?;
-
-        Ok(Self {
-            image_size: header.image_size.get(),
-            block_size: header.block_size.get(),
-            algorithm: algorithm.to_owned(),
-            salt,
-            root_digest,
-            hash_tree,
-        })
-    }
-}
-
-impl<W: Write> ToWriter<W> for HashTreeImage {
-    type Error = Error;
-
-    fn to_writer(&self, mut writer: W) -> Result<()> {
-        let algorithm = self
-            .algorithm
-            .as_bytes()
-            .to_padded_array::<16>()
-            .ok_or_else(|| Error::UnsupportedHashAlgorithm(self.algorithm.as_bytes().to_vec()))?;
-
-        let salt_size: u16 =
-            util::try_cast(self.salt.len()).map_err(|e| Error::IntOutOfBounds("salt_size", e))?;
-        let root_digest_size: u16 = util::try_cast(self.root_digest.len())
-            .map_err(|e| Error::IntOutOfBounds("root_digest_size", e))?;
-        let hash_tree_size: u32 = util::try_cast(self.hash_tree.len())
-            .map_err(|e| Error::IntOutOfBounds("hash_tree_size", e))?;
-
-        let header = RawHeader {
-            magic: *Self::MAGIC,
-            version: Self::VERSION.into(),
-            image_size: self.image_size.into(),
-            block_size: self.block_size.into(),
-            algorithm,
-            salt_size: salt_size.into(),
-            root_digest_size: root_digest_size.into(),
-            hash_tree_size: hash_tree_size.into(),
-        };
-
-        header
-            .write_to_io(&mut writer)
-            .map_err(|e| Error::DataWrite("header", e))?;
-        writer
-            .write_all(&self.salt)
-            .map_err(|e| Error::DataWrite("salt", e))?;
-        writer
-            .write_all(&self.root_digest)
-            .map_err(|e| Error::DataWrite("root_digest", e))?;
-        writer
-            .write_all(&self.hash_tree)
-            .map_err(|e| Error::DataWrite("hash_tree", e))?;
-
-        Ok(())
     }
 }
 

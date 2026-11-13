@@ -5,7 +5,7 @@
 mod fuzz {
     use std::io::Cursor;
 
-    use avbroot::{format::lp::Metadata, stream::FromReader};
+    use avbroot::format::lp::Metadata;
     use honggfuzz::fuzz;
 
     pub fn main() {

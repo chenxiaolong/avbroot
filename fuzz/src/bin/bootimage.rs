@@ -5,7 +5,7 @@
 mod fuzz {
     use std::io::Cursor;
 
-    use avbroot::{format::bootimage::BootImage, stream::FromReader};
+    use avbroot::format::bootimage::BootImage;
     use honggfuzz::fuzz;
 
     pub fn main() {

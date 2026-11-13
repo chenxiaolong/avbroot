@@ -36,7 +36,7 @@ use crate::{
         install_operation::Type, signatures::Signature,
     },
     stream::{
-        self, CountingReader, FromReader, HashingReader, HashingWriter, ReadAt, ReadDiscardExt,
+        self, CountingReader, HashingReader, HashingWriter, ReadAt, ReadDiscardExt,
         ReadFixedSizeExt, ReadSeek, UserPosFile, WriteAt, WriteSeek,
     },
     util::{self, OutOfBoundsError},
@@ -169,20 +169,9 @@ pub struct PayloadHeader {
 }
 
 impl PayloadHeader {
-    pub fn is_full_ota(&self) -> bool {
-        self.manifest
-            .partitions
-            .iter()
-            .all(|p| p.old_partition_info.is_none())
-    }
-}
-
-impl<R: Read> FromReader<R> for PayloadHeader {
-    type Error = Error;
-
     /// Parse the header from an OTA payload file. After this function returns,
     /// the file position is set to the beginning of the blob section.
-    fn from_reader(reader: R) -> Result<Self> {
+    pub fn from_reader(reader: impl Read) -> Result<Self> {
         let mut reader = CountingReader::new(reader);
 
         let header =
@@ -219,6 +208,13 @@ impl<R: Read> FromReader<R> for PayloadHeader {
                 .stream_position()
                 .map_err(|e| Error::DataRead("blob_offset", e))?,
         })
+    }
+
+    pub fn is_full_ota(&self) -> bool {
+        self.manifest
+            .partitions
+            .iter()
+            .all(|p| p.old_partition_info.is_none())
     }
 }
 

@@ -48,7 +48,7 @@ use avbroot::{
         },
         recovery_update_verifier::CareMap,
     },
-    stream::{self, FromReader, HashingReader, ToWriter, UserPosFile},
+    stream::{self, HashingReader, UserPosFile},
     util,
 };
 use rand::rngs::SysRng;

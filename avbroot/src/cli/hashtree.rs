@@ -11,10 +11,7 @@ use std::{
 use anyhow::{Context, Result};
 use winnow_args::{Args, Subcommand};
 
-use crate::{
-    format::hashtree::HashTreeImage,
-    stream::{FromReader, ToWriter},
-};
+use crate::format::hashtree::HashTreeImage;
 
 fn open_input(path: &Path, rw: bool) -> Result<File> {
     OpenOptions::new()

@@ -3,12 +3,9 @@
 
 use std::{io::Cursor, num::NonZeroU64};
 
-use avbroot::{
-    format::lp::{
-        BlockDevice, BlockDeviceFlags, Extent, ExtentType, HeaderFlags, ImageType, Metadata,
-        MetadataSlot, Partition, PartitionAttributes, PartitionGroup, PartitionGroupFlags,
-    },
-    stream::{FromReader, ToWriter},
+use avbroot::format::lp::{
+    BlockDevice, BlockDeviceFlags, Extent, ExtentType, HeaderFlags, ImageType, Metadata,
+    MetadataSlot, Partition, PartitionAttributes, PartitionGroup, PartitionGroupFlags,
 };
 
 fn round_trip(metadata: &Metadata, sha512: &[u8; 64]) {

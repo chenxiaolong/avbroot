@@ -31,7 +31,7 @@ use crate::{
         },
     },
     protobuf::build::tools::releasetools::OtaMetadata,
-    stream::{self, FromReader, SectionReaderAt, UserPosFile},
+    stream::{self, SectionReaderAt, UserPosFile},
     util,
 };
 

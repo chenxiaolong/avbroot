@@ -22,8 +22,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 use crate::{
     format::verityrs,
     stream::{
-        self, FromReader, ReadAt, ReadSeek, ReadWriteAt, ReadWriteSeek, ToWriter, UserPosFile,
-        WriteSeek, WriteZerosExt,
+        self, ReadAt, ReadSeek, ReadWriteAt, ReadWriteSeek, UserPosFile, WriteSeek, WriteZerosExt,
     },
     util::{self, NumBytes, OutOfBoundsError},
 };
@@ -617,6 +616,98 @@ impl fmt::Debug for FecImage {
 }
 
 impl FecImage {
+    pub fn from_reader(mut reader: impl Read) -> Result<Self> {
+        // Avoid requiring seekable readers since we need to read everything
+        // into memory anyway.
+        let mut fec = Vec::new();
+        reader
+            .read_to_end(&mut fec)
+            .map_err(|e| Error::DataRead("fec", e))?;
+
+        if fec.len() < FEC_BLOCK_SIZE {
+            return Err(Error::DataTooSmall);
+        }
+
+        let header1_offset = fec.len() - FEC_BLOCK_SIZE;
+
+        let (header, _) =
+            RawHeader::ref_from_prefix(&fec[header1_offset..]).map_err(|_| Error::DataTooSmall)?;
+        let header_size = header.header_size.get() as usize;
+
+        if header_size > FEC_BLOCK_SIZE / 2 {
+            // ref_from_prefix() already handles the "too small" case.
+            return Err(Error::InvalidHeaderSize(header.header_size.get()));
+        }
+
+        let header2_offset = fec.len() - header_size;
+
+        // Make sure both headers match, accounting for potential custom fields.
+        let header1_raw = &fec[header1_offset..][..header_size];
+        let header2_raw = &fec[header2_offset..][..header_size];
+
+        if header1_raw != header2_raw {
+            return Err(Error::HeadersDifferent);
+        }
+
+        if header.magic != FEC_MAGIC {
+            return Err(Error::InvalidHeaderMagic(header.magic.get()));
+        }
+
+        if header.version != FEC_VERSION {
+            return Err(Error::UnsupportedHeaderVersion(header.version.get()));
+        }
+
+        let parity: u8 =
+            util::try_cast(header.parity.get()).map_err(|e| Error::IntOutOfBounds("parity", e))?;
+
+        let fec_size = header.fec_size.get() as usize;
+        let actual_fec_size = fec.len() - FEC_BLOCK_SIZE;
+        if fec_size != actual_fec_size {
+            return Err(Error::InvalidHeaderFecSize {
+                value: fec_size,
+                available: actual_fec_size,
+            });
+        }
+
+        let data_size = header.data_size.get();
+
+        let actual_digest = ring::digest::digest(&ring::digest::SHA256, &fec[..fec_size]);
+        if header.digest != actual_digest.as_ref() {
+            return Err(Error::InvalidFecDigest {
+                expected: hex::encode(header.digest),
+                actual: hex::encode(actual_digest),
+            });
+        }
+
+        // Chop off headers.
+        fec.resize(fec_size, 0);
+
+        Ok(Self {
+            fec,
+            data_size,
+            parity,
+        })
+    }
+
+    pub fn to_writer(&self, mut writer: impl Write) -> Result<()> {
+        let header = self.build_header()?;
+
+        writer
+            .write_all(&self.fec)
+            .map_err(|e| Error::DataWrite("fec_data", e))?;
+        header
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("fec_header_1", e))?;
+        writer
+            .write_zeros_exact((FEC_BLOCK_SIZE - 2 * header.as_bytes().len()) as u64)
+            .map_err(|e| Error::DataWrite("fec_header_padding", e))?;
+        header
+            .write_to_io(&mut writer)
+            .map_err(|e| Error::DataWrite("fec_header_2", e))?;
+
+        Ok(())
+    }
+
     /// Generate FEC data for a file. `parity` is the number of parity bytes per
     /// 255-byte Reed-Solomon codeword.
     pub fn generate(
@@ -692,106 +783,6 @@ impl FecImage {
         };
 
         Ok(header)
-    }
-}
-
-impl<R: Read> FromReader<R> for FecImage {
-    type Error = Error;
-
-    fn from_reader(mut reader: R) -> Result<Self> {
-        // Avoid requiring seekable readers since we need to read everything
-        // into memory anyway.
-        let mut fec = Vec::new();
-        reader
-            .read_to_end(&mut fec)
-            .map_err(|e| Error::DataRead("fec", e))?;
-
-        if fec.len() < FEC_BLOCK_SIZE {
-            return Err(Error::DataTooSmall);
-        }
-
-        let header1_offset = fec.len() - FEC_BLOCK_SIZE;
-
-        let (header, _) =
-            RawHeader::ref_from_prefix(&fec[header1_offset..]).map_err(|_| Error::DataTooSmall)?;
-        let header_size = header.header_size.get() as usize;
-
-        if header_size > FEC_BLOCK_SIZE / 2 {
-            // ref_from_prefix() already handles the "too small" case.
-            return Err(Error::InvalidHeaderSize(header.header_size.get()));
-        }
-
-        let header2_offset = fec.len() - header_size;
-
-        // Make sure both headers match, accounting for potential custom fields.
-        let header1_raw = &fec[header1_offset..][..header_size];
-        let header2_raw = &fec[header2_offset..][..header_size];
-
-        if header1_raw != header2_raw {
-            return Err(Error::HeadersDifferent);
-        }
-
-        if header.magic != FEC_MAGIC {
-            return Err(Error::InvalidHeaderMagic(header.magic.get()));
-        }
-
-        if header.version != FEC_VERSION {
-            return Err(Error::UnsupportedHeaderVersion(header.version.get()));
-        }
-
-        let parity: u8 =
-            util::try_cast(header.parity.get()).map_err(|e| Error::IntOutOfBounds("parity", e))?;
-
-        let fec_size = header.fec_size.get() as usize;
-        let actual_fec_size = fec.len() - FEC_BLOCK_SIZE;
-        if fec_size != actual_fec_size {
-            return Err(Error::InvalidHeaderFecSize {
-                value: fec_size,
-                available: actual_fec_size,
-            });
-        }
-
-        let data_size = header.data_size.get();
-
-        let actual_digest = ring::digest::digest(&ring::digest::SHA256, &fec[..fec_size]);
-        if header.digest != actual_digest.as_ref() {
-            return Err(Error::InvalidFecDigest {
-                expected: hex::encode(header.digest),
-                actual: hex::encode(actual_digest),
-            });
-        }
-
-        // Chop off headers.
-        fec.resize(fec_size, 0);
-
-        Ok(Self {
-            fec,
-            data_size,
-            parity,
-        })
-    }
-}
-
-impl<W: Write> ToWriter<W> for FecImage {
-    type Error = Error;
-
-    fn to_writer(&self, mut writer: W) -> Result<()> {
-        let header = self.build_header()?;
-
-        writer
-            .write_all(&self.fec)
-            .map_err(|e| Error::DataWrite("fec_data", e))?;
-        header
-            .write_to_io(&mut writer)
-            .map_err(|e| Error::DataWrite("fec_header_1", e))?;
-        writer
-            .write_zeros_exact((FEC_BLOCK_SIZE - 2 * header.as_bytes().len()) as u64)
-            .map_err(|e| Error::DataWrite("fec_header_padding", e))?;
-        header
-            .write_to_io(&mut writer)
-            .map_err(|e| Error::DataWrite("fec_header_2", e))?;
-
-        Ok(())
     }
 }
 

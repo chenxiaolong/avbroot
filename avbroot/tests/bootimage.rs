@@ -13,7 +13,6 @@ use avbroot::{
             RamdiskMeta, V1Extra, V2Extra, V4Extra, VendorBootImageV3Through4, VendorV4Extra,
         },
     },
-    stream::{FromReader, ToWriter},
 };
 use pkcs8::DecodePrivateKey;
 

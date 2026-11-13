@@ -24,7 +24,7 @@ use crate::{
         self, AlgorithmType, AppendedDescriptorMut, AppendedDescriptorRef, Descriptor, Footer,
         HashTreeDescriptor, Header, KernelCmdlineDescriptor,
     },
-    stream::{self, ReadFixedSizeExt, ToWriter, UserPosFile, check_cancel},
+    stream::{self, ReadFixedSizeExt, UserPosFile, check_cancel},
     util,
 };
 
