@@ -52,7 +52,7 @@ pub enum Error {
     PathNotNullTerminated(Vec<u8>),
     #[error("Hard links are not supported: {:?}", .0.as_bstr())]
     HardLinksNotSupported(Vec<u8>),
-    #[error("Entry of type {0} should not have data: {path:?}", path = .1.as_bstr())]
+    #[error("Entry of type {0:?} should not have data: {path:?}", path = .1.as_bstr())]
     EntryHasData(CpioEntryType, Vec<u8>),
     #[error("No inodes available for device {major:x},{minor:x}")]
     DeviceFull { major: u32, minor: u32 },
@@ -193,22 +193,6 @@ impl CpioEntryType {
     }
 }
 
-impl fmt::Display for CpioEntryType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Pipe => write!(f, "pipe"),
-            Self::Char => write!(f, "character device"),
-            Self::Directory => write!(f, "directory"),
-            Self::Block => write!(f, "block device"),
-            Self::Regular => write!(f, "regular file"),
-            Self::Symlink => write!(f, "symbolic link"),
-            Self::Socket => write!(f, "socket"),
-            Self::Reserved => write!(f, "reserved"),
-            Self::Unknown(m) => write!(f, "unknown ({m:o})"),
-        }
-    }
-}
-
 impl Default for CpioEntryType {
     fn default() -> Self {
         Self::Unknown(0)
@@ -321,52 +305,35 @@ pub struct CpioEntry {
 
 impl fmt::Debug for CpioEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let data = match &self.data {
+            CpioEntryData::Size(s) => {
+                format_args!("{:?}", NumBytes(*s))
+            }
+            CpioEntryData::Data(d) => {
+                if self.file_type == CpioEntryType::Symlink {
+                    format_args!("{:?}", d.as_bstr())
+                } else {
+                    format_args!("{:?}", NumBytes(d.len()))
+                }
+            }
+        };
+
         f.debug_struct("CpioEntry")
             .field("path", &self.path.as_bstr())
-            .field("data", &self.data)
+            .field("data", &data)
             .field("inode", &self.inode)
             .field("file_type", &self.file_type)
-            .field("file_mode", &self.file_mode)
+            .field("file_mode", &format_args!("{:o}", self.file_mode))
             .field("uid", &self.uid)
             .field("gid", &self.gid)
             .field("nlink", &self.nlink)
             .field("mtime", &self.mtime)
-            .field("dev_maj", &self.dev_maj)
-            .field("dev_min", &self.dev_min)
-            .field("rdev_maj", &self.rdev_maj)
-            .field("rdev_min", &self.rdev_min)
-            .field("crc32", &self.crc32)
+            .field("dev_maj", &format_args!("{:#x}", self.dev_maj))
+            .field("dev_min", &format_args!("{:#x}", self.dev_min))
+            .field("rdev_maj", &format_args!("{:#x}", self.rdev_maj))
+            .field("rdev_min", &format_args!("{:#x}", self.rdev_min))
+            .field("crc32", &format_args!("{:08x}", self.crc32))
             .finish()
-    }
-}
-
-impl fmt::Display for CpioEntry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Path:    {:?}", self.path.as_bstr())?;
-        match &self.data {
-            CpioEntryData::Size(s) => {
-                writeln!(f, "Data:    {:?}", NumBytes(*s))?;
-            }
-            CpioEntryData::Data(d) => {
-                if self.file_type == CpioEntryType::Symlink {
-                    writeln!(f, "Data:    {:?}", d.as_bstr())?;
-                } else {
-                    writeln!(f, "Data:    {:?}", NumBytes(d.len()))?;
-                }
-            }
-        }
-        writeln!(f, "Inode:   {}", self.inode)?;
-        writeln!(f, "Type:    {}", self.file_type)?;
-        writeln!(f, "Mode:    {:o}", self.file_mode)?;
-        writeln!(f, "UID:     {}", self.uid)?;
-        writeln!(f, "GID:     {}", self.gid)?;
-        writeln!(f, "Links:   {}", self.nlink)?;
-        writeln!(f, "Modtime: {}", self.mtime)?;
-        writeln!(f, "Idevice: {:x},{:x}", self.dev_maj, self.dev_min)?;
-        writeln!(f, "Rdevice: {:x},{:x}", self.rdev_maj, self.rdev_min)?;
-        write!(f, "CRC32:   {:x}", self.crc32)?;
-
-        Ok(())
     }
 }
 

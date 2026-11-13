@@ -147,16 +147,9 @@ fn create_tree_file(tree: &Path, entry: &CpioEntry) -> Result<Option<BufWriter<F
     }
 }
 
-fn display_format(cli: &CpioCli, format: CompressedFormat) {
+fn display_info(cli: &CpioCli, info: &CpioInfo) {
     if !cli.quiet {
-        println!("Compression format: {format:?}");
-    }
-}
-
-fn display_entry(cli: &CpioCli, entry: &CpioEntry) {
-    if !cli.quiet {
-        println!();
-        println!("{entry}");
+        println!("{info:#?}");
     }
 }
 
@@ -171,15 +164,11 @@ fn unpack_subcommand(
         entries: vec![],
     };
 
-    display_format(cpio_cli, format);
-
     if !cli.no_output_tree {
         fs::create_dir_all(&cli.output_tree)
             .with_context(|| format!("Failed to create directory: {:?}", cli.output_tree))?;
 
         while let Some(entry) = reader.next_entry().context("Failed to read cpio entry")? {
-            display_entry(cpio_cli, &entry);
-
             if let Some(mut writer) = create_tree_file(&cli.output_tree, &entry)? {
                 let file_size = entry.data.size()?;
 
@@ -193,6 +182,7 @@ fn unpack_subcommand(
         }
     }
 
+    display_info(cpio_cli, &info);
     write_info(&cli.output_info, &info)?;
 
     Ok(())
@@ -202,13 +192,13 @@ fn pack_subcommand(cpio_cli: &CpioCli, cli: &PackCli, cancel_signal: &AtomicBool
     let mut info = read_info(&cli.input_info)?;
     let mut writer = open_writer(&cli.output, info.format)?;
 
-    display_format(cpio_cli, info.format);
-
     if cli.sort {
         cpio::sort(&mut info.entries);
     }
 
     cpio::assign_inodes(&mut info.entries, true)?;
+
+    display_info(cpio_cli, &info);
 
     for entry in &mut info.entries {
         let out = open_tree_file(&cli.input_tree, entry)?;
@@ -216,8 +206,6 @@ fn pack_subcommand(cpio_cli: &CpioCli, cli: &PackCli, cancel_signal: &AtomicBool
         if let Some((_, file_size)) = &out {
             entry.data = CpioEntryData::Size(*file_size);
         }
-
-        display_entry(cpio_cli, entry);
 
         writer
             .start_entry(entry)
@@ -241,12 +229,12 @@ fn repack_subcommand(
 ) -> Result<()> {
     let (mut reader, format) = open_reader(&cli.input, false)?;
     let mut writer = open_writer(&cli.output, format)?;
-
-    display_format(cpio_cli, format);
+    let mut info = CpioInfo {
+        format,
+        entries: vec![],
+    };
 
     while let Some(entry) = reader.next_entry().context("Failed to read cpio entry")? {
-        display_entry(cpio_cli, &entry);
-
         writer
             .start_entry(&entry)
             .context("Failed to write cpio entry")?;
@@ -255,21 +243,29 @@ fn repack_subcommand(
             stream::copy_n(&mut reader, &mut writer, u64::from(*s), cancel_signal)
                 .context("Failed to copy cpio entry data")?;
         }
+
+        info.entries.push(entry);
     }
 
     flush_writer(writer)?;
+
+    display_info(cpio_cli, &info);
 
     Ok(())
 }
 
 fn info_subcommand(cpio_cli: &CpioCli, cli: &InfoCli) -> Result<()> {
     let (mut reader, format) = open_reader(&cli.input, cli.trailer)?;
-
-    display_format(cpio_cli, format);
+    let mut info = CpioInfo {
+        format,
+        entries: vec![],
+    };
 
     while let Some(entry) = reader.next_entry().context("Failed to read cpio entry")? {
-        display_entry(cpio_cli, &entry);
+        info.entries.push(entry);
     }
+
+    display_info(cpio_cli, &info);
 
     Ok(())
 }
