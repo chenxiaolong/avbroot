@@ -25,7 +25,7 @@ use crate::{
         padding::{self, ZeroPadding},
     },
     stream::{self, ReadAt, ReadFixedSizeExt, UserPosFile},
-    util::{self, NumBytes, OutOfBoundsError},
+    util::{self, NumBytes, SizeTooLargeError},
 };
 
 #[derive(Debug, Error)]
@@ -47,7 +47,7 @@ pub enum Error {
     #[error("Hashing algorithm not supported: {:?}", .0.as_bstr())]
     UnsupportedHashAlgorithm(Vec<u8>),
     #[error("{0:?} field is out of bounds")]
-    IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
+    IntOutOfBounds(&'static str, #[source] SizeTooLargeError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
     #[error("Failed to get input file size")]
@@ -97,8 +97,8 @@ impl HashTree {
 
             // Depending on the chosen block size, the original file size could
             // overflow a usize without the first level's size doing the same.
-            let level_size_usize: usize =
-                util::try_cast(level_size).map_err(|e| Error::IntOutOfBounds("level_size", e))?;
+            let level_size_usize: usize = util::try_cast_size(level_size)
+                .map_err(|e| Error::IntOutOfBounds("level_size", e))?;
 
             ranges.push(0..level_size_usize);
         }
@@ -120,7 +120,7 @@ impl HashTree {
     fn blocks_for_ranges(&self, image_size: u64, ranges: &[Range<u64>]) -> Result<Vec<Range<u64>>> {
         let ranges = util::merge_overlapping(ranges);
         if let Some(last) = ranges.last() {
-            util::check_bounds(last.end, ..=image_size)
+            util::check_size(last.end, image_size)
                 .map_err(|e| Error::IntOutOfBounds("ranges", e))?;
         }
 
@@ -531,11 +531,11 @@ impl HashTreeImage {
             .to_padded_array::<16>()
             .ok_or_else(|| Error::UnsupportedHashAlgorithm(self.algorithm.as_bytes().to_vec()))?;
 
-        let salt_size: u16 =
-            util::try_cast(self.salt.len()).map_err(|e| Error::IntOutOfBounds("salt_size", e))?;
-        let root_digest_size: u16 = util::try_cast(self.root_digest.len())
+        let salt_size: u16 = util::try_cast_size(self.salt.len())
+            .map_err(|e| Error::IntOutOfBounds("salt_size", e))?;
+        let root_digest_size: u16 = util::try_cast_size(self.root_digest.len())
             .map_err(|e| Error::IntOutOfBounds("root_digest_size", e))?;
-        let hash_tree_size: u32 = util::try_cast(self.hash_tree.len())
+        let hash_tree_size: u32 = util::try_cast_size(self.hash_tree.len())
             .map_err(|e| Error::IntOutOfBounds("hash_tree_size", e))?;
 
         let header = RawHeader {

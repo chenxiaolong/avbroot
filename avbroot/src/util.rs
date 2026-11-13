@@ -1,17 +1,15 @@
-// SPDX-FileCopyrightText: 2023-2025 Andrew Gunnerson
+// SPDX-FileCopyrightText: 2023-2026 Andrew Gunnerson
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::{
     cmp::Ordering,
     fmt::{self, Display},
     mem,
-    ops::{
-        Bound, Range, RangeBounds, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
-    },
+    ops::Range,
     path::{Component, Path, PathBuf},
 };
 
-use num_traits::{NumCast, PrimInt};
+use num_traits::{NumCast, PrimInt, Unsigned};
 use thiserror::Error;
 
 pub const ZEROS: [u8; 16384] = [0u8; 16384];
@@ -46,162 +44,20 @@ impl fmt::Debug for DebugString {
     }
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
-pub enum AnyRange<T> {
-    Range(Range<T>),
-    RangeFrom(RangeFrom<T>),
-    RangeFull(RangeFull),
-    RangeInclusive(RangeInclusive<T>),
-    RangeTo(RangeTo<T>),
-    RangeToInclusive(RangeToInclusive<T>),
-}
-
-impl<T> AnyRange<T> {
-    pub fn with_bounds(start: Bound<T>, end: Bound<T>) -> Option<Self> {
-        let result = match (start, end) {
-            (Bound::Included(s), Bound::Excluded(e)) => Self::Range(s..e),
-            (Bound::Included(s), Bound::Unbounded) => Self::RangeFrom(s..),
-            (Bound::Unbounded, Bound::Unbounded) => Self::RangeFull(..),
-            (Bound::Included(s), Bound::Included(e)) => Self::RangeInclusive(s..=e),
-            (Bound::Unbounded, Bound::Excluded(e)) => Self::RangeTo(..e),
-            (Bound::Unbounded, Bound::Included(e)) => Self::RangeToInclusive(..=e),
-            (Bound::Excluded(_), _) => return None,
-        };
-
-        Some(result)
-    }
-}
-
-impl<T: PartialOrd<T>> AnyRange<T> {
-    pub fn contains<U>(&self, item: &U) -> bool
-    where
-        T: PartialOrd<U>,
-        U: ?Sized + PartialOrd<T>,
-    {
-        <Self as RangeBounds<T>>::contains(self, item)
-    }
-}
-
-impl<T: fmt::Debug> fmt::Debug for AnyRange<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Range(r) => r.fmt(f),
-            Self::RangeFrom(r) => r.fmt(f),
-            Self::RangeFull(r) => r.fmt(f),
-            Self::RangeInclusive(r) => r.fmt(f),
-            Self::RangeTo(r) => r.fmt(f),
-            Self::RangeToInclusive(r) => r.fmt(f),
-        }
-    }
-}
-
-impl<T> RangeBounds<T> for AnyRange<T> {
-    fn start_bound(&self) -> Bound<&T> {
-        match self {
-            Self::Range(r) => r.start_bound(),
-            Self::RangeFrom(r) => r.start_bound(),
-            Self::RangeFull(r) => r.start_bound(),
-            Self::RangeInclusive(r) => r.start_bound(),
-            Self::RangeTo(r) => r.start_bound(),
-            Self::RangeToInclusive(r) => r.start_bound(),
-        }
-    }
-
-    fn end_bound(&self) -> Bound<&T> {
-        match self {
-            Self::Range(r) => r.end_bound(),
-            Self::RangeFrom(r) => r.end_bound(),
-            Self::RangeFull(r) => r.end_bound(),
-            Self::RangeInclusive(r) => r.end_bound(),
-            Self::RangeTo(r) => r.end_bound(),
-            Self::RangeToInclusive(r) => r.end_bound(),
-        }
-    }
-}
-
-impl<T> From<Range<T>> for AnyRange<T> {
-    fn from(value: Range<T>) -> Self {
-        Self::Range(value)
-    }
-}
-
-impl<T> From<RangeFrom<T>> for AnyRange<T> {
-    fn from(value: RangeFrom<T>) -> Self {
-        Self::RangeFrom(value)
-    }
-}
-
-impl<T> From<RangeFull> for AnyRange<T> {
-    fn from(value: RangeFull) -> Self {
-        Self::RangeFull(value)
-    }
-}
-
-impl<T> From<RangeInclusive<T>> for AnyRange<T> {
-    fn from(value: RangeInclusive<T>) -> Self {
-        Self::RangeInclusive(value)
-    }
-}
-
-impl<T> From<RangeTo<T>> for AnyRange<T> {
-    fn from(value: RangeTo<T>) -> Self {
-        Self::RangeTo(value)
-    }
-}
-
-impl<T> From<RangeToInclusive<T>> for AnyRange<T> {
-    fn from(value: RangeToInclusive<T>) -> Self {
-        Self::RangeToInclusive(value)
-    }
-}
-
-/// A non-generic type that can represent any 64-bit or smaller primitive
-/// integer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LargeInt {
-    Signed(i64),
-    Unsigned(u64),
-}
-
-impl fmt::Display for LargeInt {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Signed(n) => n.fmt(f),
-            Self::Unsigned(n) => n.fmt(f),
-        }
-    }
-}
-
-/// A non-generic type that can represent any 64-bit or smaller primitive
-/// integer range.
-#[derive(Clone, PartialEq, Eq)]
-pub enum LargeIntRange {
-    Signed(AnyRange<i64>),
-    Unsigned(AnyRange<u64>),
-}
-
-impl fmt::Debug for LargeIntRange {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Signed(r) => r.fmt(f),
-            Self::Unsigned(r) => r.fmt(f),
-        }
-    }
-}
-
-/// An error returned when a value is not within a specific range.
+/// An error returned when a value exceeds a maximum allowed value.
 #[derive(Clone, Debug, Error)]
-#[error("Integer value {value} not in bounds: {range:?}")]
-pub struct OutOfBoundsError {
-    value: LargeInt,
-    range: LargeIntRange,
+#[error("{value} exceeds maximum size {max_inclusive}")]
+pub struct SizeTooLargeError {
+    pub value: u64,
+    pub max_inclusive: u64,
 }
 
-/// Verify that `value` is within `bounds` and then return `value` if it is.
-pub fn check_bounds<T: PrimInt>(
-    value: T,
-    range: impl Into<AnyRange<T>>,
-) -> Result<T, OutOfBoundsError> {
+/// Verify that unsigned size `value` does not exceed `max_inclusive` and then
+/// return `value`.
+pub fn check_size<T>(value: T, max_inclusive: T) -> Result<T, SizeTooLargeError>
+where
+    T: PrimInt + Unsigned,
+{
     const {
         assert!(
             mem::size_of::<T>() <= 8,
@@ -209,54 +65,23 @@ pub fn check_bounds<T: PrimInt>(
         );
     }
 
-    let range = range.into();
-
-    if !range.contains(&value) {
-        let value = if T::min_value() != T::zero() {
-            LargeInt::Signed(NumCast::from(value).unwrap())
-        } else {
-            LargeInt::Unsigned(NumCast::from(value).unwrap())
-        };
-
-        let range = if T::min_value() != T::zero() {
-            let start = match range.start_bound() {
-                Bound::Excluded(n) => Bound::Excluded(NumCast::from(*n).unwrap()),
-                Bound::Included(n) => Bound::Included(NumCast::from(*n).unwrap()),
-                Bound::Unbounded => Bound::Unbounded,
-            };
-
-            let end = match range.end_bound() {
-                Bound::Excluded(n) => Bound::Excluded(NumCast::from(*n).unwrap()),
-                Bound::Included(n) => Bound::Included(NumCast::from(*n).unwrap()),
-                Bound::Unbounded => Bound::Unbounded,
-            };
-
-            LargeIntRange::Signed(AnyRange::with_bounds(start, end).unwrap())
-        } else {
-            let start = match range.start_bound() {
-                Bound::Excluded(n) => Bound::Excluded(NumCast::from(*n).unwrap()),
-                Bound::Included(n) => Bound::Included(NumCast::from(*n).unwrap()),
-                Bound::Unbounded => Bound::Unbounded,
-            };
-
-            let end = match range.end_bound() {
-                Bound::Excluded(n) => Bound::Excluded(NumCast::from(*n).unwrap()),
-                Bound::Included(n) => Bound::Included(NumCast::from(*n).unwrap()),
-                Bound::Unbounded => Bound::Unbounded,
-            };
-
-            LargeIntRange::Unsigned(AnyRange::with_bounds(start, end).unwrap())
-        };
-
-        return Err(OutOfBoundsError { value, range });
+    if value > max_inclusive {
+        return Err(SizeTooLargeError {
+            value: NumCast::from(value).unwrap(),
+            max_inclusive: NumCast::from(max_inclusive).unwrap(),
+        });
     }
 
     Ok(value)
 }
 
-/// Try to cast `value` to primitive integer type `T`. If it does not fit, the
-/// error will indicate the valid range of values.
-pub fn try_cast<T: PrimInt, V: PrimInt>(value: V) -> Result<T, OutOfBoundsError> {
+/// Try to cast unsigned size `value` to unsigned type `T`. If it does not fit,
+/// the error will indicate the maximum value.
+pub fn try_cast_size<T, V>(value: V) -> Result<T, SizeTooLargeError>
+where
+    T: PrimInt + Unsigned,
+    V: PrimInt + Unsigned,
+{
     const {
         assert!(
             mem::size_of::<T>() <= 8,
@@ -264,26 +89,9 @@ pub fn try_cast<T: PrimInt, V: PrimInt>(value: V) -> Result<T, OutOfBoundsError>
         );
     }
 
-    NumCast::from(value).ok_or_else(|| {
-        let value = if V::min_value() != V::zero() {
-            LargeInt::Signed(NumCast::from(value).unwrap())
-        } else {
-            LargeInt::Unsigned(NumCast::from(value).unwrap())
-        };
-
-        let range = if T::min_value() != T::zero() {
-            let min = NumCast::from(T::min_value()).unwrap();
-            let max = NumCast::from(T::max_value()).unwrap();
-
-            LargeIntRange::Signed((min..=max).into())
-        } else {
-            let min = NumCast::from(T::min_value()).unwrap();
-            let max = NumCast::from(T::max_value()).unwrap();
-
-            LargeIntRange::Unsigned((min..=max).into())
-        };
-
-        OutOfBoundsError { value, range }
+    NumCast::from(value).ok_or_else(|| SizeTooLargeError {
+        value: NumCast::from(value).unwrap(),
+        max_inclusive: NumCast::from(T::max_value()).unwrap(),
     })
 }
 
@@ -469,51 +277,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_any_range() {
-        let range = AnyRange::with_bounds(Bound::Included(0), Bound::Excluded(1)).unwrap();
-        assert_eq!(range, AnyRange::from(0..1));
+    fn test_check_size() {
+        check_size(u64::MIN, u64::MIN).unwrap();
+        check_size(u64::MAX, u64::MAX).unwrap();
+        check_size(1u8, 2).unwrap();
 
-        let range = AnyRange::with_bounds(Bound::Included(0), Bound::Unbounded).unwrap();
-        assert_eq!(range, AnyRange::from(0..));
-
-        let range = AnyRange::<i32>::with_bounds(Bound::Unbounded, Bound::Unbounded).unwrap();
-        assert_eq!(range, AnyRange::from(..));
-
-        let range = AnyRange::with_bounds(Bound::Included(0), Bound::Included(1)).unwrap();
-        assert_eq!(range, AnyRange::from(0..=1));
-
-        let range = AnyRange::with_bounds(Bound::Unbounded, Bound::Excluded(1)).unwrap();
-        assert_eq!(range, AnyRange::from(..1));
-
-        let range = AnyRange::with_bounds(Bound::Unbounded, Bound::Included(1)).unwrap();
-        assert_eq!(range, AnyRange::from(..=1));
+        let err = check_size(u8::MAX, 0).unwrap_err();
+        assert_eq!(err.value, 255);
+        assert_eq!(err.max_inclusive, 0);
     }
 
     #[test]
-    fn test_check_bounds() {
-        check_bounds(i64::MIN, ..).unwrap();
-        check_bounds(i64::MAX, ..).unwrap();
-        check_bounds(u64::MIN, ..).unwrap();
-        check_bounds(u64::MAX, ..).unwrap();
-        check_bounds(0, -1..=1).unwrap();
-
-        let err = check_bounds(i8::MAX, 0..=0).unwrap_err();
-        assert_eq!(err.value, LargeInt::Signed(127));
-        assert_eq!(err.range, LargeIntRange::Signed(AnyRange::from(0..=0)));
-
-        let err = check_bounds(u8::MAX, 0..=0).unwrap_err();
-        assert_eq!(err.value, LargeInt::Unsigned(255));
-        assert_eq!(err.range, LargeIntRange::Unsigned(AnyRange::from(0..=0)));
-    }
-
-    #[test]
-    fn test_try_cast() {
-        let value: u8 = try_cast(255u16).unwrap();
+    fn test_try_cast_size() {
+        let value: u8 = try_cast_size(255u16).unwrap();
         assert_eq!(value, 255);
 
-        let err = try_cast::<i8, _>(256u16).unwrap_err();
-        assert_eq!(err.value, LargeInt::Unsigned(256));
-        assert_eq!(err.range, LargeIntRange::Signed(AnyRange::from(-128..=127)));
+        let err = try_cast_size::<u8, _>(256u16).unwrap_err();
+        assert_eq!(err.value, 256);
+        assert_eq!(err.max_inclusive, 255);
     }
 
     #[test]

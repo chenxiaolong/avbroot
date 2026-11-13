@@ -24,7 +24,7 @@ use crate::{
     stream::{
         self, ReadAt, ReadSeek, ReadWriteAt, ReadWriteSeek, UserPosFile, WriteSeek, WriteZerosExt,
     },
-    util::{self, NumBytes, OutOfBoundsError},
+    util::{self, NumBytes, SizeTooLargeError},
 };
 
 // Not to be confused with the 255-byte RS block size.
@@ -67,7 +67,7 @@ pub enum Error {
     #[error("Expected FEC digest {expected}, but have {actual}")]
     InvalidFecDigest { expected: String, actual: String },
     #[error("{0:?} field is out of bounds")]
-    IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
+    IntOutOfBounds(&'static str, #[source] SizeTooLargeError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
     #[error("Failed to get input file size")]
@@ -166,7 +166,7 @@ impl Fec {
             });
         }
 
-        util::check_bounds(block_size, ..=FEC_MAX_BLOCK_SIZE)
+        util::check_size(block_size, FEC_MAX_BLOCK_SIZE)
             .map_err(|e| Error::IntOutOfBounds("block_size", e))?;
 
         let rs_k = 255 - parity;
@@ -220,7 +220,7 @@ impl Fec {
     fn rounds_for_ranges(&self, ranges: &[Range<u64>]) -> Result<HashSet<u64>> {
         let ranges = util::merge_overlapping(ranges);
         if let Some(last) = ranges.last() {
-            util::check_bounds(last.end, ..=self.file_size)
+            util::check_size(last.end, self.file_size)
                 .map_err(|e| Error::IntOutOfBounds("ranges", e))?;
         }
 
@@ -657,8 +657,8 @@ impl FecImage {
             return Err(Error::UnsupportedHeaderVersion(header.version.get()));
         }
 
-        let parity: u8 =
-            util::try_cast(header.parity.get()).map_err(|e| Error::IntOutOfBounds("parity", e))?;
+        let parity: u8 = util::try_cast_size(header.parity.get())
+            .map_err(|e| Error::IntOutOfBounds("parity", e))?;
 
         let fec_size = header.fec_size.get() as usize;
         let actual_fec_size = fec.len() - FEC_BLOCK_SIZE;
@@ -767,8 +767,8 @@ impl FecImage {
     /// Build one instance of the FEC header. The caller is responsible for
     /// writing it to both of the header locations at the end of the file.
     fn build_header(&self) -> Result<RawHeader> {
-        let fec_size: u32 =
-            util::try_cast(self.fec.len()).map_err(|e| Error::IntOutOfBounds("fec_size", e))?;
+        let fec_size: u32 = util::try_cast_size(self.fec.len())
+            .map_err(|e| Error::IntOutOfBounds("fec_size", e))?;
 
         let digest = ring::digest::digest(&ring::digest::SHA256, &self.fec);
 

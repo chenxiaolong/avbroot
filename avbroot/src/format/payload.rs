@@ -39,7 +39,7 @@ use crate::{
         self, CountingReader, HashingReader, HashingWriter, ReadAt, ReadDiscardExt,
         ReadFixedSizeExt, ReadSeek, UserPosFile, WriteAt, WriteSeek,
     },
-    util::{self, OutOfBoundsError},
+    util::{self, SizeTooLargeError},
 };
 
 const PAYLOAD_MAGIC: &[u8; 4] = b"CrAU";
@@ -102,7 +102,7 @@ pub enum Error {
     #[error("{0:?} field is missing")]
     MissingField(&'static str),
     #[error("{0:?} field is out of bounds")]
-    IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
+    IntOutOfBounds(&'static str, #[source] SizeTooLargeError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
     #[error("Failed to decode payload manifest protobuf message")]
@@ -185,8 +185,8 @@ impl PayloadHeader {
             return Err(Error::UnsupportedVersion(header.file_format_version.get()));
         }
 
-        let manifest_size: usize = util::try_cast(header.manifest_size.get())
-            .and_then(|s| util::check_bounds(s, ..=MANIFEST_MAX_SIZE))
+        let manifest_size: usize = util::try_cast_size(header.manifest_size.get())
+            .and_then(|s| util::check_size(s, MANIFEST_MAX_SIZE))
             .map_err(|e| Error::IntOutOfBounds("manifest_size", e))?;
 
         let manifest_raw = reader
@@ -1634,7 +1634,7 @@ pub fn compress_modified_image(
                 let extents_end = extents_start
                     .checked_add(extents_size)
                     .ok_or(Error::IntOverflow("extents_end"))?;
-                let extents_size: usize = util::try_cast(extents_size)
+                let extents_size: usize = util::try_cast_size(extents_size)
                     .map_err(|e| Error::IntOutOfBounds("extents_size", e))?;
 
                 let mut reader = UserPosFile::new(input);

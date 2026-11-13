@@ -23,7 +23,7 @@ use crate::{
         padding::{self, ZeroPadding},
     },
     stream::{CountingReader, CountingWriter, HashingWriter, ReadFixedSizeExt},
-    util::{self, NumBytes, OutOfBoundsError},
+    util::{self, NumBytes, SizeTooLargeError},
 };
 
 pub const BOOT_MAGIC: [u8; 8] = *b"ANDROID!";
@@ -68,7 +68,7 @@ pub enum Error {
     #[error("{0:?} field is too long (>{1}): {2:?}")]
     StringTooLong(&'static str, usize, String),
     #[error("{0:?} field is out of bounds")]
-    IntOutOfBounds(&'static str, #[source] OutOfBoundsError),
+    IntOutOfBounds(&'static str, #[source] SizeTooLargeError),
     #[error("{0:?} overflowed integer bounds during calculations")]
     IntOverflow(&'static str),
     #[error("Page size must not be zero")]
@@ -305,11 +305,11 @@ impl BootImageV0Through2 {
             return Err(Error::UnknownHeaderVersion(header_version));
         }
 
-        let kernel_size = util::check_bounds(raw_v0.kernel_size.get(), ..=COMPONENT_MAX_SIZE)
+        let kernel_size = util::check_size(raw_v0.kernel_size.get(), COMPONENT_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Boot::V0::kernel_size", e))?;
-        let ramdisk_size = util::check_bounds(raw_v0.ramdisk_size.get(), ..=COMPONENT_MAX_SIZE)
+        let ramdisk_size = util::check_size(raw_v0.ramdisk_size.get(), COMPONENT_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Boot::V0::ramdisk_size", e))?;
-        let second_size = util::check_bounds(raw_v0.second_size.get(), ..=COMPONENT_MAX_SIZE)
+        let second_size = util::check_size(raw_v0.second_size.get(), COMPONENT_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Boot::V0::second_size", e))?;
 
         let page_size = raw_v0.page_size.get();
@@ -342,7 +342,7 @@ impl BootImageV0Through2 {
                 .map_err(|e| Error::DataRead("Boot::V1::header", e))?;
 
             let recovery_dtbo_size =
-                util::check_bounds(raw_v1.recovery_dtbo_size.get(), ..=COMPONENT_MAX_SIZE)
+                util::check_size(raw_v1.recovery_dtbo_size.get(), COMPONENT_MAX_SIZE)
                     .map_err(|e| Error::IntOutOfBounds("Boot::V1::recovery_dtbo_size", e))?;
 
             let v1_extra = V1Extra {
@@ -368,7 +368,7 @@ impl BootImageV0Through2 {
             let raw_v2 = RawV2Extra::read_from_io(&mut reader)
                 .map_err(|e| Error::DataRead("Boot::V2::header", e))?;
 
-            let dtb_size = util::check_bounds(raw_v2.dtb_size.get(), ..=COMPONENT_MAX_SIZE)
+            let dtb_size = util::check_size(raw_v2.dtb_size.get(), COMPONENT_MAX_SIZE)
                 .map_err(|e| Error::IntOutOfBounds("Boot::V2::dtb_size", e))?;
 
             let v2_extra = V2Extra {
@@ -480,11 +480,11 @@ impl BootImageV0Through2 {
     }
 
     pub fn to_writer(&self, writer: impl Write) -> Result<()> {
-        util::check_bounds(self.kernel.len(), ..=COMPONENT_MAX_SIZE as usize)
+        util::check_size(self.kernel.len(), COMPONENT_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Boot::V0::kernel_size", e))?;
-        util::check_bounds(self.ramdisk.len(), ..=COMPONENT_MAX_SIZE as usize)
+        util::check_size(self.ramdisk.len(), COMPONENT_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Boot::V0::ramdisk_size", e))?;
-        util::check_bounds(self.second.len(), ..=COMPONENT_MAX_SIZE as usize)
+        util::check_size(self.second.len(), COMPONENT_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Boot::V0::second_size", e))?;
 
         if self.page_size == 0 {
@@ -492,11 +492,11 @@ impl BootImageV0Through2 {
         }
 
         if let Some(v1) = &self.v1_extra {
-            util::check_bounds(v1.recovery_dtbo.len(), ..=COMPONENT_MAX_SIZE as usize)
+            util::check_size(v1.recovery_dtbo.len(), COMPONENT_MAX_SIZE as usize)
                 .map_err(|e| Error::IntOutOfBounds("Boot::V1::recovery_dtbo_size", e))?;
         }
         if let Some(v2) = &self.v2_extra {
-            util::check_bounds(v2.dtb.len(), ..=COMPONENT_MAX_SIZE as usize)
+            util::check_size(v2.dtb.len(), COMPONENT_MAX_SIZE as usize)
                 .map_err(|e| Error::IntOutOfBounds("Boot::V2::dtb_size", e))?;
         }
 
@@ -746,9 +746,9 @@ impl BootImageV3Through4 {
             return Err(Error::UnknownHeaderVersion(header_version));
         }
 
-        let kernel_size = util::check_bounds(raw_v3.kernel_size.get(), ..=COMPONENT_MAX_SIZE)
+        let kernel_size = util::check_size(raw_v3.kernel_size.get(), COMPONENT_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Boot::V3::kernel_size", e))?;
-        let ramdisk_size = util::check_bounds(raw_v3.ramdisk_size.get(), ..=COMPONENT_MAX_SIZE)
+        let ramdisk_size = util::check_size(raw_v3.ramdisk_size.get(), COMPONENT_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Boot::V3::ramdisk_size", e))?;
         let header_size = raw_v3.header_size.get();
 
@@ -760,9 +760,8 @@ impl BootImageV3Through4 {
             let raw_v4 = RawV4Extra::read_from_io(&mut reader)
                 .map_err(|e| Error::DataRead("Boot::V4::header", e))?;
 
-            let size =
-                util::check_bounds(raw_v4.signature_size.get(), ..=HDR_V4_SIGNATURE_SIZE as u32)
-                    .map_err(|e| Error::IntOutOfBounds("Boot::V4::signature_size", e))?;
+            let size = util::check_size(raw_v4.signature_size.get(), HDR_V4_SIGNATURE_SIZE as u32)
+                .map_err(|e| Error::IntOutOfBounds("Boot::V4::signature_size", e))?;
 
             Some(size)
         } else {
@@ -830,9 +829,9 @@ impl BootImageV3Through4 {
     }
 
     fn to_writer_internal(&self, writer: impl Write, skip_v4_sig: bool) -> Result<()> {
-        util::check_bounds(self.kernel.len(), ..=COMPONENT_MAX_SIZE as usize)
+        util::check_size(self.kernel.len(), COMPONENT_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Boot::V3::kernel_size", e))?;
-        util::check_bounds(self.ramdisk.len(), ..=COMPONENT_MAX_SIZE as usize)
+        util::check_size(self.ramdisk.len(), COMPONENT_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Boot::V3::ramdisk_size", e))?;
 
         let cmdline = self
@@ -875,7 +874,7 @@ impl BootImageV3Through4 {
                     .map_err(|e| Error::DataWrite("Boot::V4::signature_size", e))?;
 
                 // The VTS signature is always a fixed size.
-                util::check_bounds(size, ..=HDR_V4_SIGNATURE_SIZE)
+                util::check_size(size, HDR_V4_SIGNATURE_SIZE)
                     .map_err(|e| Error::IntOutOfBounds("Boot::V4::signature_size", e))?;
 
                 padding::write_zeros(&mut sig_writer, HDR_V4_SIGNATURE_SIZE)
@@ -1147,7 +1146,7 @@ impl VendorBootImageV3Through4 {
         }
 
         let vendor_ramdisk_size =
-            util::check_bounds(raw_v3.vendor_ramdisk_size.get(), ..=COMPONENT_MAX_SIZE)
+            util::check_size(raw_v3.vendor_ramdisk_size.get(), COMPONENT_MAX_SIZE)
                 .map_err(|e| Error::IntOutOfBounds("Vendor::V3::vendor_ramdisk_size", e))?;
 
         let cmdline = raw_v3.cmdline.trim_end_padding();
@@ -1160,7 +1159,7 @@ impl VendorBootImageV3Through4 {
 
         let header_size = raw_v3.header_size.get();
 
-        let dtb_size = util::check_bounds(raw_v3.dtb_size.get(), ..=COMPONENT_MAX_SIZE)
+        let dtb_size = util::check_size(raw_v3.dtb_size.get(), COMPONENT_MAX_SIZE)
             .map_err(|e| Error::IntOutOfBounds("Vendor::V3::dtb_size", e))?;
 
         struct V4Data {
@@ -1178,7 +1177,7 @@ impl VendorBootImageV3Through4 {
             let table_entry_size = raw_v4.vendor_ramdisk_table_entry_size.get();
 
             let bootconfig_size =
-                util::check_bounds(raw_v4.bootconfig_size.get(), ..=BOOTCONFIG_MAX_SIZE)
+                util::check_size(raw_v4.bootconfig_size.get(), BOOTCONFIG_MAX_SIZE)
                     .map_err(|e| Error::IntOutOfBounds("Vendor::V4::bootconfig_size", e))?;
 
             if table_entry_size != mem::size_of::<RawVendorV4RamdiskTableEntry>() as u32 {
@@ -1249,7 +1248,7 @@ impl VendorBootImageV3Through4 {
                     .map_err(|e| Error::DataRead("Vendor::V4::table_entry", e))?;
 
                 let ramdisk_size =
-                    util::check_bounds(raw_entry.ramdisk_size.get(), ..=vendor_ramdisk_size)
+                    util::check_size(raw_entry.ramdisk_size.get(), vendor_ramdisk_size)
                         .map_err(|e| Error::IntOutOfBounds("Vendor::V4::ramdisk_size", e))?;
 
                 let ramdisk_offset = raw_entry.ramdisk_offset.get();
@@ -1337,9 +1336,9 @@ impl VendorBootImageV3Through4 {
         }
 
         let vendor_ramdisk_size = self.ramdisks.iter().map(|r| r.len()).sum::<usize>();
-        util::check_bounds(vendor_ramdisk_size, ..=COMPONENT_MAX_SIZE as usize)
+        util::check_size(vendor_ramdisk_size, COMPONENT_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Vendor::V3::vendor_ramdisk_size", e))?;
-        util::check_bounds(self.dtb.len(), ..=COMPONENT_MAX_SIZE as usize)
+        util::check_size(self.dtb.len(), COMPONENT_MAX_SIZE as usize)
             .map_err(|e| Error::IntOutOfBounds("Vendor::V3::dtb_size", e))?;
 
         if self.page_size == 0 {
@@ -1366,7 +1365,7 @@ impl VendorBootImageV3Through4 {
             })?;
 
         if let Some(v4) = &self.v4_extra {
-            util::check_bounds(v4.bootconfig.len(), ..=BOOTCONFIG_MAX_SIZE as usize)
+            util::check_size(v4.bootconfig.len(), BOOTCONFIG_MAX_SIZE as usize)
                 .map_err(|e| Error::IntOutOfBounds("Vendor::V4::bootconfig_size", e))?;
         }
 
