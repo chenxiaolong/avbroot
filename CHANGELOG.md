@@ -10,6 +10,7 @@
 ### Unreleased
 
 * Drop unneeded explicit dependency on scrypt crate ([PR #674])
+* Code cleanup ([PR #675])
 
 ### Version 3.39.1
 
@@ -874,3 +875,4 @@ Behind-the-scenes changes:
 [PR #670]: https://github.com/chenxiaolong/avbroot/pull/670
 [PR #673]: https://github.com/chenxiaolong/avbroot/pull/673
 [PR #674]: https://github.com/chenxiaolong/avbroot/pull/674
+[PR #675]: https://github.com/chenxiaolong/avbroot/pull/675
