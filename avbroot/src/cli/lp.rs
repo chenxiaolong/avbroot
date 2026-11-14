@@ -3,7 +3,7 @@
 
 use std::{
     fs::{self, File},
-    io::{Seek, SeekFrom},
+    io::{BufReader, BufWriter, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
 };
@@ -30,21 +30,44 @@ fn open_lp_inputs(paths: &[impl AsRef<Path>]) -> Result<(Vec<File>, Metadata)> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let metadata = Metadata::from_reader(&inputs[0])
+    // We don't use BufReader during actual unpacking due to parallel reads.
+    let metadata = Metadata::from_reader(BufReader::new(&inputs[0]))
         .with_context(|| format!("Failed to parse LP image metadata: {:?}", paths[0].as_ref()))?;
 
     Ok((inputs, metadata))
 }
 
-fn open_lp_outputs(paths: &[impl AsRef<Path>]) -> Result<Vec<File>> {
-    paths
+fn open_lp_outputs(paths: &[impl AsRef<Path>], metadata: &Metadata) -> Result<Vec<File>> {
+    let outputs = paths
         .iter()
         .map(|p| {
             let p = p.as_ref();
 
             File::create(p).with_context(|| format!("Failed to open LP image for writing: {p:?}"))
         })
-        .collect::<Result<Vec<_>>>()
+        .collect::<Result<Vec<_>>>()?;
+
+    {
+        let mut writer = BufWriter::new(&outputs[0]);
+        metadata.to_writer(&mut writer).with_context(|| {
+            format!("Failed to write LP image metadata: {:?}", paths[0].as_ref())
+        })?;
+        writer.flush().with_context(|| {
+            format!("Failed to flush LP image metadata: {:?}", paths[0].as_ref())
+        })?;
+    }
+
+    let slot = &metadata.slots[0];
+
+    if metadata.image_type == ImageType::Normal {
+        for (i, (block_device, output)) in slot.block_devices.iter().zip(&outputs).enumerate() {
+            output
+                .set_len(block_device.size)
+                .with_context(|| format!("Failed to truncate file: {:?}", paths[i].as_ref()))?;
+        }
+    }
+
+    Ok(outputs)
 }
 
 fn read_info(path: &Path) -> Result<Metadata> {
@@ -161,16 +184,7 @@ fn fill_slots(metadata: &mut Metadata) {
 }
 
 fn unpack_subcommand(lp_cli: &LpCli, cli: &UnpackCli, cancel_signal: &AtomicBool) -> Result<()> {
-    let inputs = cli
-        .input
-        .iter()
-        .map(|p| {
-            File::open(p).with_context(|| format!("Failed to open LP image for reading: {p:?}"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    let mut metadata = Metadata::from_reader(&inputs[0])
-        .with_context(|| format!("Failed to read LP image metadata: {:?}", cli.input[0]))?;
+    let (inputs, mut metadata) = open_lp_inputs(&cli.input)?;
 
     // Display and write only the selected slot.
     let slot_number = get_slot_number(&metadata, cli.slot)?;
@@ -271,22 +285,12 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
 
     let slot = &mut metadata.slots[0];
 
-    let mut outputs = open_lp_outputs(&cli.output)?;
-
-    if slot.block_devices.len() != outputs.len() {
+    if slot.block_devices.len() != cli.output.len() {
         bail!(
             "Need {} output images, but have {}",
             slot.block_devices.len(),
-            outputs.len(),
+            cli.output.len(),
         );
-    }
-
-    if metadata.image_type == ImageType::Normal {
-        for (i, (block_device, output)) in slot.block_devices.iter().zip(&outputs).enumerate() {
-            output
-                .set_len(block_device.size)
-                .with_context(|| format!("Failed to truncate file: {:?}", cli.output[i]))?;
-        }
     }
 
     // Preopen all image input files.
@@ -343,10 +347,7 @@ fn pack_subcommand(lp_cli: &LpCli, cli: &PackCli, cancel_signal: &AtomicBool) ->
     fill_slots(&mut metadata);
     let slot = &metadata.slots[0];
 
-    // Write the new metadata.
-    metadata
-        .to_writer(&mut outputs[0])
-        .with_context(|| format!("Failed to write LP image metadata: {:?}", cli.output[0]))?;
+    let outputs = open_lp_outputs(&cli.output, &metadata)?;
 
     // For empty images, there's no data to pack.
     if metadata.image_type == ImageType::Empty {
@@ -401,7 +402,6 @@ fn repack_subcommand(lp_cli: &LpCli, cli: &RepackCli, cancel_signal: &AtomicBool
     }
 
     let (inputs, mut metadata) = open_lp_inputs(&cli.input)?;
-    let mut outputs = open_lp_outputs(&cli.output)?;
 
     // Display only the selected slot and make the rest identical.
     let slot_number = get_slot_number(&metadata, cli.slot)?;
@@ -419,20 +419,7 @@ fn repack_subcommand(lp_cli: &LpCli, cli: &RepackCli, cancel_signal: &AtomicBool
         );
     }
 
-    // Write the new metadata.
-    metadata
-        .to_writer(&mut outputs[0])
-        .with_context(|| format!("Failed to write LP image metadata: {:?}", cli.output[0]))?;
-
-    // Explicitly set the file size in case there are dm-zero extents, which are
-    // ignored below.
-    if metadata.image_type == ImageType::Normal {
-        for (i, (block_device, output)) in slot.block_devices.iter().zip(&outputs).enumerate() {
-            output
-                .set_len(block_device.size)
-                .with_context(|| format!("Failed to truncate file: {:?}", cli.output[i]))?;
-        }
-    }
+    let outputs = open_lp_outputs(&cli.output, &metadata)?;
 
     slot.groups
         .par_iter()
