@@ -11,6 +11,7 @@
 
 * Drop unneeded explicit dependency on scrypt crate ([PR #674])
 * Use debug output format for `avbroot cpio` subcommands for consistency ([PR #679])
+* Show possible `--log-level` values in `--help` ([PR #682])
 * Bump minimum Rust version to 1.90.0 and remove workaround for an [old upstream segfault bug](https://github.com/rust-lang/rust/issues/145752) ([PR #676])
 * Code cleanup ([PR #675], [PR #677], [PR #678], [PR #680], [PR #681])
 
@@ -884,3 +885,4 @@ Behind-the-scenes changes:
 [PR #679]: https://github.com/chenxiaolong/avbroot/pull/679
 [PR #680]: https://github.com/chenxiaolong/avbroot/pull/680
 [PR #681]: https://github.com/chenxiaolong/avbroot/pull/681
+[PR #682]: https://github.com/chenxiaolong/avbroot/pull/682
