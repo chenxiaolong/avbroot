@@ -4,7 +4,7 @@
 use std::{
     fmt,
     fs::{File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     ops::Range,
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
@@ -56,16 +56,19 @@ impl fmt::Debug for Metadata {
     }
 }
 
-fn open_reader(path: &Path) -> Result<File> {
-    File::open(path).with_context(|| format!("Failed to open for reading: {path:?}"))
+fn open_reader(path: &Path) -> Result<BufReader<File>> {
+    File::open(path)
+        .map(BufReader::new)
+        .with_context(|| format!("Failed to open for reading: {path:?}"))
 }
 
-fn open_writer(path: &Path, truncate: bool) -> Result<File> {
+fn open_writer(path: &Path, truncate: bool) -> Result<BufWriter<File>> {
     OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(truncate)
         .open(path)
+        .map(BufWriter::new)
         .with_context(|| format!("Failed to open for writing: {path:?}"))
 }
 
@@ -190,7 +193,7 @@ fn get_chunks_for_regions(
 /// Compute the sparse [`Chunk`]s needed to cover the specified regions.
 fn compute_chunks(
     path: &Path,
-    reader: &mut File,
+    reader: &mut BufReader<File>,
     block_size: u32,
     file_blocks: u32,
     block_regions: &[ChunkBounds],
@@ -278,6 +281,7 @@ fn unpack_subcommand(
 
         if file_size < expected_size {
             writer
+                .get_ref()
                 .set_len(expected_size)
                 .with_context(|| format!("Failed to set file size: {:?}", cli.output))?;
         }
@@ -337,6 +341,9 @@ fn unpack_subcommand(
     sparse_reader
         .finish()
         .with_context(|| format!("Failed to finalize reader: {:?}", cli.input))?;
+    writer
+        .flush()
+        .with_context(|| format!("Failed to flush writer: {:?}", cli.output))?;
 
     Ok(())
 }
@@ -379,7 +386,7 @@ fn pack_subcommand(
     } else {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let regions = find_allocated_regions(&cli.input, &reader, cancel_signal)?;
+            let regions = find_allocated_regions(&cli.input, reader.get_ref(), cancel_signal)?;
 
             (regions, false)
         }
@@ -447,9 +454,12 @@ fn pack_subcommand(
         }
     }
 
-    sparse_writer
+    let mut writer = sparse_writer
         .finish()
         .with_context(|| format!("Failed to finalize writer: {:?}", cli.output))?;
+    writer
+        .flush()
+        .with_context(|| format!("Failed to flush writer: {:?}", cli.output))?;
 
     Ok(())
 }
@@ -501,9 +511,12 @@ fn repack_subcommand(
     sparse_reader
         .finish()
         .with_context(|| format!("Failed to finalize reader: {:?}", cli.input))?;
-    sparse_writer
+    let mut writer = sparse_writer
         .finish()
         .with_context(|| format!("Failed to finalize writer: {:?}", cli.output))?;
+    writer
+        .flush()
+        .with_context(|| format!("Failed to flush writer: {:?}", cli.output))?;
 
     Ok(())
 }
